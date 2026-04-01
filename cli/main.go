@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	Version = "2.0.0" // set by build flag: -ldflags="-X main.Version=x.x.x"
+	Version = "2.1.0" // set by build flag: -ldflags="-X main.Version=x.x.x"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
