@@ -11,17 +11,16 @@
  ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝
 ```
 
-### ⚡ AI-Powered Cybersecurity CLI Tool
+### ⚡ AI-Powered Cybersecurity CLI — Built for Kali Linux
 
-[![Version](https://img.shields.io/badge/version-2.0.0-00FFFF?style=flat-square)](https://github.com/thecnical/cybermind)
-[![License](https://img.shields.io/badge/license-MIT-8A2BE2?style=flat-square)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)](https://go.dev)
-[![Kali Linux](https://img.shields.io/badge/Kali%20Linux-Ready-268BEE?style=flat-square&logo=kalilinux)](https://kali.org)
-[![Made by](https://img.shields.io/badge/made%20by-thecnical-FF4444?style=flat-square)](https://github.com/thecnical)
+[![Version](https://img.shields.io/badge/version-2.0.0-00FFFF?style=for-the-badge)](https://github.com/thecnical/cybermind)
+[![License](https://img.shields.io/badge/license-MIT-8A2BE2?style=for-the-badge)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
+[![Kali Linux](https://img.shields.io/badge/Kali%20Linux-Ready-268BEE?style=for-the-badge&logo=kalilinux&logoColor=white)](https://kali.org)
 
-<br/>
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/chandanpandit)
 
-*Ask. Hack. Learn.*
+*Created by [Chandan Pandey](https://github.com/thecnical)*
 
 <br/>
 
@@ -29,52 +28,48 @@
 
 ---
 
-## Overview
+## What is CyberMind?
 
-**CyberMind** is a terminal-based AI assistant designed for cybersecurity professionals and researchers.
-It connects to a powerful AI backend and delivers real, actionable cybersecurity guidance directly in your terminal —
-no browser, no distractions, just pure command-line power.
+CyberMind is a terminal-based AI assistant built specifically for cybersecurity professionals, penetration testers, CTF players, and security researchers. It brings the power of multiple large language models directly into your Kali Linux terminal — no browser, no GUI, no distractions. You type a question or a command, and CyberMind responds with real, working, copy-paste-ready cybersecurity commands and techniques.
 
-Built for **Kali Linux**. Works everywhere Go runs.
+The tool is built in Go, which means it compiles to a single binary with zero runtime dependencies. You drop it on any Linux machine and it just works. The interactive mode gives you a full terminal UI with a typing animation, spinner, and chat history. The command mode lets you run targeted operations like scan guides, recon pipelines, exploitation walkthroughs, and payload generation — all from a single command in your terminal.
+
+CyberMind is not a toy. It knows nmap, metasploit, sqlmap, hashcat, bloodhound, impacket, aircrack-ng, and over a hundred other Kali tools deeply. When you ask it how to enumerate Active Directory, it gives you the exact BloodHound and Impacket commands. When you ask about a CVE, it gives you the Metasploit module, the manual exploit path, and the post-exploitation steps. This is the tool you open when you're on an engagement and need a fast, accurate answer without leaving your terminal.
 
 ---
 
-## Features
+## Why CyberMind?
 
-```
-⚡ Interactive AI Chat      Ask anything, get real commands
-🔍 Scan Mode               AI-guided network & web scanning
-🕵️  Recon Mode              OSINT, subdomain enum, passive/active recon
-💥 Exploit Mode            CVE guides, service exploitation
-🎯 Payload Mode            Payload generation guidance
-🛠️  Tool Mode               Deep-dive help for any security tool
-📜 Chat History            All sessions saved locally
-🔄 Auto-Fallback           Never fails — multiple AI providers
-```
+Most AI tools require you to open a browser, log in, and deal with a web interface that wasn't designed for security work. CyberMind lives in your terminal where you already are. It understands the context of Kali Linux, knows the tools you're using, and gives you answers formatted for immediate use — not generic explanations padded with disclaimers.
+
+The backend runs multiple AI providers in parallel and returns the fastest valid response. This means even if one provider is slow or down, you still get an answer in seconds. The system is designed to never fail silently — it tries every available model before giving up, and it tells you exactly what happened if something goes wrong.
 
 ---
 
 ## Installation
 
-### Kali Linux / Ubuntu (Recommended)
+### Kali Linux / Ubuntu — One Command
+
+The fastest way to get started on Kali Linux is the install script. It checks for Go and Node.js, installs missing dependencies, builds the CLI binary, and places it in `/usr/local/bin` so you can run `cybermind` from anywhere.
 
 ```bash
-# Clone
 git clone https://github.com/thecnical/cybermind.git
 cd cybermind
-
-# One-command install
-chmod +x install.sh && ./install.sh
+chmod +x install.sh && sudo ./install.sh
 ```
 
+After installation, just run `cybermind` from any directory.
+
 ### Manual Build
+
+If you prefer to build manually or want to customize the binary:
 
 ```bash
 cd cli
 go mod tidy
-go build -o cybermind .
+go build -ldflags="-X main.Version=2.0.0" -o cybermind .
 
-# Install globally (Linux)
+# Install globally on Linux
 sudo mv cybermind /usr/local/bin/
 ```
 
@@ -82,160 +77,128 @@ sudo mv cybermind /usr/local/bin/
 
 ```powershell
 cd cli
-go build -o cybermind.exe .
+go build -ldflags="-X main.Version=2.0.0" -o cybermind.exe .
 .\cybermind.exe
 ```
 
 ### Requirements
 
-| Dependency | Version | Install |
-|------------|---------|---------|
-| Go | 1.21+ | [go.dev/dl](https://go.dev/dl) |
-| Git | any | `apt install git` |
-
-> The backend is required to use CyberMind. See [Backend Setup](#backend-setup).
+You need Go 1.21 or higher installed. Download it from [go.dev/dl](https://go.dev/dl) if you don't have it. On Kali Linux you can also install it with `apt install golang`. No other runtime dependencies are needed for the CLI — it's a single compiled binary.
 
 ---
 
-## Backend Setup
+## Backend Connection
 
-CyberMind CLI connects to a backend API. You can either:
+CyberMind CLI connects to a hosted backend API that handles all AI routing. By default, the CLI points to the live hosted backend, so it works out of the box without any configuration. You just build the binary and run it.
 
-**Option A — Use the hosted API** *(default)*
+If you want to run the backend locally for development or self-hosting, set the `CYBERMIND_API` environment variable to your local server address:
+
 ```bash
-# CLI connects to the live API automatically
+export CYBERMIND_API=http://localhost:3000
 cybermind
 ```
 
-**Option B — Self-host locally**
-```bash
-# Set your local backend URL
-export CYBERMIND_API=http://localhost:3000/chat
-cybermind
-```
-
-> The backend source is maintained privately. Contact [github.com/thecnical](https://github.com/thecnical) for self-hosting access.
+For permanent local setup, add that export to your `~/.bashrc` or `~/.zshrc`. Without that variable set, the CLI automatically uses the hosted production backend.
 
 ---
 
 ## Usage
 
+### Interactive Chat Mode
+
+Running `cybermind` with no arguments launches the full interactive terminal UI. You get a styled interface with a text input, a loading spinner while the AI thinks, and a typing animation as the response appears character by character. Press `Enter` to send your message and `Ctrl+C` to exit. Every conversation is automatically saved to your local history file.
+
 ```bash
-# Launch interactive chat
 cybermind
-
-# Scan a target
-cybermind scan <target> [type]
-
-# Recon
-cybermind recon <target> [type]
-
-# Exploitation guide
-cybermind exploit <cve-or-service> [target]
-
-# Payload generation guide
-cybermind payload <os> [arch]
-
-# Tool help
-cybermind tool <toolname> [task]
-
-# History & utils
-cybermind history
-cybermind clear
-cybermind help
-cybermind --version
 ```
 
----
+### Scan Mode
 
-## Commands
-
-### Scan Types
-
-| Type | What it does |
-|------|-------------|
-| `quick` | Fast top-port scan |
-| `full` | All ports, scripts, OS detection |
-| `stealth` | Low-noise, slow timing |
-| `web` | Web app scanning pipeline |
-| `vuln` | Vulnerability detection |
-| `subdomain` | Subdomain enumeration |
-| `network` | Subnet discovery |
-| `ad` | Active Directory enumeration |
-
-### Recon Types
-
-| Type | What it does |
-|------|-------------|
-| `passive` | No direct contact — OSINT only |
-| `active` | Direct scanning pipeline |
-| `subdomain` | Full subdomain enum pipeline |
-| `osint` | Emails, employees, infrastructure |
-| `web` | Tech stack, endpoints, JS analysis |
-| `network` | Topology and service mapping |
-
----
-
-## Examples
+The scan command generates a complete, step-by-step scanning guide for any target. You specify the target (IP, domain, or subnet) and optionally a scan type. The AI returns exact commands with all flags explained, what to look for in the output, and what to do next. Available scan types are `quick` for a fast top-port scan, `full` for a comprehensive all-port scan with scripts and OS detection, `stealth` for low-noise SYN scanning with slow timing to avoid detection, `web` for web application scanning with nikto and directory bruteforce, `vuln` for vulnerability detection using nmap scripts and nuclei, `subdomain` for a full subdomain enumeration pipeline, `network` for subnet discovery and host mapping, and `ad` for Active Directory enumeration.
 
 ```bash
-# Full port scan
 cybermind scan 192.168.1.1 full
-
-# Subdomain enumeration
 cybermind scan example.com subdomain
+cybermind scan 10.0.0.0/24 network
+```
 
-# OSINT investigation
+### Recon Mode
+
+The recon command builds a complete reconnaissance guide tailored to your target and chosen methodology. Recon types include `passive` for zero-contact OSINT using Shodan, Google dorks, whois, and certificate transparency logs, `active` for direct scanning pipelines, `subdomain` for a multi-tool subdomain enumeration workflow, `osint` for a full open-source intelligence investigation covering emails, employees, leaked credentials, and infrastructure, `web` for technology fingerprinting and endpoint discovery, and `network` for topology mapping and service banner grabbing.
+
+```bash
 cybermind recon target.com osint
+cybermind recon example.com subdomain
+cybermind recon 192.168.1.0/24 network
+```
 
-# Log4Shell exploitation guide
+### Exploit Mode
+
+The exploit command generates a complete exploitation guide for a specific CVE or service. Give it a CVE number and optionally a target IP, and it returns the vulnerability details, affected versions, the Metasploit module path, manual exploit commands, and post-exploitation steps. You can also pass a service name instead of a CVE for a broader exploitation overview.
+
+```bash
 cybermind exploit CVE-2021-44228 10.0.0.1
+cybermind exploit CVE-2017-0144 192.168.1.100
+cybermind exploit "apache struts"
+```
 
-# Windows x64 payload guide
+### Payload Mode
+
+The payload command generates a complete msfvenom payload creation guide including the exact command with all flags, how to set up the listener in Metasploit, delivery methods, and basic AV evasion tips. Specify the target OS and optionally the architecture.
+
+```bash
 cybermind payload windows x64
+cybermind payload linux x86
+cybermind payload android
+```
 
-# SQLMap help for a specific task
+### Tool Mode
+
+The tool command gives you a deep-dive guide for any Kali Linux tool. Pass the tool name and optionally a specific task, and the AI returns the most useful commands, flags, and real-world usage examples for that exact scenario.
+
+```bash
 cybermind tool sqlmap "find SQLi in login form"
+cybermind tool nmap "scan for SMB vulnerabilities"
+cybermind tool hashcat "crack NTLM hashes wordlist attack"
+cybermind tool bloodhound "find paths to domain admin"
+```
 
-# Direct question
+### Direct Prompt Shortcut
+
+Any unrecognized argument is treated as a direct question to the AI. This is the fastest way to get a quick answer without entering interactive mode.
+
+```bash
 cybermind "how to crack WPA2 with aircrack-ng"
+cybermind "what is kerberoasting and how to do it"
+cybermind "enumerate SMB shares on a Windows host"
+```
+
+### History and Utilities
+
+```bash
+cybermind history      # view all saved conversations
+cybermind clear        # wipe local history
+cybermind help         # show all commands
+cybermind --version    # show version
 ```
 
 ---
 
 ## Chat History
 
-All conversations are saved locally at:
-
-```
-~/.cybermind/history.json     # Linux / macOS
-C:\Users\<you>\.cybermind\history.json   # Windows
-```
-
-```bash
-cybermind history    # view all sessions
-cybermind clear      # wipe history
-```
+Every conversation you have in interactive mode is automatically saved to a local JSON file on your machine. Nothing is sent to any external storage — your queries and responses stay on your device. The history file lives at `~/.cybermind/history.json` on Linux and macOS, and at `C:\Users\<you>\.cybermind\history.json` on Windows. The directory is created automatically on first run. You can view your history with `cybermind history` and wipe it with `cybermind clear`.
 
 ---
 
-## Build from Source
+## Build Options
 
 ```bash
-# Current OS
-make build
-
-# Kali Linux / Linux amd64
-make build-linux
-
-# Windows
-make build-windows
-
-# All platforms
-make build-all
-
-# Install globally on Linux
-make install
+make build          # build for current OS
+make build-linux    # build for Kali Linux / Linux amd64
+make build-windows  # build for Windows amd64
+make build-all      # build all platforms
+make install        # build and install to /usr/local/bin (Linux)
+make clean          # remove build artifacts
 ```
 
 ---
@@ -245,20 +208,23 @@ make install
 ```
 cybermind/
 ├── cli/
-│   ├── main.go          # Commands, banner, entry point
-│   ├── go.mod
+│   ├── main.go          # Entry point, all commands, banner
+│   ├── go.mod           # Go module definition
 │   ├── api/
-│   │   └── client.go    # Backend HTTP client
+│   │   └── client.go    # HTTP client connecting to backend
 │   ├── ui/
-│   │   ├── model.go     # Bubble Tea state machine
+│   │   ├── model.go     # Bubble Tea state machine and logic
 │   │   ├── view.go      # Terminal UI renderer
-│   │   └── styles.go    # Lipgloss styles
+│   │   └── styles.go    # Lipgloss color and style definitions
 │   └── storage/
-│       ├── history.go   # Chat history logic
-│       └── file.go      # File I/O
-├── install.sh           # Kali Linux installer
-├── Makefile             # Build commands
-├── LICENSE
+│       ├── history.go   # Chat history read/write/display
+│       └── file.go      # Cross-platform file path handling
+├── install.sh           # One-command Kali Linux installer
+├── Makefile             # Build and install commands
+├── VERSION              # Current version number
+├── LICENSE              # MIT License
+├── CONTRIBUTING.md      # How to contribute
+├── CHANGELOG.md         # Version history
 └── README.md
 ```
 
@@ -266,17 +232,27 @@ cybermind/
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — PRs welcome.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started, coding standards, and how to submit a pull request.
+
+---
+
+## Support the Project
+
+If CyberMind has been useful in your work, research, or learning, consider buying me a coffee. It helps keep the project alive and motivates continued development.
+
+[![Buy Me A Coffee](https://img.shields.io/badge/☕%20Buy%20Me%20A%20Coffee-chandanpandit-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/chandanpandit)
+
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE). Free to use, modify, and distribute.
+
+---
 
 ## Disclaimer
 
-> CyberMind is intended for **authorized security research, penetration testing, and education only**.
-> Never use against systems you do not own or have explicit written permission to test.
-> The author is not responsible for misuse.
+CyberMind is built for authorized security research, penetration testing with written permission, CTF competitions, and cybersecurity education. Using this tool against systems you do not own or have explicit written authorization to test is illegal. The author takes no responsibility for misuse.
 
 ---
 
@@ -284,6 +260,6 @@ MIT — see [LICENSE](LICENSE)
 
 Made with ⚡ by [Chandan Pandey](https://github.com/thecnical)
 
-*Star ⭐ the repo if CyberMind helped you*
+[GitHub](https://github.com/thecnical/cybermind) · [Buy Me A Coffee](https://buymeacoffee.com/chandanpandit)
 
 </div>
