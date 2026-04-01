@@ -1,19 +1,25 @@
 const axios = require("axios");
+const SYSTEM_PROMPT = require("../config/systemPrompt");
 
 const HF_API_BASE = "https://api-inference.huggingface.co/models";
 const TIMEOUT_MS = 60000;
 
-/**
- * Query a HuggingFace model.
- * @param {string} model - HF model ID
- * @param {string} prompt
- * @param {string} apiKey
- * @returns {Promise<string>}
- */
 async function queryHuggingFace(model, prompt, apiKey) {
+  // Inject system context into the prompt for HF (no native system role)
+  const fullPrompt = `${SYSTEM_PROMPT}\n\nUser: ${prompt}\nCyberMind:`;
+
   const response = await axios.post(
     `${HF_API_BASE}/${model}`,
-    { inputs: prompt },
+    {
+      inputs: fullPrompt,
+      parameters: {
+        max_new_tokens: 1024,
+        temperature: 0.7,
+        top_p: 0.95,
+        do_sample: true,
+        return_full_text: false,
+      },
+    },
     {
       headers: {
         Authorization: `Bearer ${apiKey}`,

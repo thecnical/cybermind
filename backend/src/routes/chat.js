@@ -4,8 +4,8 @@ const { getAIResponse } = require("../services/aiRouter");
 const logger = require("../utils/logger");
 const { logRequest } = require("../utils/requestLogger");
 
-const MAX_PROMPT_LENGTH = 1000;
-const REQUEST_TIMEOUT_MS = 60000; // 60s — matches provider timeouts
+const MAX_PROMPT_LENGTH = 4000;
+const REQUEST_TIMEOUT_MS = 120000; // 120s for complex cybersec queries
 
 // Abuse patterns: repeated chars, spam keywords
 const ABUSE_PATTERNS = [

@@ -35,13 +35,14 @@ type Model struct {
 	errMsg       string
 	lastPrompt   string
 	width        int
+	height       int
 }
 
 func NewModel() Model {
 	ti := textinput.New()
-	ti.Placeholder = "Type your cybersecurity query..."
-	ti.CharLimit = 500
-	ti.Width = 70
+	ti.Placeholder = "Ask a cybersecurity question..."
+	ti.CharLimit = 4000
+	ti.Width = 80
 	ti.Focus()
 
 	sp := spinner.New()
@@ -52,6 +53,7 @@ func NewModel() Model {
 		input:   ti,
 		spinner: sp,
 		state:   stateInput,
+		width:   100,
 	}
 }
 
@@ -64,6 +66,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
+		// Dynamically resize input to terminal width
+		inputWidth := m.width - 8
+		if inputWidth < 40 {
+			inputWidth = 40
+		}
+		m.input.Width = inputWidth
 		return m, nil
 
 	case tea.KeyMsg:
@@ -106,11 +115,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case typeTickMsg:
 		runes := []rune(m.fullResponse)
 		if m.typingIndex < len(runes) {
-			m.displayed += string(runes[m.typingIndex])
-			m.typingIndex++
+			// Print faster for long responses
+			step := 1
+			if len(runes) > 500 {
+				step = 3
+			}
+			end := m.typingIndex + step
+			if end > len(runes) {
+				end = len(runes)
+			}
+			m.displayed += string(runes[m.typingIndex:end])
+			m.typingIndex = end
 			return m, typeTickCmd()
 		}
-		// Typing done — save to history
+		// Done typing — save to history
 		_ = storage.AddEntry(m.lastPrompt, m.fullResponse)
 		m.state = stateInput
 		m.input.Focus()
@@ -135,7 +153,7 @@ func fetchResponse(prompt string) tea.Cmd {
 }
 
 func typeTickCmd() tea.Cmd {
-	return tea.Tick(12*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(8*time.Millisecond, func(t time.Time) tea.Msg {
 		return typeTickMsg{}
 	})
 }

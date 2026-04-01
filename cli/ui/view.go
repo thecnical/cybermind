@@ -12,6 +12,12 @@ func (m Model) View() string {
 }
 
 func renderChat(m Model) string {
+	width := m.width
+	if width < 60 {
+		width = 60
+	}
+
+	divider := strings.Repeat("─", width-4)
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -20,15 +26,21 @@ func renderChat(m Model) string {
 	b.WriteString(lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#00FFFF")).
-		Render("  ⚡ CyberMind CLI  🧠 AI Mode  |  🔌 Connected"))
+		Render("  ⚡ CyberMind  🧠 AI Mode  |  🔌 Connected  |  v1.0.0"))
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#333333")).
+		Render("  " + divider))
 	b.WriteString("\n\n")
 
-	// Input label + field
+	// Input label
 	b.WriteString(lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#8A2BE2")).
 		Render("  › Query:"))
 	b.WriteString("\n")
+
+	// Input box — full width
 	b.WriteString(lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#00FFFF")).
@@ -37,35 +49,47 @@ func renderChat(m Model) string {
 		Render(m.input.View()))
 	b.WriteString("\n")
 
-	// Spinner while loading
+	// Hint
+	b.WriteString(lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#444444")).
+		Render("  Enter → send  •  Ctrl+C → exit"))
+	b.WriteString("\n")
+
+	// Loading
 	if m.state == stateLoading {
 		b.WriteString(lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8A2BE2")).
-			Render(fmt.Sprintf("\n  %s  Contacting AI providers...", m.spinner.View())))
+			Render(fmt.Sprintf("\n  %s  Querying AI providers...", m.spinner.View())))
 		b.WriteString("\n")
 	}
 
-	// AI response
+	// Response area
 	displayText := m.displayed
 	if m.state == stateInput && m.fullResponse != "" {
 		displayText = m.fullResponse
 	}
+
 	if displayText != "" {
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#333333")).
+			Render("  " + divider))
 		b.WriteString("\n")
 		b.WriteString(lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#00FF00")).
 			Render("  ⚡ CyberMind AI →"))
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 
-		width := m.width - 6
-		if width < 40 {
-			width = 80
+		// Word-wrap response to terminal width
+		responseWidth := width - 6
+		if responseWidth < 40 {
+			responseWidth = 80
 		}
 		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
+			Foreground(lipgloss.Color("#E0E0E0")).
 			MarginLeft(4).
-			Width(width).
+			Width(responseWidth).
 			Render(displayText))
 		b.WriteString("\n")
 	}
@@ -83,12 +107,12 @@ func renderChat(m Model) string {
 	// Footer
 	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#444444")).
-		Render("  " + strings.Repeat("─", 62)))
+		Foreground(lipgloss.Color("#333333")).
+		Render("  " + divider))
 	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#555555")).
-		Render("  Enter → send  •  Ctrl+C → exit  •  github.com/thecnical"))
+		Render("  github.com/thecnical  •  CyberMind v1.0.0"))
 	b.WriteString("\n")
 
 	return b.String()

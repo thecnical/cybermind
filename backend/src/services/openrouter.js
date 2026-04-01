@@ -1,27 +1,26 @@
 const axios = require("axios");
+const SYSTEM_PROMPT = require("../config/systemPrompt");
 
 const OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions";
 const TIMEOUT_MS = 60000;
 
-/**
- * Query an OpenRouter model.
- * @param {string} model - OpenRouter model ID
- * @param {string} prompt
- * @param {string} apiKey
- * @returns {Promise<string>}
- */
 async function queryOpenRouter(model, prompt, apiKey) {
   const response = await axios.post(
     OPENROUTER_API_BASE,
     {
       model,
-      messages: [{ role: "user", content: prompt }],
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user",   content: prompt },
+      ],
+      max_tokens: 2048,
+      temperature: 0.7,
     },
     {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://cybermind.local",
+        "HTTP-Referer": "https://cybermind.thecnical.dev",
         "X-Title": "CyberMind",
       },
       timeout: TIMEOUT_MS,

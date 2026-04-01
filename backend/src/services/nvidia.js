@@ -1,22 +1,21 @@
 const axios = require("axios");
+const SYSTEM_PROMPT = require("../config/systemPrompt");
 
 const NVIDIA_API_BASE = "https://integrate.api.nvidia.com/v1/chat/completions";
 const TIMEOUT_MS = 60000;
 
-/**
- * Query an NVIDIA NIM model.
- * @param {string} model - NVIDIA model ID
- * @param {string} prompt
- * @param {string} apiKey
- * @returns {Promise<string>}
- */
 async function queryNvidia(model, prompt, apiKey) {
   const response = await axios.post(
     NVIDIA_API_BASE,
     {
       model,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 512,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user",   content: prompt },
+      ],
+      max_tokens: 2048,
+      temperature: 0.7,
+      top_p: 0.95,
     },
     {
       headers: {
