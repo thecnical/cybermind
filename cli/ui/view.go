@@ -73,8 +73,9 @@ func renderChat(m Model) string {
 	case stateTyping, stateInput:
 		// Build full response text
 		displayText := m.displayed
-		if m.state == stateInput && m.fullResponse != "" {
-			displayText = m.fullResponse
+		// Only show currentDisplay if we are actively typing (not yet in history)
+		if m.state == stateInput {
+			displayText = "" // already moved to history
 		}
 
 		if displayText != "" || len(m.history) > 0 {
@@ -202,7 +203,7 @@ func buildResponseContent(m Model, currentDisplay string, responseWidth int) str
 		b.WriteString("\n\n")
 	}
 
-	// Current response being typed
+	// Current response being typed (only during stateTyping, not after)
 	if currentDisplay != "" {
 		b.WriteString(lipgloss.NewStyle().
 			Bold(true).

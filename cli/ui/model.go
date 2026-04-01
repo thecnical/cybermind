@@ -180,6 +180,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Prompt:   m.lastPrompt,
 			Response: m.fullResponse,
 		})
+		// Clear displayed so it doesn't show twice alongside history
+		m.displayed = ""
+		m.fullResponse = ""
 		m.state = stateInput
 		m.input.Focus()
 		return m, textinput.Blink
