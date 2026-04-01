@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,26 +34,39 @@ type promptResponse struct {
 	Error    string `json:"error"`
 }
 
+// WakeUp pings /health to wake Render from sleep. Returns true if reachable.
+func WakeUp() bool {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(getBaseURL() + "/health")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
+}
+
 func post(endpoint string, body interface{}) (string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return "", fmt.Errorf("encode error: %w", err)
+		return "", fmt.Errorf("failed to encode request: %w", err)
 	}
 
 	resp, err := httpClient.Post(getBaseURL()+endpoint, "application/json", bytes.NewBuffer(payload))
 	if err != nil {
-		return "", errors.New("backend unreachable — start with: node src/app.js")
+		return "", fmt.Errorf(
+			"cannot reach CyberMind backend — check your internet connection\n  (backend may be waking up, try again in 30 seconds)",
+		)
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read error: %w", err)
+		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
 	var result promptResponse
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", fmt.Errorf("parse error: %w", err)
+		return "", fmt.Errorf("unexpected response from backend: %w", err)
 	}
 	if !result.Success {
 		return "", fmt.Errorf("%s", result.Error)
