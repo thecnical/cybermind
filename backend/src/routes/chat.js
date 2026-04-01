@@ -5,7 +5,22 @@ const logger = require("../utils/logger");
 const { logRequest } = require("../utils/requestLogger");
 
 const MAX_PROMPT_LENGTH = 4000;
-const REQUEST_TIMEOUT_MS = 120000; // 120s for complex cybersec queries
+const REQUEST_TIMEOUT_MS = 120000;
+
+// Identity questions — answer directly, no AI call needed
+const IDENTITY_PATTERNS = [
+  /who are you/i,
+  /what are you/i,
+  /what is your name/i,
+  /who made you/i,
+  /who created you/i,
+  /who built you/i,
+  /your name/i,
+  /introduce yourself/i,
+  /tell me about yourself/i,
+];
+
+const IDENTITY_RESPONSE = `I am CyberMind, an AI-powered cybersecurity assistant created by Chandan Pandey (github.com/thecnical). I specialize in offensive and defensive cybersecurity — from reconnaissance and exploitation to forensics and hardening. Ask me anything about cybersecurity.`;
 
 // Abuse patterns: repeated chars, spam keywords
 const ABUSE_PATTERNS = [
@@ -35,6 +50,18 @@ router.post("/", async (req, res) => {
   if (isAbusive(prompt)) {
     logRequest(req, "blocked");
     return res.status(400).json({ success: false, error: "Invalid input" });
+  }
+
+  // Identity check — answer directly
+  if (IDENTITY_PATTERNS.some((p) => p.test(prompt))) {
+    logRequest(req, "identity");
+    return res.json({
+      success: true,
+      response: IDENTITY_RESPONSE,
+      provider: "direct",
+      model: "identity",
+      time: "0.01s",
+    });
   }
 
   // Request timeout guard

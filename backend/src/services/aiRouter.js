@@ -6,13 +6,14 @@ const { queryNvidia } = require("./nvidia");
 const { queryBytez } = require("./bytez");
 const { queryOpenRouter } = require("./openrouter");
 const { querySambaNova } = require("./sambanova");
-const { querySambaNova } = require("./sambanova");
+const { queryAiCC } = require("./aicc");
 const logger = require("../utils/logger");
 
 const TIMEOUT_MS = 60000;
 
-// Map provider → query function
+// Provider order = priority (first = tried first in parallel race)
 const providerFn = {
+  aicc:        queryAiCC,
   sambanova:   querySambaNova,
   nvidia:      queryNvidia,
   openrouter:  queryOpenRouter,
@@ -20,12 +21,6 @@ const providerFn = {
   bytez:       queryBytez,
 };
 
-/**
- * Wrap a promise with a timeout rejection.
- * @param {Promise} promise
- * @param {number} ms
- * @returns {Promise}
- */
 function withTimeout(promise, ms) {
   return Promise.race([
     promise,
@@ -35,13 +30,6 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-/**
- * Try all models for a single provider sequentially.
- * Returns { response, provider, model } or throws if all fail.
- * @param {string} provider
- * @param {string} prompt
- * @returns {Promise<{ response: string, provider: string, model: string }>}
- */
 async function tryProvider(provider, prompt) {
   const providerModels = models[provider];
   if (!providerModels || providerModels.length === 0) {
@@ -75,11 +63,6 @@ async function tryProvider(provider, prompt) {
   throw new Error(`All models failed for provider: ${provider}`);
 }
 
-/**
- * Core AI Router — runs all providers in parallel, returns fastest valid response.
- * @param {string} prompt
- * @returns {Promise<{ response: string, provider: string, model: string, time: string }>}
- */
 async function getAIResponse(prompt) {
   const start = Date.now();
 

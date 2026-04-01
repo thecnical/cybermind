@@ -27,4 +27,12 @@ module.exports = {
     { name: "deepseek-r1",      model: "DeepSeek-R1" },
     { name: "qwen3-32b",        model: "Qwen3-32B" },
   ],
+  aicc: [
+    { name: "gpt-5.4-pro",              model: "gpt-5.4-pro" },
+    { name: "claude-opus-4-thinking",   model: "claude-opus-4-20250514-thinking" },
+    { name: "deepseek-v3.2",            model: "deepseek-v3.2" },
+    { name: "gemini-2.5-flash",         model: "gemini-2.5-flash" },
+    { name: "grok-4.1-fast",            model: "grok-4.1-fast" },
+    { name: "kimi-k2.5",                model: "kimi-k2.5" },
+  ],
 };

@@ -23,6 +23,7 @@ function getNextKey(provider) {
     bytez:       "BYTEZ_KEYS",
     openrouter:  "OPENROUTER_KEYS",
     sambanova:   "SAMBANOVA_KEYS",
+    aicc:        "AICC_KEYS",
   };
 
   const envVar = envMap[provider];
