@@ -7,242 +7,220 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Fixed bottom section height: divider(1) + input label(1) + input box(3) + footer(1) = 6
+const bottomHeight = 6
+
 func (m Model) View() string {
-	// Minimum terminal size guard
-	if m.width < 40 || m.height < 10 {
-		return "  Terminal too small. Please resize to at least 40x10.\n"
+	if m.width < 30 || m.height < 8 {
+		return "  Resize terminal (min 30x8)\n"
 	}
-	return renderChat(m)
-}
 
-func renderChat(m Model) string {
-	width := m.width
-	height := m.height
+	w := m.width
+	rw := w - 8 // response content width
+	if rw < 20 {
+		rw = 20
+	}
 
-	divider := strings.Repeat("─", width-4)
-
-	// ── Fixed UI chrome heights ──────────────────────────────
-	// header(2) + divider(1) + inputLabel(1) + inputBox(3) + hint(1) + footer(2) = 10
-	const chromeLines = 10
-	// Lines available for the response area
-	responseAreaHeight := height - chromeLines
-	if responseAreaHeight < 3 {
-		responseAreaHeight = 3
+	// Available lines for chat area = total height - header(2) - bottom(6)
+	chatAreaHeight := m.height - 2 - bottomHeight
+	if chatAreaHeight < 2 {
+		chatAreaHeight = 2
 	}
 
 	var b strings.Builder
 
-	// ── HEADER ───────────────────────────────────────────────
-	b.WriteString("\n")
+	// ── HEADER (2 lines, no gap) ──────────────────────────────
 	b.WriteString(lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#00FFFF")).
-		Render(fmt.Sprintf("  ⚡ CyberMind  🧠 AI Mode  |  🔌 Connected  |  v%s", "2.1.0")))
+		Render(fmt.Sprintf("  ⚡ CyberMind v2.1.0  🧠 AI  |  🔌 Live  |  PgUp/PgDn scroll")))
 	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#222222")).
-		Render("  " + divider))
+		Foreground(lipgloss.Color("#1a1a1a")).
+		Render("  " + strings.Repeat("─", w-4)))
 	b.WriteString("\n")
 
-	// ── RESPONSE / STATUS AREA ───────────────────────────────
-	responseWidth := width - 6
-	if responseWidth < 20 {
-		responseWidth = 20
-	}
-
+	// ── CHAT AREA ────────────────────────────────────────────
 	switch m.state {
+
 	case stateWaking:
-		// Connecting message
-		for i := 0; i < responseAreaHeight-1; i++ {
+		// Fill chat area with empty lines then show connecting
+		for i := 0; i < chatAreaHeight-1; i++ {
 			b.WriteString("\n")
 		}
 		b.WriteString(lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00FFFF")).
-			Render(fmt.Sprintf("  %s  Connecting to CyberMind backend...", m.spinner.View())))
+			Render(fmt.Sprintf("  %s  Connecting to CyberMind...", m.spinner.View())))
 		b.WriteString("\n")
 
 	case stateLoading:
-		// Show previous history + loading spinner
-		historyLines := renderHistory(m, responseWidth, responseAreaHeight-2)
-		b.WriteString(historyLines)
-		b.WriteString(lipgloss.NewStyle().
+		lines := buildChatLines(m, rw)
+		lines = append(lines, lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8A2BE2")).
-			Render(fmt.Sprintf("  %s  Querying AI providers...", m.spinner.View())))
-		b.WriteString("\n")
+			Render(fmt.Sprintf("  %s  Thinking...", m.spinner.View())))
+		b.WriteString(renderChatArea(lines, chatAreaHeight, m.scrollOffset))
 
 	case stateTyping, stateInput:
-		// Build full response text
-		displayText := m.displayed
-		// Only show currentDisplay if we are actively typing (not yet in history)
-		if m.state == stateInput {
-			displayText = "" // already moved to history
-		}
-
-		if displayText != "" || len(m.history) > 0 {
-			// Render history + current response, clipped to available height
-			content := buildResponseContent(m, displayText, responseWidth)
-			lines := strings.Split(content, "\n")
-
-			// Apply scroll offset
-			totalLines := len(lines)
-			maxScroll := totalLines - responseAreaHeight
-			if maxScroll < 0 {
-				maxScroll = 0
-			}
-			offset := m.scrollOffset
-			if offset > maxScroll {
-				offset = maxScroll
-			}
-
-			// Slice visible window from bottom (newest content at bottom)
-			start := totalLines - responseAreaHeight - offset
-			if start < 0 {
-				start = 0
-			}
-			end := start + responseAreaHeight
-			if end > totalLines {
-				end = totalLines
-			}
-
-			visible := lines[start:end]
-			// Pad to fill area
-			for len(visible) < responseAreaHeight {
-				visible = append([]string{""}, visible...)
-			}
-
-			b.WriteString(strings.Join(visible, "\n"))
-			b.WriteString("\n")
-
-			// Scroll indicator
-			if maxScroll > 0 {
-				scrollHint := ""
-				if offset > 0 {
-					scrollHint = fmt.Sprintf("  ↑ scrolled up %d lines  (↓ to scroll down)", offset)
-				} else {
-					scrollHint = "  ↑ PgUp/↑ to scroll  •  ↓ PgDn/↓ to scroll down"
-				}
-				b.WriteString(lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#555555")).
-					Render(scrollHint))
-				b.WriteString("\n")
-			}
-		} else {
-			// Empty state — fill with blank lines
-			for i := 0; i < responseAreaHeight; i++ {
-				b.WriteString("\n")
-			}
-		}
+		lines := buildChatLines(m, rw)
+		b.WriteString(renderChatArea(lines, chatAreaHeight, m.scrollOffset))
 	}
 
 	// ── ERROR ────────────────────────────────────────────────
 	if m.errMsg != "" {
-		errText := m.errMsg
-		if len(errText) > width-6 {
-			errText = errText[:width-9] + "..."
+		msg := m.errMsg
+		if len([]rune(msg)) > w-6 {
+			msg = string([]rune(msg)[:w-9]) + "..."
 		}
 		b.WriteString(lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#FF4444")).
-			Render("  ✗ " + errText))
+			Render("  ✗ " + msg))
 		b.WriteString("\n")
 	}
 
-	// ── DIVIDER ──────────────────────────────────────────────
+	// ── BOTTOM — always visible ───────────────────────────────
 	b.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#222222")).
-		Render("  " + divider))
+		Foreground(lipgloss.Color("#1a1a1a")).
+		Render("  " + strings.Repeat("─", w-4)))
 	b.WriteString("\n")
 
-	// ── INPUT — always at bottom ─────────────────────────────
 	b.WriteString(lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#8A2BE2")).
-		Render("  › Query:"))
-	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#00FFFF")).
-		Padding(0, 1).
-		MarginLeft(2).
-		Render(m.input.View()))
+		Render("  ›"))
+	b.WriteString(" ")
+	b.WriteString(m.input.View())
 	b.WriteString("\n")
 
-	// ── FOOTER ───────────────────────────────────────────────
 	b.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#444444")).
-		Render("  Enter → send  •  Ctrl+C → exit  •  ↑↓ scroll"))
+		Foreground(lipgloss.Color("#333333")).
+		Render("  Enter=send  Ctrl+C=exit  PgUp/PgDn=scroll"))
 	b.WriteString("\n")
 
 	return b.String()
 }
 
-// buildResponseContent builds the full scrollable content string
-func buildResponseContent(m Model, currentDisplay string, responseWidth int) string {
-	var b strings.Builder
+// buildChatLines builds all chat lines (history + current typing)
+func buildChatLines(m Model, rw int) []string {
+	var lines []string
 
-	// Previous history entries (dimmed)
+	// Past history entries
 	for _, entry := range m.history {
-		// User prompt
-		b.WriteString(lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#8A2BE2")).
-			Render("  › " + truncateLine(entry.Prompt, responseWidth-4)))
-		b.WriteString("\n")
+		// User line
+		lines = append(lines,
+			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).
+				Render("  › "+truncateLine(entry.Prompt, rw)))
 
-		// AI response
-		b.WriteString(lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#00FF00")).
-			Render("  ⚡ CyberMind →"))
-		b.WriteString("\n")
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#888888")).
-			MarginLeft(4).
-			Width(responseWidth).
-			Render(entry.Response))
-		b.WriteString("\n\n")
+		// AI response — wrap into lines
+		lines = append(lines,
+			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).
+				Render("  ⚡ CyberMind"))
+
+		respLines := wrapText(entry.Response, rw)
+		for _, rl := range respLines {
+			lines = append(lines,
+				lipgloss.NewStyle().Foreground(lipgloss.Color("#CCCCCC")).
+					Render("    "+rl))
+		}
+		lines = append(lines, "") // blank separator
 	}
 
-	// Current response being typed (only during stateTyping, not after)
-	if currentDisplay != "" {
-		b.WriteString(lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#8A2BE2")).
-			Render("  › " + truncateLine(m.lastPrompt, responseWidth-4)))
-		b.WriteString("\n")
-		b.WriteString(lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#00FF00")).
-			Render("  ⚡ CyberMind →"))
-		b.WriteString("\n")
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E0E0E0")).
-			MarginLeft(4).
-			Width(responseWidth).
-			Render(currentDisplay))
-		b.WriteString("\n")
+	// Currently typing response
+	if m.displayed != "" {
+		lines = append(lines,
+			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).
+				Render("  › "+truncateLine(m.lastPrompt, rw)))
+		lines = append(lines,
+			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).
+				Render("  ⚡ CyberMind"))
+		respLines := wrapText(m.displayed, rw)
+		for _, rl := range respLines {
+			lines = append(lines,
+				lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).
+					Render("    "+rl))
+		}
 	}
 
+	return lines
+}
+
+// renderChatArea shows the visible window of chat lines, newest at bottom
+func renderChatArea(lines []string, height, scrollOffset int) string {
+	total := len(lines)
+
+	// Clamp scroll
+	maxScroll := total - height
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+
+	// Window: show lines ending at (total - scrollOffset)
+	end := total - scrollOffset
+	if end < 0 {
+		end = 0
+	}
+	start := end - height
+	if start < 0 {
+		start = 0
+	}
+
+	visible := lines[start:end]
+
+	var b strings.Builder
+	// Pad top if not enough lines
+	for i := len(visible); i < height; i++ {
+		b.WriteString("\n")
+	}
+	for _, l := range visible {
+		b.WriteString(l)
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 
-// renderHistory renders previous history entries clipped to available lines
-func renderHistory(m Model, responseWidth, maxLines int) string {
-	full := buildResponseContent(m, "", responseWidth)
-	lines := strings.Split(full, "\n")
-	if len(lines) <= maxLines {
-		// Pad top
-		padding := maxLines - len(lines)
-		return strings.Repeat("\n", padding) + full
+// wrapText wraps text to fit within maxWidth runes per line
+func wrapText(text string, maxWidth int) []string {
+	if maxWidth < 10 {
+		maxWidth = 10
 	}
-	// Show last maxLines
-	return strings.Join(lines[len(lines)-maxLines:], "\n") + "\n"
+	var result []string
+	paragraphs := strings.Split(text, "\n")
+	for _, para := range paragraphs {
+		if para == "" {
+			result = append(result, "")
+			continue
+		}
+		runes := []rune(para)
+		for len(runes) > maxWidth {
+			// Try to break at space
+			breakAt := maxWidth
+			for i := maxWidth; i > maxWidth-20 && i > 0; i-- {
+				if runes[i] == ' ' {
+					breakAt = i
+					break
+				}
+			}
+			result = append(result, string(runes[:breakAt]))
+			runes = runes[breakAt:]
+			// Trim leading space
+			for len(runes) > 0 && runes[0] == ' ' {
+				runes = runes[1:]
+			}
+		}
+		if len(runes) > 0 {
+			result = append(result, string(runes))
+		}
+	}
+	return result
 }
 
 func truncateLine(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) <= max {
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
-	return string(runes[:max-3]) + "..."
+	return string(r[:max-3]) + "..."
 }

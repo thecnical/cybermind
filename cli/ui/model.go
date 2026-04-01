@@ -3,6 +3,7 @@ package ui
 import (
 	"cybermind-cli/api"
 	"cybermind-cli/storage"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -27,7 +28,6 @@ type apiResponseMsg struct {
 type typeTickMsg struct{}
 type wakeMsg struct{ ok bool }
 
-// ChatEntry stores one exchange in the session
 type ChatEntry struct {
 	Prompt   string
 	Response string
@@ -42,17 +42,18 @@ type Model struct {
 	typingIndex  int
 	errMsg       string
 	lastPrompt   string
-	history      []ChatEntry // in-session chat history
-	scrollOffset int         // how many lines scrolled up
+	history      []ChatEntry
+	scrollOffset int
 	width        int
 	height       int
 }
 
 func NewModel() Model {
 	ti := textinput.New()
-	ti.Placeholder = "Ask a cybersecurity question..."
+	ti.Placeholder = "Ask anything about cybersecurity..."
 	ti.CharLimit = 6000
-	ti.Width = 80
+	ti.Width = 60
+	ti.Focus()
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -62,8 +63,8 @@ func NewModel() Model {
 		input:   ti,
 		spinner: sp,
 		state:   stateWaking,
-		width:   100,
-		height:  30,
+		width:   80,
+		height:  24,
 	}
 }
 
@@ -77,16 +78,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		inputWidth := m.width - 8
-		if inputWidth < 40 {
-			inputWidth = 40
+		w := m.width - 10
+		if w < 30 {
+			w = 30
 		}
-		m.input.Width = inputWidth
+		m.input.Width = w
 		return m, nil
 
 	case wakeMsg:
 		if !msg.ok {
-			m.errMsg = "Cannot reach backend. Check your internet and try again."
+			m.errMsg = "Cannot reach backend — check internet connection"
 		}
 		m.state = stateInput
 		m.input.Focus()
@@ -97,26 +98,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// Scroll up/down through response with arrow keys or PgUp/PgDn
-		if m.state == stateInput || m.state == stateTyping {
+		// Scroll keys work in any non-loading state
+		if m.state != stateLoading && m.state != stateWaking {
 			switch msg.Type {
 			case tea.KeyPgUp:
-				m.scrollOffset += 5
+				m.scrollOffset += 10
 				return m, nil
 			case tea.KeyPgDown:
-				if m.scrollOffset > 0 {
-					m.scrollOffset -= 5
-					if m.scrollOffset < 0 {
-						m.scrollOffset = 0
-					}
-				}
-				return m, nil
-			case tea.KeyUp:
-				m.scrollOffset++
-				return m, nil
-			case tea.KeyDown:
-				if m.scrollOffset > 0 {
-					m.scrollOffset--
+				if m.scrollOffset >= 10 {
+					m.scrollOffset -= 10
+				} else {
+					m.scrollOffset = 0
 				}
 				return m, nil
 			}
@@ -125,7 +117,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == stateInput {
 			if msg.Type == tea.KeyEnter {
 				prompt := m.input.Value()
-				if prompt == "" {
+				if strings.TrimSpace(prompt) == "" {
 					return m, nil
 				}
 				m.state = stateLoading
@@ -159,12 +151,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case typeTickMsg:
 		runes := []rune(m.fullResponse)
 		if m.typingIndex < len(runes) {
-			// Adaptive speed: faster for longer responses
-			step := 2
-			if len(runes) > 1000 {
-				step = 8
-			} else if len(runes) > 500 {
-				step = 4
+			step := 3
+			if len(runes) > 2000 {
+				step = 20
+			} else if len(runes) > 800 {
+				step = 10
+			} else if len(runes) > 300 {
+				step = 5
 			}
 			end := m.typingIndex + step
 			if end > len(runes) {
@@ -174,13 +167,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.typingIndex = end
 			return m, typeTickCmd()
 		}
-		// Typing done — save to history
 		_ = storage.AddEntry(m.lastPrompt, m.fullResponse)
 		m.history = append(m.history, ChatEntry{
 			Prompt:   m.lastPrompt,
 			Response: m.fullResponse,
 		})
-		// Clear displayed so it doesn't show twice alongside history
 		m.displayed = ""
 		m.fullResponse = ""
 		m.state = stateInput
@@ -213,7 +204,7 @@ func fetchResponse(prompt string) tea.Cmd {
 }
 
 func typeTickCmd() tea.Cmd {
-	return tea.Tick(6*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(5*time.Millisecond, func(t time.Time) tea.Msg {
 		return typeTickMsg{}
 	})
 }
