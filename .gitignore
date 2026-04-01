@@ -4,6 +4,8 @@ node_modules/
 # Environment — NEVER commit
 .env
 *.env.local
+backend.env
+*.env
 
 # Build artifacts
 *.exe
