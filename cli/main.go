@@ -14,12 +14,13 @@ import (
 )
 
 var (
-	cyan   = lipgloss.Color("#00FFFF")
-	green  = lipgloss.Color("#00FF00")
-	purple = lipgloss.Color("#8A2BE2")
-	red    = lipgloss.Color("#FF4444")
-	dim    = lipgloss.Color("#777777")
-	credit = lipgloss.Color("#555555")
+	Version = "2.0.0" // set by build flag: -ldflags="-X main.Version=x.x.x"
+	cyan    = lipgloss.Color("#00FFFF")
+	green   = lipgloss.Color("#00FF00")
+	purple  = lipgloss.Color("#8A2BE2")
+	red     = lipgloss.Color("#FF4444")
+	dim     = lipgloss.Color("#777777")
+	credit  = lipgloss.Color("#555555")
 )
 
 func printBanner() {
@@ -36,7 +37,7 @@ func printBanner() {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(l.color)).Render(l.text))
 	}
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ⚡ CyberMind CLI v2.0 – AI Powered Kali Linux Assistant"))
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ⚡ CyberMind CLI v"+Version+" – AI Powered Kali Linux Assistant"))
 	fmt.Println(lipgloss.NewStyle().Foreground(credit).Render("  created by github.com/thecnical (Chandan Pandey)"))
 	fmt.Println()
 }
@@ -116,6 +117,10 @@ func main() {
 	case "help", "--help", "-h":
 		printBanner()
 		printHelp()
+
+	case "version", "--version", "-v":
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  CyberMind CLI v" + Version))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  github.com/thecnical"))
 
 	case "history":
 		if err := storage.Load(); err != nil {
