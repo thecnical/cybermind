@@ -11,17 +11,20 @@
  ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝
 ```
 
-### ⚡ AI-Powered Cybersecurity CLI — Built for Kali Linux
+### ⚡ CyberMind — AI-Powered Cybersecurity CLI Tool for Kali Linux
 
-[![Version](https://img.shields.io/badge/version-2.0.0-00FFFF?style=for-the-badge)](https://github.com/thecnical/cybermind)
+[![Version](https://img.shields.io/badge/version-2.1.0-00FFFF?style=for-the-badge)](https://github.com/thecnical/cybermind)
 [![License](https://img.shields.io/badge/license-MIT-8A2BE2?style=for-the-badge)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![Kali Linux](https://img.shields.io/badge/Kali%20Linux-Ready-268BEE?style=for-the-badge&logo=kalilinux&logoColor=white)](https://kali.org)
 [![Privacy](https://img.shields.io/badge/chat-anonymous-00FF00?style=for-the-badge&logo=tor&logoColor=black)](#privacy--anonymity)
+[![Stars](https://img.shields.io/github/stars/thecnical/cybermind?style=for-the-badge&color=yellow)](https://github.com/thecnical/cybermind/stargazers)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/☕%20Buy%20Me%20A%20Coffee-chandanpandit-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/chandanpandit)
 
 *Created by [Chandan Pandey](https://github.com/thecnical)*
+
+**CyberMind is an open-source AI cybersecurity assistant CLI tool built for Kali Linux, penetration testers, ethical hackers, and bug bounty hunters.**
 
 <br/>
 
@@ -31,11 +34,13 @@
 
 ## What is CyberMind?
 
-CyberMind is a terminal-based AI assistant built specifically for cybersecurity professionals, penetration testers, CTF players, and security researchers. It brings the power of multiple large language models directly into your Kali Linux terminal — no browser, no GUI, no distractions. You type a question or a command, and CyberMind responds with real, working, copy-paste-ready cybersecurity commands and techniques.
+CyberMind is an open-source, AI-powered cybersecurity CLI tool built for Kali Linux professionals, ethical hackers, penetration testers, and bug bounty hunters. It connects to a powerful multi-provider AI backend and delivers real, working, copy-paste-ready cybersecurity commands and techniques directly in your terminal — no browser, no GUI, no distractions.
 
-The tool is built in Go, which means it compiles to a single binary with zero runtime dependencies. You drop it on any Linux machine and it just works. The interactive mode gives you a full terminal UI with a typing animation, spinner, and chat history. The command mode lets you run targeted operations like scan guides, recon pipelines, exploitation walkthroughs, and payload generation — all from a single command in your terminal.
+Built in Go as a single binary, CyberMind works on Kali Linux, Ubuntu, Parrot OS, BlackArch, and any Linux distribution. It also runs on Windows and macOS. The interactive terminal UI is powered by Bubble Tea and Lipgloss, giving you a clean hacker-style interface with typing animations, a loading spinner, and scrollable chat history.
 
-CyberMind is not a toy. It knows nmap, metasploit, sqlmap, hashcat, bloodhound, impacket, aircrack-ng, and over a hundred other Kali tools deeply. When you ask it how to enumerate Active Directory, it gives you the exact BloodHound and Impacket commands. When you ask about a CVE, it gives you the Metasploit module, the manual exploit path, and the post-exploitation steps. This is the tool you open when you're on an engagement and need a fast, accurate answer without leaving your terminal.
+CyberMind knows over 100 Kali Linux tools deeply — nmap, metasploit, sqlmap, hashcat, bloodhound, impacket, aircrack-ng, burpsuite, nuclei, subfinder, and many more. Ask it how to enumerate Active Directory, crack WPA2, find SQL injection, perform OSINT, or exploit a CVE — it gives you exact commands, flags, and step-by-step workflows every time.
+
+> **Keywords:** cybermind, cybermind cli, ai cybersecurity tool, kali linux ai assistant, ethical hacking ai, penetration testing cli, ai hacking tool, cybersecurity ai cli, open source hacking tool, ai pentest assistant
 
 ---
 
@@ -249,5 +254,9 @@ CyberMind is built for authorized security research, penetration testing with wr
 Made with ⚡ by [Chandan Pandey](https://github.com/thecnical)
 
 [GitHub](https://github.com/thecnical/cybermind) · [Buy Me A Coffee](https://buymeacoffee.com/chandanpandit)
+
+---
+
+*CyberMind — AI cybersecurity CLI tool | Kali Linux AI assistant | Ethical hacking AI | Penetration testing CLI | Open source hacking tool | AI pentest assistant | Bug bounty AI tool | Cybersecurity terminal tool*
 
 </div>
