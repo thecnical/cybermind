@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const defaultBackendURL = "https://cybermind-backend.onrender.com"
+const defaultBackendURL = "https://cybermind-backend-8yrt.onrender.com"
 
 func getBaseURL() string {
 	if url := os.Getenv("CYBERMIND_API"); url != "" {
