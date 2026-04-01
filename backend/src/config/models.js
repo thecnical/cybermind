@@ -21,4 +21,10 @@ module.exports = {
   openrouter: [
     { name: "deepseek", model: "deepseek/deepseek-chat" },
   ],
+  sambanova: [
+    { name: "llama3.3-70b",     model: "Meta-Llama-3.3-70B-Instruct" },
+    { name: "llama3.1-405b",    model: "Meta-Llama-3.1-405B-Instruct" },
+    { name: "deepseek-r1",      model: "DeepSeek-R1" },
+    { name: "qwen3-32b",        model: "Qwen3-32B" },
+  ],
 };

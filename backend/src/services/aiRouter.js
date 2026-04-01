@@ -5,16 +5,19 @@ const { queryHuggingFace } = require("./huggingface");
 const { queryNvidia } = require("./nvidia");
 const { queryBytez } = require("./bytez");
 const { queryOpenRouter } = require("./openrouter");
+const { querySambaNova } = require("./sambanova");
+const { querySambaNova } = require("./sambanova");
 const logger = require("../utils/logger");
 
 const TIMEOUT_MS = 60000;
 
 // Map provider → query function
 const providerFn = {
-  huggingface: queryHuggingFace,
+  sambanova:   querySambaNova,
   nvidia:      queryNvidia,
-  bytez:       queryBytez,
   openrouter:  queryOpenRouter,
+  huggingface: queryHuggingFace,
+  bytez:       queryBytez,
 };
 
 /**

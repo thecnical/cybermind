@@ -22,6 +22,7 @@ function getNextKey(provider) {
     nvidia:      "NVIDIA_KEYS",
     bytez:       "BYTEZ_KEYS",
     openrouter:  "OPENROUTER_KEYS",
+    sambanova:   "SAMBANOVA_KEYS",
   };
 
   const envVar = envMap[provider];
