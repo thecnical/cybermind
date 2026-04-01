@@ -24,6 +24,9 @@ function getNextKey(provider) {
     openrouter:  "OPENROUTER_KEYS",
     sambanova:   "SAMBANOVA_KEYS",
     aicc:        "AICC_KEYS",
+    groq:        "GROQ_KEYS",
+    cerebras:    "CEREBRAS_KEYS",
+    mistral:     "MISTRAL_KEYS",
   };
 
   const envVar = envMap[provider];

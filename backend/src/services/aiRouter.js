@@ -1,20 +1,26 @@
 const models = require("../config/models");
 const { getNextKey } = require("../utils/keyRotation");
 const { isValidResponse } = require("../utils/responseSelector");
-const { queryHuggingFace } = require("./huggingface");
-const { queryNvidia } = require("./nvidia");
-const { queryBytez } = require("./bytez");
+const { queryGroq }       = require("./groq");
+const { queryCerebras }   = require("./cerebras");
+const { queryAiCC }       = require("./aicc");
+const { querySambaNova }  = require("./sambanova");
+const { queryMistral }    = require("./mistral");
+const { queryNvidia }     = require("./nvidia");
 const { queryOpenRouter } = require("./openrouter");
-const { querySambaNova } = require("./sambanova");
-const { queryAiCC } = require("./aicc");
+const { queryHuggingFace }= require("./huggingface");
+const { queryBytez }      = require("./bytez");
 const logger = require("../utils/logger");
 
 const TIMEOUT_MS = 60000;
 
-// Provider order = priority (first = tried first in parallel race)
+// Priority order — fastest/best first
 const providerFn = {
+  groq:        queryGroq,
+  cerebras:    queryCerebras,
   aicc:        queryAiCC,
   sambanova:   querySambaNova,
+  mistral:     queryMistral,
   nvidia:      queryNvidia,
   openrouter:  queryOpenRouter,
   huggingface: queryHuggingFace,
@@ -33,7 +39,7 @@ function withTimeout(promise, ms) {
 async function tryProvider(provider, prompt) {
   const providerModels = models[provider];
   if (!providerModels || providerModels.length === 0) {
-    throw new Error(`No models configured for ${provider}`);
+    throw new Error(`No models for ${provider}`);
   }
 
   for (const { name, model } of providerModels) {
@@ -46,8 +52,10 @@ async function tryProvider(provider, prompt) {
 
     try {
       logger.info(`[${provider}] trying ${name}`);
-      const fn = providerFn[provider];
-      const response = await withTimeout(fn(model, prompt, apiKey), TIMEOUT_MS);
+      const response = await withTimeout(
+        providerFn[provider](model, prompt, apiKey),
+        TIMEOUT_MS
+      );
 
       if (!isValidResponse(response)) {
         logger.warn(`[${provider}/${name}] invalid response, skipping`);
@@ -60,20 +68,18 @@ async function tryProvider(provider, prompt) {
     }
   }
 
-  throw new Error(`All models failed for provider: ${provider}`);
+  throw new Error(`All models failed for: ${provider}`);
 }
 
 async function getAIResponse(prompt) {
   const start = Date.now();
 
-  const providerRaces = Object.keys(providerFn).map((provider) =>
-    tryProvider(provider, prompt)
-  );
+  const races = Object.keys(providerFn).map((p) => tryProvider(p, prompt));
 
   try {
-    const result = await Promise.any(providerRaces);
+    const result = await Promise.any(races);
     const time = ((Date.now() - start) / 1000).toFixed(2) + "s";
-    logger.info(`Response from [${result.provider}/${result.model}] in ${time}`);
+    logger.info(`✓ [${result.provider}/${result.model}] in ${time}`);
     return { ...result, time };
   } catch {
     throw new Error("All AI providers failed");
