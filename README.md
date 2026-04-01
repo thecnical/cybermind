@@ -30,6 +30,10 @@ It combines a Go-based interactive CLI with a Node.js backend that routes prompt
 9 AI providers (Groq, Cerebras, ai.cc, SambaNova, Mistral, NVIDIA, OpenRouter, HuggingFace, Bytez)
 to deliver real, working cybersecurity commands and techniques.
 
+> **Note:** The backend is hosted in a private repository for security.
+> This public repo contains the CLI only.
+> To self-host the backend, contact [github.com/thecnical](https://github.com/thecnical).
+
 ---
 
 ## Features
