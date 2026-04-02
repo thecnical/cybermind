@@ -28,24 +28,29 @@ type apiResponseMsg struct {
 type typeTickMsg struct{}
 type wakeMsg struct{ ok bool }
 
+// ChatEntry for display in UI
 type ChatEntry struct {
 	Prompt   string
 	Response string
 }
 
+// Max messages to keep in memory context (last N exchanges = 2*N messages)
+const maxContextMessages = 20
+
 type Model struct {
-	input        textinput.Model
-	spinner      spinner.Model
-	state        state
-	fullResponse string
-	displayed    string
-	typingIndex  int
-	errMsg       string
-	lastPrompt   string
-	history      []ChatEntry
-	scrollOffset int
-	width        int
-	height       int
+	input           textinput.Model
+	spinner         spinner.Model
+	state           state
+	fullResponse    string
+	displayed       string
+	typingIndex     int
+	errMsg          string
+	lastPrompt      string
+	history         []ChatEntry    // UI display history
+	contextMessages []api.Message  // conversation memory sent to backend
+	scrollOffset    int
+	width           int
+	height          int
 }
 
 func NewModel() Model {
@@ -59,13 +64,39 @@ func NewModel() Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = LabelStyle
 
+	// Phase C: Load last 5 exchanges from local history as initial context
+	contextMsgs := loadHistoryAsContext(5)
+
 	return Model{
-		input:   ti,
-		spinner: sp,
-		state:   stateWaking,
-		width:   80,
-		height:  24,
+		input:           ti,
+		spinner:         sp,
+		state:           stateWaking,
+		width:           80,
+		height:          24,
+		contextMessages: contextMsgs,
 	}
+}
+
+// loadHistoryAsContext reads local history and converts last N entries to messages
+func loadHistoryAsContext(n int) []api.Message {
+	entries := storage.GetHistory()
+	if len(entries) == 0 {
+		return []api.Message{}
+	}
+
+	// Take last N entries
+	start := len(entries) - n
+	if start < 0 {
+		start = 0
+	}
+	recent := entries[start:]
+
+	var msgs []api.Message
+	for _, e := range recent {
+		msgs = append(msgs, api.Message{Role: "user", Content: e.User})
+		msgs = append(msgs, api.Message{Role: "assistant", Content: e.AI})
+	}
+	return msgs
 }
 
 func (m Model) Init() tea.Cmd {
@@ -98,7 +129,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// Scroll keys work in any non-loading state
 		if m.state != stateLoading && m.state != stateWaking {
 			switch msg.Type {
 			case tea.KeyPgUp:
@@ -127,7 +157,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastPrompt = prompt
 				m.scrollOffset = 0
 				m.input.SetValue("")
-				return m, tea.Batch(m.spinner.Tick, fetchResponse(prompt))
+				// Send with full conversation context
+				return m, tea.Batch(m.spinner.Tick, fetchWithContext(prompt, m.contextMessages))
 			}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
@@ -167,11 +198,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.typingIndex = end
 			return m, typeTickCmd()
 		}
+
+		// Typing done — save to local history
 		_ = storage.AddEntry(m.lastPrompt, m.fullResponse)
+
+		// Add to UI display history
 		m.history = append(m.history, ChatEntry{
 			Prompt:   m.lastPrompt,
 			Response: m.fullResponse,
 		})
+
+		// Add to conversation context for next request
+		m.contextMessages = append(m.contextMessages,
+			api.Message{Role: "user", Content: m.lastPrompt},
+			api.Message{Role: "assistant", Content: m.fullResponse},
+		)
+		// Keep context within limit
+		if len(m.contextMessages) > maxContextMessages {
+			m.contextMessages = m.contextMessages[len(m.contextMessages)-maxContextMessages:]
+		}
+
 		m.displayed = ""
 		m.fullResponse = ""
 		m.state = stateInput
@@ -196,9 +242,10 @@ func wakeBackend() tea.Cmd {
 	}
 }
 
-func fetchResponse(prompt string) tea.Cmd {
+// fetchWithContext sends prompt with full conversation history
+func fetchWithContext(prompt string, history []api.Message) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := api.SendPrompt(prompt)
+		resp, err := api.SendChat(prompt, history)
 		return apiResponseMsg{response: resp, err: err}
 	}
 }

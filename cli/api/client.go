@@ -21,8 +21,16 @@ func getBaseURL() string {
 
 var httpClient = &http.Client{Timeout: 120 * time.Second}
 
-type promptRequest struct {
-	Prompt string `json:"prompt"`
+// Message represents a single chat message for conversation history
+type Message struct {
+	Role    string `json:"role"`    // "user" or "assistant"
+	Content string `json:"content"`
+}
+
+// chatRequest includes prompt + full conversation history
+type chatRequest struct {
+	Prompt   string    `json:"prompt"`
+	Messages []Message `json:"messages"`
 }
 
 type promptResponse struct {
@@ -34,7 +42,7 @@ type promptResponse struct {
 	Error    string `json:"error"`
 }
 
-// WakeUp pings /health to wake Render from sleep. Returns true if reachable.
+// WakeUp pings /health to wake Render from sleep
 func WakeUp() bool {
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(getBaseURL() + "/health")
@@ -54,7 +62,7 @@ func post(endpoint string, body interface{}) (string, error) {
 	resp, err := httpClient.Post(getBaseURL()+endpoint, "application/json", bytes.NewBuffer(payload))
 	if err != nil {
 		return "", fmt.Errorf(
-			"cannot reach CyberMind backend — check your internet connection\n  (backend may be waking up, try again in 30 seconds)",
+			"cannot reach CyberMind backend — check your internet connection",
 		)
 	}
 	defer resp.Body.Close()
@@ -74,34 +82,42 @@ func post(endpoint string, body interface{}) (string, error) {
 	return result.Response, nil
 }
 
-// SendPrompt — general AI chat
-func SendPrompt(prompt string) (string, error) {
-	return post("/chat", promptRequest{Prompt: prompt})
+// SendChat sends prompt with full conversation history for memory
+func SendChat(prompt string, history []Message) (string, error) {
+	return post("/chat", chatRequest{
+		Prompt:   prompt,
+		Messages: history,
+	})
 }
 
-// SendScan — AI-guided scan for a target
+// SendPrompt — simple chat without history (used by command mode)
+func SendPrompt(prompt string) (string, error) {
+	return post("/chat", chatRequest{Prompt: prompt, Messages: []Message{}})
+}
+
+// SendScan — AI-guided scan
 func SendScan(target, scanType string) (string, error) {
 	return post("/scan", map[string]string{"target": target, "type": scanType})
 }
 
-// SendRecon — AI-guided recon for a target
+// SendRecon — AI-guided recon
 func SendRecon(target, reconType string) (string, error) {
 	return post("/recon", map[string]string{"target": target, "type": reconType})
 }
 
-// SendExploit — AI-guided exploitation
+// SendExploit — exploitation guide
 func SendExploit(vulnerability, target string) (string, error) {
 	return post("/exploit", map[string]string{"vulnerability": vulnerability, "target": target})
 }
 
-// SendPayload — msfvenom payload generation guide
+// SendPayload — payload generation guide
 func SendPayload(os_, arch, lhost, lport, format string) (string, error) {
 	return post("/exploit/payload", map[string]string{
 		"os": os_, "arch": arch, "lhost": lhost, "lport": lport, "format": format,
 	})
 }
 
-// SendToolHelp — get help for a specific Kali tool
+// SendToolHelp — tool usage guide
 func SendToolHelp(tool, task string) (string, error) {
 	return post("/tools/help", map[string]string{"tool": tool, "task": task})
 }
