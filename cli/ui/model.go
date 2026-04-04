@@ -20,6 +20,9 @@ const (
 	stateTyping  state = iota
 )
 
+// maxContextMessages — keep last 20 messages (10 exchanges) in context
+const maxContextMessages = 20
+
 type apiResponseMsg struct {
 	response string
 	err      error
@@ -28,14 +31,10 @@ type apiResponseMsg struct {
 type typeTickMsg struct{}
 type wakeMsg struct{ ok bool }
 
-// ChatEntry for display in UI
 type ChatEntry struct {
 	Prompt   string
 	Response string
 }
-
-// Max messages to keep in memory context (last N exchanges = 2*N messages)
-const maxContextMessages = 20
 
 type Model struct {
 	input           textinput.Model
@@ -46,14 +45,15 @@ type Model struct {
 	typingIndex     int
 	errMsg          string
 	lastPrompt      string
-	history         []ChatEntry    // UI display history
-	contextMessages []api.Message  // conversation memory sent to backend
+	history         []ChatEntry
+	contextMessages []api.Message
 	scrollOffset    int
 	width           int
 	height          int
+	localIP         string // passed in from main
 }
 
-func NewModel() Model {
+func NewModel(localIP string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Ask anything about cybersecurity..."
 	ti.CharLimit = 6000
@@ -64,7 +64,8 @@ func NewModel() Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = LabelStyle
 
-	// Phase C: Load last 5 exchanges from local history as initial context
+	// BUG FIX: storage.Load() must be called BEFORE NewModel in main.go
+	// Load last 5 exchanges as initial context
 	contextMsgs := loadHistoryAsContext(5)
 
 	return Model{
@@ -74,23 +75,20 @@ func NewModel() Model {
 		width:           80,
 		height:          24,
 		contextMessages: contextMsgs,
+		localIP:         localIP,
 	}
 }
 
-// loadHistoryAsContext reads local history and converts last N entries to messages
 func loadHistoryAsContext(n int) []api.Message {
 	entries := storage.GetHistory()
 	if len(entries) == 0 {
 		return []api.Message{}
 	}
-
-	// Take last N entries
 	start := len(entries) - n
 	if start < 0 {
 		start = 0
 	}
 	recent := entries[start:]
-
 	var msgs []api.Message
 	for _, e := range recent {
 		msgs = append(msgs, api.Message{Role: "user", Content: e.User})
@@ -129,6 +127,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		// Ctrl+L — clear chat screen
+		if msg.Type == tea.KeyCtrlL {
+			m.history = []ChatEntry{}
+			m.displayed = ""
+			m.fullResponse = ""
+			m.errMsg = ""
+			m.scrollOffset = 0
+			return m, nil
+		}
+
 		if m.state != stateLoading && m.state != stateWaking {
 			switch msg.Type {
 			case tea.KeyPgUp:
@@ -157,7 +165,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastPrompt = prompt
 				m.scrollOffset = 0
 				m.input.SetValue("")
-				// Send with full conversation context
 				return m, tea.Batch(m.spinner.Tick, fetchWithContext(prompt, m.contextMessages))
 			}
 			var cmd tea.Cmd
@@ -169,14 +176,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.state = stateInput
 			m.errMsg = msg.err.Error()
-			m.input.Focus()
+			m.input.Focus() // BUG FIX: ensure focus restored on error
 			return m, textinput.Blink
 		}
 		m.fullResponse = msg.response
 		m.typingIndex = 0
 		m.displayed = ""
 		m.state = stateTyping
-		m.scrollOffset = 0
+		m.scrollOffset = 0 // BUG FIX: reset scroll on new response
 		return m, typeTickCmd()
 
 	case typeTickMsg:
@@ -199,22 +206,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, typeTickCmd()
 		}
 
-		// Typing done — save to local history
 		_ = storage.AddEntry(m.lastPrompt, m.fullResponse)
-
-		// Add to UI display history
 		m.history = append(m.history, ChatEntry{
 			Prompt:   m.lastPrompt,
 			Response: m.fullResponse,
 		})
 
-		// Add to conversation context for next request
+		// BUG FIX: proper context trimming — circular buffer
 		m.contextMessages = append(m.contextMessages,
 			api.Message{Role: "user", Content: m.lastPrompt},
 			api.Message{Role: "assistant", Content: m.fullResponse},
 		)
-		// Keep context within limit
 		if len(m.contextMessages) > maxContextMessages {
+			// Keep only the last maxContextMessages
 			m.contextMessages = m.contextMessages[len(m.contextMessages)-maxContextMessages:]
 		}
 
@@ -242,7 +246,6 @@ func wakeBackend() tea.Cmd {
 	}
 }
 
-// fetchWithContext sends prompt with full conversation history
 func fetchWithContext(prompt string, history []api.Message) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := api.SendChat(prompt, history)

@@ -33,7 +33,7 @@ func (m Model) View() string {
 	b.WriteString(lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#00FFFF")).
-		Render(fmt.Sprintf("  ⚡ CyberMind v2.1.0  🧠 AI  |  🔌 Live  |  PgUp/PgDn scroll")))
+		Render(fmt.Sprintf("  ⚡ CyberMind v2.2.0  🧠 AI  |  🔌 Live  |  PgUp/PgDn scroll  |  Ctrl+L clear")))
 	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#1a1a1a")).

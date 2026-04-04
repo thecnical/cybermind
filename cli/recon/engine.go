@@ -28,6 +28,7 @@ type ReconResult struct {
 	Target  string
 	Results []ToolResult
 	Tools   []string
+	Failed  []string
 }
 
 // isAvailable checks if a tool is installed
@@ -36,32 +37,61 @@ func isAvailable(tool string) bool {
 	return err == nil
 }
 
-// run executes a command and returns output
-func run(name string, args ...string) (string, error) {
+// run executes a command with timeout, returns output
+func run(timeoutSec int, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 
-	// 60 second timeout per tool
 	done := make(chan error, 1)
 	go func() { done <- cmd.Run() }()
 
 	select {
 	case err := <-done:
-		if err != nil {
-			combined := out.String() + errOut.String()
-			if combined != "" {
-				return combined, nil // return partial output even on error
-			}
+		combined := out.String()
+		if combined == "" {
+			combined = errOut.String()
+		}
+		if err != nil && combined == "" {
 			return "", err
 		}
-		return out.String(), nil
-	case <-time.After(60 * time.Second):
-		cmd.Process.Kill()
-		return out.String(), fmt.Errorf("timeout after 60s")
+		return combined, nil
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		partial := out.String()
+		if partial != "" {
+			return partial + "\n[timeout — partial results]", nil
+		}
+		return "", fmt.Errorf("timeout after %ds", timeoutSec)
 	}
+}
+
+// sanitize removes ANSI codes and trims output to max length
+func sanitize(s string, maxLen int) string {
+	// Remove ANSI escape codes
+	var result strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			// Skip until 'm'
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			i++
+			continue
+		}
+		result.WriteByte(s[i])
+		i++
+	}
+	clean := result.String()
+	if len(clean) > maxLen {
+		return clean[:maxLen] + "\n... [truncated]"
+	}
+	return clean
 }
 
 // isIP checks if target looks like an IP address
@@ -82,112 +112,136 @@ func isIP(target string) bool {
 func RunAutoRecon(target string, progress func(string)) ReconResult {
 	result := ReconResult{Target: target}
 	var allOutput strings.Builder
-	usedTools := []string{}
 
-	// 1. WHOIS
-	progress("Running whois...")
-	if isAvailable("whois") {
-		start := time.Now()
-		out, err := run("whois", target)
-		tr := ToolResult{Tool: "whois", Command: "whois " + target, Took: time.Since(start)}
-		if err == nil && out != "" {
-			tr.Output = out
-			usedTools = append(usedTools, "whois")
-			allOutput.WriteString("=== WHOIS ===\n" + out + "\n\n")
+	addResult := func(tool, cmd, output, errMsg string, took time.Duration) {
+		tr := ToolResult{Tool: tool, Command: cmd, Took: took}
+		if output != "" && errMsg == "" {
+			tr.Output = sanitize(output, 5000)
+			result.Tools = append(result.Tools, tool)
+			allOutput.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", strings.ToUpper(tool), tr.Output))
 		} else {
-			tr.Error = "failed or no output"
+			tr.Error = errMsg
+			result.Failed = append(result.Failed, tool)
 		}
 		result.Results = append(result.Results, tr)
 	}
 
-	// 2. DIG — DNS records
-	progress("Running dig (DNS)...")
-	if isAvailable("dig") {
+	// 1. WHOIS
+	if isAvailable("whois") {
+		progress("whois — domain registration info...")
 		start := time.Now()
-		out, err := run("dig", "+short", "ANY", target)
+		out, err := run(30, "whois", target)
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		addResult("whois", "whois "+target, out, errMsg, time.Since(start))
+	}
+
+	// 2. DIG — DNS
+	if isAvailable("dig") {
+		progress("dig — DNS records...")
+		start := time.Now()
+		out, _ := run(15, "dig", "+short", "ANY", target)
 		if out == "" {
-			out, err = run("dig", "+short", target)
+			out, _ = run(15, "dig", "+short", target)
 		}
-		tr := ToolResult{Tool: "dig", Command: "dig +short ANY " + target, Took: time.Since(start)}
-		if err == nil && out != "" {
-			tr.Output = out
-			usedTools = append(usedTools, "dig")
-			allOutput.WriteString("=== DNS (dig) ===\n" + out + "\n\n")
-		} else {
-			tr.Error = "failed or no output"
-		}
-		result.Results = append(result.Results, tr)
+		addResult("dig", "dig +short ANY "+target, out, "", time.Since(start))
 	}
 
 	// 3. NMAP — port scan
-	progress("Running nmap (port scan)...")
 	if isAvailable("nmap") {
+		progress("nmap — port scan + service detection (this may take a minute)...")
 		start := time.Now()
-		// Fast scan: top 1000 ports, service detection, no ping
-		out, err := run("nmap", "-sV", "-T4", "--open", "-Pn", target)
-		tr := ToolResult{Tool: "nmap", Command: "nmap -sV -T4 --open -Pn " + target, Took: time.Since(start)}
-		if err == nil && out != "" {
-			tr.Output = out
-			usedTools = append(usedTools, "nmap")
-			allOutput.WriteString("=== NMAP ===\n" + out + "\n\n")
-		} else {
-			tr.Error = "failed or no output"
+		out, err := run(120, "nmap", "-sV", "-T4", "--open", "-Pn", "--top-ports", "1000", target)
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
 		}
-		result.Results = append(result.Results, tr)
+		addResult("nmap", "nmap -sV -T4 --open -Pn --top-ports 1000 "+target, out, errMsg, time.Since(start))
 	}
 
-	// 4. SUBFINDER — subdomain enum (only for domains, not IPs)
+	// Domain-only tools
 	if !isIP(target) {
-		progress("Running subfinder (subdomains)...")
+		// 4. SUBFINDER
 		if isAvailable("subfinder") {
+			progress("subfinder — subdomain enumeration...")
 			start := time.Now()
-			out, err := run("subfinder", "-d", target, "-silent")
-			tr := ToolResult{Tool: "subfinder", Command: "subfinder -d " + target + " -silent", Took: time.Since(start)}
-			if err == nil && out != "" {
-				tr.Output = out
-				usedTools = append(usedTools, "subfinder")
-				allOutput.WriteString("=== SUBDOMAINS (subfinder) ===\n" + out + "\n\n")
-			} else {
-				tr.Error = "failed or no output"
+			out, err := run(60, "subfinder", "-d", target, "-silent")
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
 			}
-			result.Results = append(result.Results, tr)
+			addResult("subfinder", "subfinder -d "+target+" -silent", out, errMsg, time.Since(start))
 		}
 
-		// 5. HTTPX — check live hosts
-		progress("Running httpx (live hosts)...")
+		// 5. AMASS (passive only — fast)
+		if isAvailable("amass") {
+			progress("amass — passive subdomain enum...")
+			start := time.Now()
+			out, err := run(60, "amass", "enum", "-passive", "-d", target)
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
+			}
+			addResult("amass", "amass enum -passive -d "+target, out, errMsg, time.Since(start))
+		}
+
+		// 6. HTTPX — live hosts
 		if isAvailable("httpx") {
+			progress("httpx — HTTP probe + tech detection...")
 			start := time.Now()
-			out, err := run("httpx", "-u", target, "-silent", "-status-code", "-title", "-tech-detect")
-			tr := ToolResult{Tool: "httpx", Command: "httpx -u " + target + " -silent -status-code -title -tech-detect", Took: time.Since(start)}
-			if err == nil && out != "" {
-				tr.Output = out
-				usedTools = append(usedTools, "httpx")
-				allOutput.WriteString("=== HTTP PROBE (httpx) ===\n" + out + "\n\n")
-			} else {
-				tr.Error = "failed or no output"
+			out, err := run(30, "httpx", "-u", target, "-silent", "-status-code", "-title", "-tech-detect", "-follow-redirects")
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
 			}
-			result.Results = append(result.Results, tr)
+			addResult("httpx", "httpx -u "+target+" -silent -status-code -title -tech-detect", out, errMsg, time.Since(start))
 		}
 
-		// 6. WHATWEB — tech fingerprint
-		progress("Running whatweb (fingerprint)...")
+		// 7. WHATWEB — fingerprint
 		if isAvailable("whatweb") {
+			progress("whatweb — technology fingerprint...")
 			start := time.Now()
-			out, err := run("whatweb", "--color=never", target)
-			tr := ToolResult{Tool: "whatweb", Command: "whatweb " + target, Took: time.Since(start)}
-			if err == nil && out != "" {
-				tr.Output = out
-				usedTools = append(usedTools, "whatweb")
-				allOutput.WriteString("=== TECH FINGERPRINT (whatweb) ===\n" + out + "\n\n")
-			} else {
-				tr.Error = "failed or no output"
+			out, err := run(30, "whatweb", "--color=never", "-a", "3", target)
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
 			}
-			result.Results = append(result.Results, tr)
+			addResult("whatweb", "whatweb --color=never -a 3 "+target, out, errMsg, time.Since(start))
+		}
+
+		// 8. GOBUSTER — directory bruteforce (fast wordlist)
+		if isAvailable("gobuster") {
+			progress("gobuster — directory bruteforce...")
+			start := time.Now()
+			// Use common wordlist if available
+			wordlist := "/usr/share/wordlists/dirb/common.txt"
+			if !isAvailable("ls") {
+				wordlist = "/usr/share/wordlists/dirb/common.txt"
+			}
+			out, err := run(60, "gobuster", "dir", "-u", "http://"+target, "-w", wordlist, "-q", "--no-error", "-t", "20")
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
+			}
+			addResult("gobuster", "gobuster dir -u http://"+target+" -w "+wordlist+" -q -t 20", out, errMsg, time.Since(start))
+		}
+
+		// 9. NUCLEI — vulnerability scan (fast templates)
+		if isAvailable("nuclei") {
+			progress("nuclei — vulnerability scan...")
+			start := time.Now()
+			out, err := run(90, "nuclei", "-u", target, "-silent", "-severity", "critical,high,medium", "-no-color")
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
+			}
+			addResult("nuclei", "nuclei -u "+target+" -silent -severity critical,high,medium", out, errMsg, time.Since(start))
 		}
 	}
 
-	result.Tools = usedTools
-	// Store combined output in first result for easy access
+	// Store combined output
 	if allOutput.Len() > 0 {
 		result.Results = append([]ToolResult{{
 			Tool:   "combined",
@@ -217,7 +271,13 @@ func GetCombinedOutput(r ReconResult) string {
 
 // CheckTools returns which recon tools are available
 func CheckTools() map[string]bool {
-	tools := []string{"nmap", "subfinder", "httpx", "whatweb", "dig", "whois", "nuclei", "gobuster", "ffuf", "amass"}
+	tools := []string{
+		"nmap", "masscan", "rustscan",
+		"subfinder", "amass", "httpx", "whatweb",
+		"dig", "whois", "nuclei",
+		"gobuster", "ffuf", "feroxbuster",
+		"nikto", "sqlmap", "burpsuite",
+	}
 	result := make(map[string]bool)
 	for _, t := range tools {
 		result[t] = isAvailable(t)

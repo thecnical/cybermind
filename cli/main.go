@@ -196,11 +196,12 @@ func main() {
 	args := os.Args[1:]
 
 	if len(args) == 0 {
+		// BUG FIX: Load storage BEFORE NewModel so history context works
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning: could not load history:", err)
 		}
 		printBanner()
-		p := tea.NewProgram(ui.NewModel())
+		p := tea.NewProgram(ui.NewModel(getLocalIP()))
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -345,7 +346,9 @@ func main() {
 			format = "apk"
 		}
 		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ Generating %s/%s payload guide...", targetOS, arch)))
-		result, err := api.SendPayload(targetOS, arch, "YOUR_IP", "4444", format)
+		// BUG FIX: use detected local IP instead of hardcoded "YOUR_IP"
+		detectedIP := getLocalIP()
+		result, err := api.SendPayload(targetOS, arch, detectedIP, "4444", format)
 		if err != nil {
 			printError(err.Error())
 			os.Exit(1)
@@ -371,6 +374,8 @@ func main() {
 		printResult("Tool Guide → "+tool, result)
 
 	default:
+		// BUG FIX: load storage so history save works
+		_ = storage.Load()
 		prompt := strings.Join(args, " ")
 		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Asking CyberMind AI..."))
 		result, err := api.SendPrompt(prompt)
@@ -379,5 +384,7 @@ func main() {
 			os.Exit(1)
 		}
 		printResult("Response", result)
+		// Save to history
+		_ = storage.AddEntry(prompt, result)
 	}
 }
