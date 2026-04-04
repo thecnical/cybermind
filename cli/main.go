@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"runtime"
 	"strings"
 
 	"cybermind-cli/api"
+	"cybermind-cli/recon"
 	"cybermind-cli/storage"
 	"cybermind-cli/ui"
 
@@ -14,16 +17,50 @@ import (
 )
 
 var (
-	Version = "2.2.0" // set by build flag: -ldflags="-X main.Version=x.x.x"
+	Version = "2.2.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
 	red     = lipgloss.Color("#FF4444")
 	dim     = lipgloss.Color("#777777")
 	credit  = lipgloss.Color("#555555")
+	yellow  = lipgloss.Color("#FFD700")
 )
 
+// getLocalIP returns the local network IP
+func getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "unknown"
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return "unknown"
+}
+
+// getOSLabel returns a styled OS label
+func getOSLabel() (string, string) {
+	switch runtime.GOOS {
+	case "linux":
+		return "🐧 Kali Linux", "#268BEE"
+	case "windows":
+		return "🪟 Windows", "#0078D6"
+	case "darwin":
+		return "🍎 macOS", "#999999"
+	default:
+		return runtime.GOOS, "#777777"
+	}
+}
+
 func printBanner() {
+	osLabel, osColor := getOSLabel()
+	localIP := getLocalIP()
+
 	lines := []struct{ text, color string }{
 		{` ██████╗██╗   ██╗██████╗ ███████╗██████╗ ███╗   ███╗██╗███╗   ██╗██████╗ `, "#00FFFF"},
 		{`██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗`, "#00CFFF"},
@@ -32,13 +69,29 @@ func printBanner() {
 		{`╚██████╗   ██║   ██████╔╝███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██████╔╝`, "#8A2BE2"},
 		{` ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝`, "#9400D3"},
 	}
+
 	fmt.Println()
 	for _, l := range lines {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(l.color)).Render(l.text))
 	}
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ⚡ CyberMind CLI v"+Version+" – AI Powered Kali Linux Assistant"))
+
+	// Personalized greeting
+	greeting := fmt.Sprintf("  ⚡ CyberMind CLI v%s  |  %s", Version,
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(osColor)).Render(osLabel))
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(greeting))
 	fmt.Println(lipgloss.NewStyle().Foreground(credit).Render("  created by github.com/thecnical (Chandan Pandey)"))
+	fmt.Println()
+
+	// System info
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Local IP:  %s", localIP)))
+
+	// Linux-only recon notice
+	if runtime.GOOS == "linux" {
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Auto Recon Mode available  →  cybermind /recon <target>"))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Auto Recon Mode: Linux only"))
+	}
 	fmt.Println()
 }
 
@@ -46,37 +99,33 @@ func printHelp() {
 	s := lipgloss.NewStyle().Bold(true).Foreground(cyan)
 	d := lipgloss.NewStyle().Foreground(dim)
 	g := lipgloss.NewStyle().Foreground(green)
+	y := lipgloss.NewStyle().Foreground(yellow)
 
 	fmt.Println()
 	fmt.Println(s.Render("  ⚡ CyberMind CLI – Commands"))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 55)))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  INTERACTIVE:"))
-	fmt.Println(g.Render("  cybermind") + d.Render("                    → start AI chat"))
+	fmt.Println(g.Render("  cybermind") + d.Render("                         → start AI chat"))
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  KALI TOOLS:"))
-	fmt.Println(g.Render("  cybermind scan <target> [type]") + d.Render("   → AI scan guide"))
-	fmt.Println(g.Render("  cybermind recon <target> [type]") + d.Render("  → AI recon guide"))
-	fmt.Println(g.Render("  cybermind exploit <vuln> [target]") + d.Render("→ exploitation guide"))
-	fmt.Println(g.Render("  cybermind payload <os> [arch]") + d.Render("    → msfvenom payload"))
-	fmt.Println(g.Render("  cybermind tool <name> [task]") + d.Render("     → tool usage guide"))
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  SCAN TYPES:"))
-	fmt.Println(d.Render("  quick, full, stealth, web, vuln, subdomain, network, ad"))
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  RECON TYPES:"))
-	fmt.Println(d.Render("  passive, active, subdomain, osint, web, network"))
+
+	if runtime.GOOS == "linux" {
+		fmt.Println(y.Render("  🐧 LINUX ONLY — AUTO RECON:"))
+		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("       → full auto recon + AI analysis"))
+		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → check installed recon tools"))
+		fmt.Println()
+	}
+
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  AI GUIDED:"))
+	fmt.Println(g.Render("  cybermind scan <target> [type]") + d.Render("  → AI scan guide"))
+	fmt.Println(g.Render("  cybermind recon <target> [type]") + d.Render(" → AI recon guide"))
+	fmt.Println(g.Render("  cybermind exploit <vuln>") + d.Render("        → exploitation guide"))
+	fmt.Println(g.Render("  cybermind payload <os> [arch]") + d.Render("   → msfvenom payload"))
+	fmt.Println(g.Render("  cybermind tool <name> [task]") + d.Render("    → tool usage guide"))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  HISTORY:"))
 	fmt.Println(g.Render("  cybermind history") + d.Render("               → view chat history"))
 	fmt.Println(g.Render("  cybermind clear") + d.Render("                 → clear history"))
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  EXAMPLES:"))
-	fmt.Println(d.Render("  cybermind scan 192.168.1.1 full"))
-	fmt.Println(d.Render("  cybermind recon example.com subdomain"))
-	fmt.Println(d.Render("  cybermind exploit CVE-2021-44228 10.0.0.1"))
-	fmt.Println(d.Render("  cybermind payload windows x64"))
-	fmt.Println(d.Render("  cybermind tool sqlmap \"find SQLi in login form\""))
 	fmt.Println()
 }
 
@@ -93,11 +142,60 @@ func printError(msg string) {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ✗ " + msg))
 }
 
+func runAutoRecon(target string) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render("  🔍 AUTO RECON MODE — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	// Run all tools with progress updates
+	result := recon.RunAutoRecon(target, func(msg string) {
+		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ " + msg))
+	})
+
+	// Show what was collected
+	fmt.Println()
+	if len(result.Tools) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ No recon tools found. Install: nmap, subfinder, httpx, dig, whois"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: sudo apt install nmap whois dnsutils"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"))
+		fmt.Println()
+		// Fall back to AI guide
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Falling back to AI recon guide..."))
+		result2, err := api.SendRecon(target, "full")
+		if err != nil {
+			printError(err.Error())
+			return
+		}
+		printResult("Recon Guide → "+target, result2)
+		return
+	}
+
+	fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Collected data from: %s", strings.Join(result.Tools, ", "))))
+	fmt.Println()
+
+	// Send to AI for analysis
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to AI for analysis..."))
+	combined := recon.GetCombinedOutput(result)
+	analysis, err := api.SendAnalysis(target, combined, strings.Join(result.Tools, ", "))
+	if err != nil {
+		printError("AI analysis failed: " + err.Error())
+		// Show raw output as fallback
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("\n  Raw recon output:\n"))
+		fmt.Println(combined)
+		return
+	}
+
+	printResult("AI Analysis → "+target, analysis)
+
+	// Save to history
+	_ = storage.AddEntry("/recon "+target, analysis)
+}
+
 func main() {
 	args := os.Args[1:]
 
 	if len(args) == 0 {
-		// Interactive mode
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning: could not load history:", err)
 		}
@@ -122,6 +220,47 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  CyberMind CLI v" + Version))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  github.com/thecnical"))
 
+	case "/recon":
+		// Linux-only auto recon
+		if runtime.GOOS != "linux" {
+			printError("Auto Recon Mode is only available on Linux/Kali.")
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use: cybermind recon <target> for AI-guided recon on Windows"))
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /recon <target>")
+			printError("Example: cybermind /recon 192.168.1.1")
+			printError("Example: cybermind /recon example.com")
+			os.Exit(1)
+		}
+		target := args[1]
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		runAutoRecon(target)
+
+	case "/tools":
+		// Show available recon tools
+		if runtime.GOOS != "linux" {
+			printError("Tool check is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		tools := recon.CheckTools()
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🛠  Recon Tools Status"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 40)))
+		for tool, available := range tools {
+			if available {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ " + tool))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ " + tool + " (not installed)"))
+			}
+		}
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Install missing: sudo apt install nmap whois dnsutils"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Go tools: go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"))
+		fmt.Println()
+
 	case "history":
 		if err := storage.Load(); err != nil {
 			printError("Could not load history: " + err.Error())
@@ -139,7 +278,6 @@ func main() {
 	case "scan":
 		if len(args) < 2 {
 			printError("Usage: cybermind scan <target> [type]")
-			printError("Types: quick, full, stealth, web, vuln, subdomain, network, ad")
 			os.Exit(1)
 		}
 		target := args[1]
@@ -158,7 +296,6 @@ func main() {
 	case "recon":
 		if len(args) < 2 {
 			printError("Usage: cybermind recon <target> [type]")
-			printError("Types: passive, active, subdomain, osint, web, network")
 			os.Exit(1)
 		}
 		target := args[1]
@@ -176,8 +313,7 @@ func main() {
 
 	case "exploit":
 		if len(args) < 2 {
-			printError("Usage: cybermind exploit <vulnerability|service> [target]")
-			printError("Example: cybermind exploit CVE-2021-44228 10.0.0.1")
+			printError("Usage: cybermind exploit <vulnerability> [target]")
 			os.Exit(1)
 		}
 		vuln := args[1]
@@ -191,7 +327,7 @@ func main() {
 			printError(err.Error())
 			os.Exit(1)
 		}
-		printResult(fmt.Sprintf("Exploit Guide → %s", vuln), result)
+		printResult("Exploit Guide → "+vuln, result)
 
 	case "payload":
 		targetOS := "windows"
@@ -202,8 +338,6 @@ func main() {
 		if len(args) >= 3 {
 			arch = args[2]
 		}
-		lhost := "YOUR_IP"
-		lport := "4444"
 		format := "exe"
 		if targetOS == "linux" {
 			format = "elf"
@@ -211,7 +345,7 @@ func main() {
 			format = "apk"
 		}
 		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ Generating %s/%s payload guide...", targetOS, arch)))
-		result, err := api.SendPayload(targetOS, arch, lhost, lport, format)
+		result, err := api.SendPayload(targetOS, arch, "YOUR_IP", "4444", format)
 		if err != nil {
 			printError(err.Error())
 			os.Exit(1)
@@ -221,7 +355,6 @@ func main() {
 	case "tool":
 		if len(args) < 2 {
 			printError("Usage: cybermind tool <toolname> [task]")
-			printError("Example: cybermind tool nmap \"scan for open ports\"")
 			os.Exit(1)
 		}
 		tool := args[1]
@@ -235,10 +368,9 @@ func main() {
 			printError(err.Error())
 			os.Exit(1)
 		}
-		printResult(fmt.Sprintf("Tool Guide → %s", tool), result)
+		printResult("Tool Guide → "+tool, result)
 
 	default:
-		// Treat unknown args as a direct chat prompt
 		prompt := strings.Join(args, " ")
 		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Asking CyberMind AI..."))
 		result, err := api.SendPrompt(prompt)

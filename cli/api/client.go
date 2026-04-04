@@ -21,13 +21,12 @@ func getBaseURL() string {
 
 var httpClient = &http.Client{Timeout: 120 * time.Second}
 
-// Message represents a single chat message for conversation history
+// Message for conversation history
 type Message struct {
-	Role    string `json:"role"`    // "user" or "assistant"
+	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// chatRequest includes prompt + full conversation history
 type chatRequest struct {
 	Prompt   string    `json:"prompt"`
 	Messages []Message `json:"messages"`
@@ -36,6 +35,7 @@ type chatRequest struct {
 type promptResponse struct {
 	Success  bool   `json:"success"`
 	Response string `json:"response"`
+	Analysis string `json:"analysis"`
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
 	Time     string `json:"time"`
@@ -53,6 +53,21 @@ func WakeUp() bool {
 	return resp.StatusCode == 200
 }
 
+// GetPublicIP fetches the public IP of the machine
+func GetPublicIP() string {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("https://api.ipify.org")
+	if err != nil {
+		return "unknown"
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "unknown"
+	}
+	return string(body)
+}
+
 func post(endpoint string, body interface{}) (string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -61,9 +76,7 @@ func post(endpoint string, body interface{}) (string, error) {
 
 	resp, err := httpClient.Post(getBaseURL()+endpoint, "application/json", bytes.NewBuffer(payload))
 	if err != nil {
-		return "", fmt.Errorf(
-			"cannot reach CyberMind backend — check your internet connection",
-		)
+		return "", fmt.Errorf("cannot reach CyberMind backend — check your internet connection")
 	}
 	defer resp.Body.Close()
 
@@ -79,20 +92,30 @@ func post(endpoint string, body interface{}) (string, error) {
 	if !result.Success {
 		return "", fmt.Errorf("%s", result.Error)
 	}
+	// Return analysis if present, otherwise response
+	if result.Analysis != "" {
+		return result.Analysis, nil
+	}
 	return result.Response, nil
 }
 
-// SendChat sends prompt with full conversation history for memory
+// SendChat sends prompt with conversation history
 func SendChat(prompt string, history []Message) (string, error) {
-	return post("/chat", chatRequest{
-		Prompt:   prompt,
-		Messages: history,
-	})
+	return post("/chat", chatRequest{Prompt: prompt, Messages: history})
 }
 
-// SendPrompt — simple chat without history (used by command mode)
+// SendPrompt — simple chat without history
 func SendPrompt(prompt string) (string, error) {
 	return post("/chat", chatRequest{Prompt: prompt, Messages: []Message{}})
+}
+
+// SendAnalysis sends raw recon data to AI for analysis
+func SendAnalysis(target, data, tools string) (string, error) {
+	return post("/analyze", map[string]string{
+		"target": target,
+		"data":   data,
+		"tools":  tools,
+	})
 }
 
 // SendScan — AI-guided scan
