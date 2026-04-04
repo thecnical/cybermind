@@ -250,6 +250,7 @@ cybermind "bypass UAC on Windows 10"
 cybermind history      # view saved conversations
 cybermind clear        # wipe local history
 cybermind help         # show all commands
+cybermind update       # update to latest version
 cybermind --version    # show version
 ```
 
@@ -282,7 +283,42 @@ proxychains cybermind scan target.com full
 
 ---
 
-## Build Options
+## Updating CyberMind
+
+### One Command Update (Linux/Kali)
+
+```bash
+cybermind update
+```
+
+This single command does everything automatically — pulls latest code from GitHub, rebuilds the binary, and installs it to `/usr/local/bin`. Done.
+
+### Manual Update (Linux/Kali)
+
+```bash
+cd cybermind
+git pull origin main
+cd cli
+go build -ldflags="-X main.Version=2.2.0" -o cybermind .
+sudo mv cybermind /usr/local/bin/
+cybermind --version
+```
+
+### Manual Update (Windows)
+
+```powershell
+cd cybermind
+git pull origin main
+cd cli
+go build -ldflags="-X main.Version=2.2.0" -o cybermind.exe .
+# Move to System32 as Administrator
+Move-Item -Force cybermind.exe C:\Windows\System32\cybermind.exe
+cybermind --version
+```
+
+---
+
+
 
 ```bash
 make build          # current OS

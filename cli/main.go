@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 
@@ -261,6 +262,75 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Install missing: sudo apt install nmap whois dnsutils"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Go tools: go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"))
 		fmt.Println()
+
+	case "update":
+		// Self-update: git pull + rebuild + reinstall
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ⟳ Updating CyberMind..."))
+		fmt.Println()
+
+		// Find repo root (go up from binary location or use GOPATH)
+		// Try common locations
+		homedir, _ := os.UserHomeDir()
+		repoPaths := []string{
+			".", // current dir
+			homedir + "/cybermind",
+			homedir + "/CyberMind",
+			"/opt/cybermind",
+		}
+
+		repoPath := ""
+		for _, p := range repoPaths {
+			if _, err := os.Stat(p + "/.git"); err == nil {
+				repoPath = p
+				break
+			}
+		}
+
+		if repoPath == "" {
+			printError("Cannot find CyberMind repo. Run from inside the cloned repo:")
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  cd cybermind/cli && git pull && go build -ldflags=\"-X main.Version=2.2.0\" -o cybermind . && sudo mv cybermind /usr/local/bin/"))
+			os.Exit(1)
+		}
+
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Found repo at: " + repoPath))
+
+		// git pull
+		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Pulling latest changes..."))
+		pullCmd := exec.Command("git", "-C", repoPath, "pull", "origin", "main")
+		pullCmd.Stdout = os.Stdout
+		pullCmd.Stderr = os.Stderr
+		if err := pullCmd.Run(); err != nil {
+			printError("git pull failed: " + err.Error())
+			os.Exit(1)
+		}
+
+		// go build
+		cliPath := repoPath + "/cli"
+		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Building new binary..."))
+		buildCmd := exec.Command("go", "build", "-ldflags=-X main.Version=2.2.0", "-o", "cybermind", ".")
+		buildCmd.Dir = cliPath
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			printError("Build failed: " + err.Error())
+			os.Exit(1)
+		}
+
+		// install
+		if runtime.GOOS == "linux" {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Installing to /usr/local/bin/..."))
+			installCmd := exec.Command("sudo", "mv", cliPath+"/cybermind", "/usr/local/bin/cybermind")
+			installCmd.Stdout = os.Stdout
+			installCmd.Stderr = os.Stderr
+			if err := installCmd.Run(); err != nil {
+				printError("Install failed (try: sudo mv " + cliPath + "/cybermind /usr/local/bin/)")
+				os.Exit(1)
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ✓ CyberMind updated successfully!"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind --version to confirm"))
 
 	case "history":
 		if err := storage.Load(); err != nil {
