@@ -15,12 +15,12 @@ import (
 
 // HuntResult holds all findings from the hunt pipeline.
 type HuntResult struct {
-	Target   string
-	Results  []HuntToolResult
-	Tools    []string       // tools that produced output
-	Failed   []HuntToolResult
-	Skipped  []HuntSkipped
-	Context  *HuntContext
+	Target  string
+	Results []HuntToolResult
+	Tools   []string // tools that produced output
+	Failed  []HuntToolResult
+	Skipped []HuntSkipped
+	Context *HuntContext
 }
 
 // HuntToolResult holds output from a single hunt tool.
@@ -44,11 +44,11 @@ type HuntSkipped struct {
 type HuntStatusKind string
 
 const (
-	HuntRunning HuntStatusKind = "running"
-	HuntDone    HuntStatusKind = "done"
-	HuntFailed  HuntStatusKind = "failed"
+	HuntRunning     HuntStatusKind = "running"
+	HuntDone        HuntStatusKind = "done"
+	HuntFailed      HuntStatusKind = "failed"
 	HuntKindSkipped HuntStatusKind = "skipped"
-	HuntPartial HuntStatusKind = "partial"
+	HuntPartial     HuntStatusKind = "partial"
 )
 
 // HuntStatus is emitted for each tool during execution.
@@ -59,33 +59,37 @@ type HuntStatus struct {
 	Took   time.Duration
 }
 
-// HuntContext carries recon intelligence into the hunt pipeline.
-// Populated either from a prior /recon run or from manual flags.
+// HuntContext carries intelligence through the hunt pipeline.
+// Populated from a prior /recon run OR built up during hunt phases.
 type HuntContext struct {
-	Target      string
-	TargetType  string   // "domain" | "ip"
-	LiveURLs    []string // from recon httpx output
-	CrawledURLs []string // from recon katana output
+	Target     string
+	TargetType string // "domain" | "ip"
+
+	// From /recon (pre-populated if chained)
+	LiveURLs    []string // httpx-confirmed live URLs
+	CrawledURLs []string // katana-crawled endpoints
 	OpenPorts   []int
 	WAFDetected bool
 	WAFVendor   string
 	Subdomains  []string
 
-	// Hunt findings
-	XSSFound        []string
-	ParamsFound     []string
-	HistoricalURLs  []string
-	VulnsFound      []string
+	// Populated during hunt phases
+	HistoricalURLs []string // gau + waybackurls
+	AllURLs        []string // merged: LiveURLs + CrawledURLs + HistoricalURLs (deduped)
+	ParamsFound    []string // x8 hidden parameters
+	XSSFound       []string // dalfox confirmed XSS
+	VulnsFound     []string // nuclei confirmed vulns
 }
 
 // HuntToolSpec defines a hunt tool.
 type HuntToolSpec struct {
-	Name        string
-	Phase       int
-	Timeout     int
-	DomainOnly  bool
-	BuildArgs   func(target string, ctx *HuntContext) []string
-	InstallHint string
+	Name         string
+	Phase        int
+	Timeout      int
+	DomainOnly   bool
+	CascadeGroup string // only first available in group runs
+	BuildArgs    func(target string, ctx *HuntContext) []string
+	InstallHint  string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -159,6 +163,19 @@ func writeTempList(items []string) string {
 	return f.Name()
 }
 
+// dedup returns a deduplicated copy of a string slice.
+func dedup(items []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range items {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // addResult processes one tool's output into HuntResult.
 func addResult(result *HuntResult, spec HuntToolSpec, output string, err error, took time.Duration) {
 	tr := HuntToolResult{
@@ -181,8 +198,9 @@ func addResult(result *HuntResult, spec HuntToolSpec, output string, err error, 
 	result.Results = append(result.Results, tr)
 }
 
-// detectHuntTools filters huntRegistry based on availability and --tools flag.
+// detectHuntTools filters huntRegistry based on availability, --tools flag, and cascade groups.
 func detectHuntTools(requested []string) (available []HuntToolSpec, skipped []HuntSkipped, err error) {
+	// Validate requested tool names
 	if requested != nil {
 		validSet := make(map[string]bool)
 		for _, s := range huntRegistry {
@@ -196,11 +214,15 @@ func detectHuntTools(requested []string) (available []HuntToolSpec, skipped []Hu
 		}
 	}
 
+	cascadeWinners := map[string]string{}
+
 	for _, spec := range huntRegistry {
+		// Filter by --tools flag
 		if requested != nil && !containsStr(requested, spec.Name) {
 			skipped = append(skipped, HuntSkipped{Tool: spec.Name, Reason: "not in --tools list"})
 			continue
 		}
+		// Check binary exists
 		if _, err := lookPath(spec.Name); err != nil {
 			skipped = append(skipped, HuntSkipped{
 				Tool:        spec.Name,
@@ -208,6 +230,17 @@ func detectHuntTools(requested []string) (available []HuntToolSpec, skipped []Hu
 				InstallHint: spec.InstallHint,
 			})
 			continue
+		}
+		// Cascade: only first available in group runs
+		if spec.CascadeGroup != "" {
+			if winner, taken := cascadeWinners[spec.CascadeGroup]; taken {
+				skipped = append(skipped, HuntSkipped{
+					Tool:   spec.Name,
+					Reason: "cascade: " + winner + " used",
+				})
+				continue
+			}
+			cascadeWinners[spec.CascadeGroup] = spec.Name
 		}
 		available = append(available, spec)
 	}
@@ -225,37 +258,33 @@ func containsStr(slice []string, val string) bool {
 
 // ─── Context Extraction ───────────────────────────────────────────────────────
 
-// extractXSS parses dalfox output for confirmed XSS findings.
-func extractXSS(result HuntResult) []string {
-	var found []string
-	seen := map[string]bool{}
-	for _, tr := range result.Results {
-		if tr.Tool != "dalfox" {
-			continue
-		}
-		for _, line := range strings.Split(tr.Output, "\n") {
-			line = strings.TrimSpace(line)
-			if strings.Contains(strings.ToLower(line), "poc") ||
-				strings.Contains(strings.ToLower(line), "verified") ||
-				strings.Contains(strings.ToLower(line), "[v]") {
-				if !seen[line] {
-					seen[line] = true
-					found = append(found, line)
-				}
-			}
-		}
-	}
-	return found
-}
+var urlRe = regexp.MustCompile(`https?://[^\s\[\]"'<>]+`)
 
-// extractHistoricalURLs parses gau/waybackurls output.
-var urlRe = regexp.MustCompile(`https?://[^\s]+`)
-
+// extractHistoricalURLs parses gau/waybackurls output for URLs.
 func extractHistoricalURLs(result HuntResult) []string {
 	var urls []string
 	seen := map[string]bool{}
 	for _, tr := range result.Results {
 		if tr.Tool != "gau" && tr.Tool != "waybackurls" {
+			continue
+		}
+		for _, line := range strings.Split(tr.Output, "\n") {
+			line = strings.TrimSpace(line)
+			if m := urlRe.FindString(line); m != "" && !seen[m] {
+				seen[m] = true
+				urls = append(urls, m)
+			}
+		}
+	}
+	return urls
+}
+
+// extractCrawledURLs parses katana output for discovered endpoints.
+func extractCrawledURLs(result HuntResult) []string {
+	var urls []string
+	seen := map[string]bool{}
+	for _, tr := range result.Results {
+		if tr.Tool != "katana" {
 			continue
 		}
 		for _, line := range strings.Split(tr.Output, "\n") {
@@ -288,13 +317,36 @@ func extractParams(result HuntResult) []string {
 	return params
 }
 
-// extractVulns parses nuclei hunt output for confirmed vulnerabilities.
+// extractXSS parses dalfox output for confirmed XSS findings.
+func extractXSS(result HuntResult) []string {
+	var found []string
+	seen := map[string]bool{}
+	for _, tr := range result.Results {
+		if tr.Tool != "dalfox" {
+			continue
+		}
+		for _, line := range strings.Split(tr.Output, "\n") {
+			line = strings.TrimSpace(line)
+			lower := strings.ToLower(line)
+			if strings.Contains(lower, "poc") ||
+				strings.Contains(lower, "verified") ||
+				strings.Contains(lower, "[v]") ||
+				strings.Contains(lower, "found") {
+				if !seen[line] && line != "" {
+					seen[line] = true
+					found = append(found, line)
+				}
+			}
+		}
+	}
+	return found
+}
+
+// extractVulns parses nuclei output for confirmed vulnerabilities.
 func extractVulns(result HuntResult) []string {
 	var vulns []string
 	seen := map[string]bool{}
 	for _, tr := range result.Results {
-		// nuclei is used in both recon (phase 6) and hunt (phase 5)
-		// we capture all nuclei output here
 		if tr.Tool != "nuclei" {
 			continue
 		}
@@ -309,20 +361,35 @@ func extractVulns(result HuntResult) []string {
 	return vulns
 }
 
+// mergeAllURLs combines LiveURLs + CrawledURLs + HistoricalURLs into one deduped list.
+// Prioritizes confirmed live URLs first, then crawled, then historical.
+func mergeAllURLs(ctx *HuntContext) []string {
+	var all []string
+	all = append(all, ctx.LiveURLs...)
+	all = append(all, ctx.CrawledURLs...)
+	all = append(all, ctx.HistoricalURLs...)
+	return dedup(all)
+}
+
 // ─── Main Engine ──────────────────────────────────────────────────────────────
 
 // RunHunt executes the full hunt pipeline against target.
-// ctx carries intelligence from a prior /recon run (can be nil for manual mode).
+// ctx carries intelligence from a prior /recon run (nil = manual mode, starts fresh).
 // requested is the --tools filter (nil = run all available).
 // progress receives live status events.
 func RunHunt(target string, ctx *HuntContext, requested []string, progress func(HuntStatus)) HuntResult {
 	result := HuntResult{Target: target}
 
+	// Initialize context if not provided (manual mode)
 	if ctx == nil {
 		ctx = &HuntContext{
 			Target:     target,
 			TargetType: targetType(target),
 		}
+	}
+	// Ensure TargetType is set
+	if ctx.TargetType == "" {
+		ctx.TargetType = targetType(target)
 	}
 
 	available, skipped, err := detectHuntTools(requested)
@@ -337,99 +404,104 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 		progress(HuntStatus{Tool: s.Tool, Kind: HuntKindSkipped, Reason: s.Reason})
 	}
 
-	runTool := func(spec HuntToolSpec) {
-		// Skip domain-only tools for IP targets
-		if spec.DomainOnly && ctx.TargetType == "ip" {
-			result.Skipped = append(result.Skipped, HuntSkipped{Tool: spec.Name, Reason: "domain-only tool"})
-			progress(HuntStatus{Tool: spec.Name, Kind: HuntKindSkipped, Reason: "domain-only tool"})
-			return
+	// runPhase executes all available tools for a given phase number.
+	// Mirrors recon's runPhase for consistency.
+	runPhase := func(phase int) {
+		for _, spec := range available {
+			if spec.Phase != phase {
+				continue
+			}
+			// Skip domain-only tools for IP targets
+			if spec.DomainOnly && ctx.TargetType == "ip" {
+				result.Skipped = append(result.Skipped, HuntSkipped{
+					Tool:   spec.Name,
+					Reason: "domain-only tool",
+				})
+				progress(HuntStatus{Tool: spec.Name, Kind: HuntKindSkipped, Reason: "domain-only tool"})
+				continue
+			}
+
+			progress(HuntStatus{Tool: spec.Name, Kind: HuntRunning})
+			start := time.Now()
+			args := spec.BuildArgs(target, ctx)
+			output, runErr := run(spec.Timeout, spec.Name, args...)
+			took := time.Since(start)
+
+			addResult(&result, spec, output, runErr, took)
+
+			last := result.Results[len(result.Results)-1]
+			var kind HuntStatusKind
+			switch {
+			case last.Partial:
+				kind = HuntPartial
+			case last.Error != "" && last.Output == "":
+				kind = HuntFailed
+			default:
+				kind = HuntDone
+			}
+			progress(HuntStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
 		}
-
-		progress(HuntStatus{Tool: spec.Name, Kind: HuntRunning})
-		start := time.Now()
-		args := spec.BuildArgs(target, ctx)
-		output, runErr := run(spec.Timeout, spec.Name, args...)
-		took := time.Since(start)
-
-		addResult(&result, spec, output, runErr, took)
-
-		last := result.Results[len(result.Results)-1]
-		var kind HuntStatusKind
-		switch {
-		case last.Partial:
-			kind = HuntPartial
-		case last.Error != "" && last.Output == "":
-			kind = HuntFailed
-		default:
-			kind = HuntDone
-		}
-		progress(HuntStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
 	}
 
 	// ── Phase 1: URL Collection ──────────────────────────────────────────────
-	// gau + waybackurls — collect all historical URLs
-	for _, spec := range available {
-		if spec.Phase == 1 {
-			runTool(spec)
-		}
-	}
+	// gau + waybackurls → historical URLs from archives
+	runPhase(1)
 	ctx.HistoricalURLs = extractHistoricalURLs(result)
 
 	// ── Phase 2: Deep Crawl ──────────────────────────────────────────────────
-	// katana — deep JS crawl on live URLs from recon
-	for _, spec := range available {
-		if spec.Phase == 2 {
-			runTool(spec)
-		}
-	}
-	// Merge katana phase-2 crawled URLs into context
-	// Track which results were added in phase 2 by counting before/after
-	for _, tr := range result.Results {
-		if tr.Tool == "katana" && tr.Output != "" {
-			for _, line := range strings.Split(tr.Output, "\n") {
-				line = strings.TrimSpace(line)
-				if m := urlRe.FindString(line); m != "" {
-					ctx.CrawledURLs = append(ctx.CrawledURLs, m)
-				}
-			}
-			break // only process first katana result (phase 2)
-		}
+	// katana → deep JS crawl, discovers endpoints, forms, API paths
+	// Uses LiveURLs from recon if available, else root target
+	runPhase(2)
+	newCrawled := extractCrawledURLs(result)
+	ctx.CrawledURLs = dedup(append(ctx.CrawledURLs, newCrawled...))
+
+	// ── Adaptive: merge all URLs into AllURLs for downstream phases ──────────
+	ctx.AllURLs = mergeAllURLs(ctx)
+
+	// Adaptive: if no URLs found at all, skip web-based phases
+	if len(ctx.AllURLs) == 0 && len(ctx.LiveURLs) == 0 {
+		// Still run network vuln scan (phase 6) since it works on IP/domain directly
+		runPhase(6)
+		result.Context = ctx
+		return result
 	}
 
 	// ── Phase 3: Parameter Discovery ────────────────────────────────────────
-	// x8 — hidden parameter discovery on live URLs
-	for _, spec := range available {
-		if spec.Phase == 3 {
-			runTool(spec)
+	// x8 → hidden GET/POST parameters on live URLs
+	// Only run if we have live URLs to test
+	if len(ctx.LiveURLs) > 0 || len(ctx.AllURLs) > 0 {
+		runPhase(3)
+		ctx.ParamsFound = extractParams(result)
+	} else {
+		// Skip x8 — no URLs to test parameters on
+		for _, spec := range available {
+			if spec.Phase == 3 {
+				result.Skipped = append(result.Skipped, HuntSkipped{
+					Tool:   spec.Name,
+					Reason: "no live URLs to test — run /recon first or provide a live target",
+				})
+				progress(HuntStatus{Tool: spec.Name, Kind: HuntKindSkipped,
+					Reason: "no live URLs"})
+			}
 		}
 	}
-	ctx.ParamsFound = extractParams(result)
 
 	// ── Phase 4: XSS Hunting ────────────────────────────────────────────────
-	// dalfox — XSS on all collected URLs
-	for _, spec := range available {
-		if spec.Phase == 4 {
-			runTool(spec)
-		}
-	}
+	// dalfox → XSS on all collected URLs
+	// Adaptive: WAF detected → add delay to avoid blocks
+	runPhase(4)
 	ctx.XSSFound = extractXSS(result)
 
 	// ── Phase 5: Deep Vulnerability Scan ────────────────────────────────────
-	// nuclei with full template set on all discovered URLs
-	for _, spec := range available {
-		if spec.Phase == 5 {
-			runTool(spec)
-		}
-	}
+	// nuclei → full template set (critical/high/medium/low)
+	// Uses CrawledURLs > LiveURLs > target (in priority order)
+	runPhase(5)
 	ctx.VulnsFound = extractVulns(result)
 
-	// ── Phase 6: Network Vuln Scripts ───────────────────────────────────────
-	// nmap --script vuln on open ports
-	for _, spec := range available {
-		if spec.Phase == 6 {
-			runTool(spec)
-		}
-	}
+	// ── Phase 6: Network Vulnerability Scripts ───────────────────────────────
+	// nmap --script vuln → network-level CVEs on open ports
+	// Adaptive: uses known open ports from recon if available (faster)
+	runPhase(6)
 
 	result.Context = ctx
 	return result
@@ -449,8 +521,7 @@ func GetHuntCombinedOutput(r HuntResult) string {
 	var b strings.Builder
 	for _, tr := range r.Results {
 		if tr.Output != "" {
-			b.WriteString("=== " + strings.ToUpper(tr.Tool) + " ===\n")
-			b.WriteString(tr.Output + "\n\n")
+			b.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", strings.ToUpper(tr.Tool), tr.Output))
 		}
 	}
 	return b.String()
