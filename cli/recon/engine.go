@@ -229,20 +229,36 @@ func sanitize(s string, maxLen int) string {
 
 // validateTarget checks that target contains only safe characters.
 // Prevents nmap/tool flag injection via crafted target strings.
-// Valid: hostnames, IPs, CIDR ranges. Invalid: anything with spaces, --, ;, etc.
-var targetRe = regexp.MustCompile(`^[a-zA-Z0-9.\-_:/\[\]]+$`)
+// Regex: ^[a-zA-Z0-9._:\-/\[\]]+$ — covers:
+//   - Hostnames: example.com, sub.example.com
+//   - IPv4: 192.168.1.1
+//   - IPv6: [::1], 2001:db8::1
+//   - CIDR: 192.168.1.0/24
+//   - Ports: example.com:8080
+// Blocks: spaces, --, ;, |, &, $, `, (, ), {, }, <, >, \, ', "
+var targetRe = regexp.MustCompile(`^[a-zA-Z0-9._:\-/\[\]]+$`)
 
 func validateTarget(target string) error {
 	if target == "" {
 		return fmt.Errorf("target cannot be empty")
 	}
-	if !targetRe.MatchString(target) {
-		return fmt.Errorf("invalid target %q — only alphanumeric, dots, hyphens, underscores, colons, slashes, and brackets allowed", target)
+	// Strip www. prefix for validation (common user input)
+	check := target
+	if strings.HasPrefix(strings.ToLower(check), "www.") {
+		check = check[4:]
 	}
-	// Reject anything that looks like a flag
+	if !targetRe.MatchString(target) {
+		return fmt.Errorf("invalid target %q — use hostname, IP, or CIDR (e.g. example.com, 192.168.1.1, 10.0.0.0/24)", target)
+	}
+	// Reject anything starting with - (flag injection)
 	if strings.HasPrefix(target, "-") {
 		return fmt.Errorf("invalid target %q — target cannot start with '-'", target)
 	}
+	// Reject double-dash (flag injection like --script-args)
+	if strings.Contains(target, "--") {
+		return fmt.Errorf("invalid target %q — target cannot contain '--'", target)
+	}
+	_ = check
 	return nil
 }
 

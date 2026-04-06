@@ -106,17 +106,20 @@ func sanitize(s string, maxLen int) string {
 
 // validateTarget checks that target contains only safe characters.
 // Prevents tool flag injection via crafted target strings.
-var targetRe = regexp.MustCompile(`^[a-zA-Z0-9.\-_:/\[\]]+$`)
+var targetRe = regexp.MustCompile(`^[a-zA-Z0-9._:\-/\[\]]+$`)
 
 func validateTarget(target string) error {
 	if target == "" {
 		return fmt.Errorf("target cannot be empty")
 	}
 	if !targetRe.MatchString(target) {
-		return fmt.Errorf("invalid target %q — only alphanumeric, dots, hyphens, underscores, colons, slashes, and brackets allowed", target)
+		return fmt.Errorf("invalid target %q — use hostname, IP, or CIDR (e.g. example.com, 192.168.1.1)", target)
 	}
 	if strings.HasPrefix(target, "-") {
 		return fmt.Errorf("invalid target %q — target cannot start with '-'", target)
+	}
+	if strings.Contains(target, "--") {
+		return fmt.Errorf("invalid target %q — target cannot contain '--'", target)
 	}
 	return nil
 }
