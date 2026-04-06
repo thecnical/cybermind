@@ -119,7 +119,8 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /recon <target> --tools nmap,httpx") + d.Render(" → run specific tools only"))
 		fmt.Println(g.Render("  cybermind /hunt <target>") + d.Render("        → vulnerability hunt (XSS, params, CVEs)"))
 		fmt.Println(g.Render("  cybermind /hunt <target> --tools dalfox,nuclei") + d.Render(" → specific hunt tools"))
-		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → check installed recon tools"))
+		fmt.Println(g.Render("  cybermind /doctor") + d.Render("              → check all tools, auto-install missing"))
+		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → quick tool status check"))
 		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("       → install all recon + hunt tools"))
 		fmt.Println()
 	}
@@ -567,6 +568,22 @@ func main() {
 
 	cmd := strings.ToLower(args[0])
 
+	// All /slash commands are Linux-only — catch them early on Windows
+	// PowerShell may pass /command differently, so check both with and without leading slash
+	if runtime.GOOS != "linux" {
+		normalized := strings.TrimPrefix(cmd, "/")
+		linuxOnlyCmds := map[string]bool{
+			"recon": true, "hunt": true, "tools": true,
+			"install-tools": true, "install-hunt": true,
+		}
+		if linuxOnlyCmds[normalized] || strings.HasPrefix(cmd, "/") {
+			printError("This command is only available on Linux/Kali.")
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  /recon, /hunt, /tools, /install-tools require Linux"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use: cybermind recon <target>  for AI-guided recon on Windows"))
+			os.Exit(1)
+		}
+	}
+
 	switch cmd {
 
 	case "help", "--help", "-h":
@@ -666,6 +683,135 @@ func main() {
 		}
 		// Manual mode — no recon context
 		runHunt(huntTarget, nil, huntRequested)
+
+	case "/doctor":
+		// Full health check for all recon + hunt tools, auto-install missing ones
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🩺 CyberMind Doctor — Tool Health Check"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		type toolEntry struct {
+			name    string
+			mode    string
+			install string
+			isGo    bool
+			isCargo bool
+		}
+
+		allTools := []toolEntry{
+			// Recon Phase 1
+			{"whois", "recon", "sudo apt install whois", false, false},
+			{"theHarvester", "recon", "sudo apt install theharvester", false, false},
+			{"dig", "recon", "sudo apt install dnsutils", false, false},
+			// Recon Phase 2
+			{"subfinder", "recon", "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", true, false},
+			{"amass", "recon", "sudo apt install amass", false, false},
+			{"dnsx", "recon", "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest", true, false},
+			// Recon Phase 3
+			{"rustscan", "recon", "sudo apt install rustscan", false, false},
+			{"naabu", "recon", "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", true, false},
+			{"nmap", "recon", "sudo apt install nmap", false, false},
+			{"masscan", "recon", "sudo apt install masscan", false, false},
+			// Recon Phase 4
+			{"httpx", "recon", "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", true, false},
+			{"whatweb", "recon", "sudo apt install whatweb", false, false},
+			{"tlsx", "recon", "go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest", true, false},
+			// Recon Phase 5
+			{"ffuf", "recon", "sudo apt install ffuf", false, false},
+			{"feroxbuster", "recon", "sudo apt install feroxbuster", false, false},
+			{"gobuster", "recon", "sudo apt install gobuster", false, false},
+			// Recon Phase 6
+			{"nuclei", "recon", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false},
+			{"nikto", "recon", "sudo apt install nikto", false, false},
+			{"katana", "recon", "go install github.com/projectdiscovery/katana/cmd/katana@latest", true, false},
+			// Hunt tools
+			{"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false},
+			{"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false},
+			{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2/cmd/dalfox@latest", true, false},
+			{"x8", "hunt", "cargo install x8", false, true},
+		}
+
+		var missing []toolEntry
+		reconOK, reconMissing := 0, 0
+		huntOK, huntMissing := 0, 0
+
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  RECON TOOLS (16):"))
+		for _, t := range allTools {
+			if t.mode != "recon" {
+				continue
+			}
+			if _, err := exec.LookPath(t.name); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
+				reconOK++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s MISSING", t.name)))
+				missing = append(missing, t)
+				reconMissing++
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  HUNT TOOLS (4):"))
+		for _, t := range allTools {
+			if t.mode != "hunt" {
+				continue
+			}
+			if _, err := exec.LookPath(t.name); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
+				huntOK++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s MISSING", t.name)))
+				missing = append(missing, t)
+				huntMissing++
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+			fmt.Sprintf("  Recon: %d/16 installed", reconOK)))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Render(
+			fmt.Sprintf("  Hunt:  %d/4 installed", huntOK)))
+
+		if len(missing) == 0 {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ✓ All tools installed — ready to hunt!"))
+			fmt.Println()
+		} else {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
+				fmt.Sprintf("  ⚡ %d tools missing — installing now...", len(missing))))
+			fmt.Println()
+
+			instOK, instFail := 0, 0
+			for _, t := range missing {
+				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", t.name)))
+				var cmd2 *exec.Cmd
+				if t.isCargo {
+					cmd2 = exec.Command("cargo", "install", t.name)
+				} else if t.isGo {
+					// extract module path from install hint
+					parts := strings.Fields(t.install)
+					cmd2 = exec.Command("go", "install", parts[len(parts)-1])
+				} else {
+					cmd2 = exec.Command("sudo", "apt", "install", "-y", t.name)
+				}
+				cmd2.Stdout = os.Stdout
+				cmd2.Stderr = os.Stderr
+				if err := cmd2.Run(); err != nil {
+					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", t.name, err)))
+					instFail++
+				} else {
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
+					instOK++
+				}
+			}
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(
+				fmt.Sprintf("  Doctor complete: %d installed, %d failed", instOK, instFail)))
+			fmt.Println()
+		}
 
 	case "/install-tools":
 		if runtime.GOOS != "linux" {
