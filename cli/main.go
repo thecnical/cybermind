@@ -719,7 +719,7 @@ func main() {
 			{"amass", "recon", "sudo apt install amass", false, false},
 			{"dnsx", "recon", "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest", true, false},
 			// Recon Phase 3
-			{"rustscan", "recon", "sudo apt install rustscan", false, false},
+			{"rustscan", "recon", "cargo install rustscan", false, true},
 			{"naabu", "recon", "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", true, false},
 			{"nmap", "recon", "sudo apt install nmap", false, false},
 			{"masscan", "recon", "sudo apt install masscan", false, false},
@@ -738,7 +738,7 @@ func main() {
 			// Hunt tools
 			{"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false},
 			{"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false},
-			{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2/cmd/dalfox@latest", true, false},
+			{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2@latest", true, false},
 			{"x8", "hunt", "cargo install x8", false, true},
 		}
 
@@ -797,8 +797,17 @@ func main() {
 			instOK, instFail := 0, 0
 			for _, t := range missing {
 				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", t.name)))
+
+				// Pre-deps: naabu needs libpcap-dev
+				if t.name == "naabu" {
+					exec.Command("sudo", "apt", "install", "-y", "libpcap-dev").Run()
+				}
+
 				var cmd2 *exec.Cmd
 				if t.isCargo {
+					if _, cargoErr := exec.LookPath("cargo"); cargoErr != nil {
+						exec.Command("sudo", "apt", "install", "-y", "cargo").Run()
+					}
 					cmd2 = exec.Command("cargo", "install", t.name)
 				} else if t.isGo {
 					parts := strings.Fields(t.install)
@@ -809,16 +818,37 @@ func main() {
 				cmd2.Stdout = os.Stdout
 				cmd2.Stderr = os.Stderr
 				if err := cmd2.Run(); err != nil {
+					// rustscan fallback: download .deb release
+					if t.name == "rustscan" {
+						fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ↳ trying .deb release..."))
+						dlCmd := exec.Command("bash", "-c",
+							`LATEST=$(curl -s https://api.github.com/repos/RustScan/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4) && curl -sL "$LATEST" -o /tmp/rustscan.deb && sudo dpkg -i /tmp/rustscan.deb`)
+						dlCmd.Stdout = os.Stdout
+						dlCmd.Stderr = os.Stderr
+						if err2 := dlCmd.Run(); err2 == nil {
+							fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
+							instOK++
+							continue
+						}
+					}
 					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", t.name, err)))
 					instFail++
 				} else {
-					// For Go tools: symlink to /usr/local/bin
+					homedir2, _ := os.UserHomeDir()
+					// Symlink Go tools
 					if t.isGo {
-						homedir2, _ := os.UserHomeDir()
-						goBin := homedir2 + "/go/bin/" + t.name
-						if _, err2 := os.Stat(goBin); err2 == nil {
-							symlinkCmd := exec.Command("sudo", "ln", "-sf", goBin, "/usr/local/bin/"+t.name)
-							_ = symlinkCmd.Run()
+						for _, gobin := range []string{homedir2 + "/go/bin/" + t.name, "/root/go/bin/" + t.name} {
+							if _, err2 := os.Stat(gobin); err2 == nil {
+								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/"+t.name).Run()
+								break
+							}
+						}
+					}
+					// Symlink cargo tools
+					if t.isCargo {
+						cargobin := homedir2 + "/.cargo/bin/" + t.name
+						if _, err2 := os.Stat(cargobin); err2 == nil {
+							exec.Command("sudo", "ln", "-sf", cargobin, "/usr/local/bin/"+t.name).Run()
 						}
 					}
 					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
@@ -841,29 +871,40 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 55)))
 		fmt.Println()
 
-		// All apt tools (recon + hunt)
-		aptTools := []string{
-			"nmap", "masscan", "rustscan", "whois", "dnsutils", "theharvester",
-			"whatweb", "ffuf", "feroxbuster", "gobuster", "nikto", "amass", "cargo",
-		}
-		// All Go tools (recon + hunt)
-		goTools := []struct{ bin, module string }{
-			// Recon tools
-			{"subfinder", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder"},
-			{"httpx", "github.com/projectdiscovery/httpx/cmd/httpx"},
-			{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei"},
-			{"naabu", "github.com/projectdiscovery/naabu/v2/cmd/naabu"},
-			{"dnsx", "github.com/projectdiscovery/dnsx/cmd/dnsx"},
-			{"tlsx", "github.com/projectdiscovery/tlsx/cmd/tlsx"},
-			{"katana", "github.com/projectdiscovery/katana/cmd/katana"},
-			// Hunt tools
-			{"gau", "github.com/lc/gau/v2/cmd/gau"},
-			{"waybackurls", "github.com/tomnomnom/waybackurls"},
-			{"dalfox", "github.com/hahwul/dalfox/v2/cmd/dalfox"},
-		}
-
 		installed, skipped2, failed := 0, 0, 0
 
+		// Helper: run command and report result
+		runInstall := func(name string, cmd2 *exec.Cmd) bool {
+			cmd2.Stdout = os.Stdout
+			cmd2.Stderr = os.Stderr
+			if err := cmd2.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", name, err)))
+				failed++
+				return false
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", name)))
+			installed++
+			return true
+		}
+
+		// Helper: symlink Go binary to /usr/local/bin
+		symlinkGo := func(bin string) {
+			homedir2, _ := os.UserHomeDir()
+			for _, gobin := range []string{homedir2 + "/go/bin/" + bin, "/root/go/bin/" + bin} {
+				if _, err2 := os.Stat(gobin); err2 == nil {
+					exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/"+bin).Run()
+					return
+				}
+			}
+		}
+
+		// ── Step 1: apt dependencies first ──────────────────────────────────
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [1/4] Installing apt tools..."))
+		aptTools := []string{
+			"nmap", "masscan", "whois", "dnsutils", "theharvester",
+			"whatweb", "ffuf", "feroxbuster", "gobuster", "nikto", "amass",
+			"libpcap-dev", "build-essential", "git", "cargo",
+		}
 		for _, tool := range aptTools {
 			if _, err := exec.LookPath(tool); err == nil {
 				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", tool)))
@@ -871,18 +912,47 @@ func main() {
 				continue
 			}
 			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", tool)))
-			cmd2 := exec.Command("sudo", "apt", "install", "-y", tool)
-			cmd2.Stdout = os.Stdout
-			cmd2.Stderr = os.Stderr
-			if err := cmd2.Run(); err != nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", tool, err)))
-				failed++
+			runInstall(tool, exec.Command("sudo", "apt", "install", "-y", tool))
+		}
+
+		// ── Step 2: rustscan from GitHub (not in apt) ────────────────────────
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [2/4] Installing rustscan..."))
+		if _, err := exec.LookPath("rustscan"); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - rustscan         already installed"))
+			skipped2++
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ rustscan         installing from GitHub..."))
+			// Try cargo install first (fastest)
+			if _, cargoErr := exec.LookPath("cargo"); cargoErr == nil {
+				if runInstall("rustscan", exec.Command("cargo", "install", "rustscan")) {
+					symlinkGo("rustscan")
+				}
 			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", tool)))
-				installed++
+				// Fallback: download latest release binary
+				dlCmd := exec.Command("bash", "-c",
+					`LATEST=$(curl -s https://api.github.com/repos/RustScan/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4) && curl -sL "$LATEST" -o /tmp/rustscan.deb && sudo dpkg -i /tmp/rustscan.deb`)
+				if runInstall("rustscan", dlCmd) {
+					// already in /usr/bin from dpkg
+				}
 			}
 		}
 
+		// ── Step 3: Go tools ─────────────────────────────────────────────────
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [3/4] Installing Go tools..."))
+		goTools := []struct{ bin, module string }{
+			{"subfinder", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder"},
+			{"httpx", "github.com/projectdiscovery/httpx/cmd/httpx"},
+			{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei"},
+			{"naabu", "github.com/projectdiscovery/naabu/v2/cmd/naabu"},
+			{"dnsx", "github.com/projectdiscovery/dnsx/cmd/dnsx"},
+			{"tlsx", "github.com/projectdiscovery/tlsx/cmd/tlsx"},
+			{"katana", "github.com/projectdiscovery/katana/cmd/katana"},
+			{"gau", "github.com/lc/gau/v2/cmd/gau"},
+			{"waybackurls", "github.com/tomnomnom/waybackurls"},
+			{"dalfox", "github.com/hahwul/dalfox/v2"},
+		}
 		for _, gt := range goTools {
 			if _, err := exec.LookPath(gt.bin); err == nil {
 				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", gt.bin)))
@@ -890,46 +960,38 @@ func main() {
 				continue
 			}
 			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", gt.bin)))
-			cmd2 := exec.Command("go", "install", gt.module+"@latest")
-			cmd2.Stdout = os.Stdout
-			cmd2.Stderr = os.Stderr
-			if err := cmd2.Run(); err != nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", gt.bin, err)))
-				failed++
-			} else {
-				// Symlink Go binary to /usr/local/bin so it's in PATH globally
-				homedir2, _ := os.UserHomeDir()
-				goBin := homedir2 + "/go/bin/" + gt.bin
-				if _, err2 := os.Stat(goBin); err2 == nil {
-					symlinkCmd := exec.Command("sudo", "ln", "-sf", goBin, "/usr/local/bin/"+gt.bin)
-					_ = symlinkCmd.Run()
-				}
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", gt.bin)))
-				installed++
+			if runInstall(gt.bin, exec.Command("go", "install", gt.module+"@latest")) {
+				symlinkGo(gt.bin)
 			}
 		}
 
-		// x8 via cargo (hunt tool — hidden parameter discovery)
-		if _, err := exec.LookPath("x8"); err != nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ x8               installing via cargo..."))
-			cmd2 := exec.Command("cargo", "install", "x8")
-			cmd2.Stdout = os.Stdout
-			cmd2.Stderr = os.Stderr
-			if err := cmd2.Run(); err != nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ x8               failed: %v", err)))
-				failed++
-			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ x8               installed"))
-				installed++
-			}
-		} else {
+		// ── Step 4: x8 via cargo ─────────────────────────────────────────────
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [4/4] Installing x8 (hidden param discovery)..."))
+		if _, err := exec.LookPath("x8"); err == nil {
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - x8               already installed"))
 			skipped2++
+		} else if _, cargoErr := exec.LookPath("cargo"); cargoErr != nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ x8               cargo not found — run: sudo apt install cargo"))
+			failed++
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ x8               installing via cargo (may take a few minutes)..."))
+			if runInstall("x8", exec.Command("cargo", "install", "x8")) {
+				// cargo installs to ~/.cargo/bin
+				homedir2, _ := os.UserHomeDir()
+				x8bin := homedir2 + "/.cargo/bin/x8"
+				if _, err2 := os.Stat(x8bin); err2 == nil {
+					exec.Command("sudo", "ln", "-sf", x8bin, "/usr/local/bin/x8").Run()
+				}
+			}
 		}
 
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(
 			fmt.Sprintf("  Summary: %d installed, %d skipped, %d failed", installed, skipped2, failed)))
+		if failed > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  Run: cybermind /doctor  to retry failed tools"))
+		}
 		fmt.Println()
 
 	case "update":
