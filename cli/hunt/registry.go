@@ -18,33 +18,34 @@ var huntRegistry = []HuntToolSpec{
 		DomainOnly:  true,
 		InstallHint: "go install github.com/lc/gau/v2/cmd/gau@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
-			// gau reads domain from stdin via pipe, but also accepts --subs flag
 			return []string{"--subs", "--threads", "5", target}
 		},
 	},
 	{
+		// waybackurls reads domain from stdin — we use sh -c "echo domain | waybackurls"
+		// but since exec.Command can't pipe, we use the binary's direct positional arg support
+		// waybackurls v2+ accepts domain as positional arg: waybackurls example.com
 		Name:        "waybackurls",
 		Phase:       1,
 		Timeout:     60,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/tomnomnom/waybackurls@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
-			// waybackurls reads from stdin — we pass target as arg via echo pipe
-			// Since we can't pipe in exec.Command, we use the direct arg form
 			return []string{target}
 		},
 	},
 
 	// ── Phase 2: Deep Crawl ──────────────────────────────────────────────────
 	// katana deep crawl — discovers JS endpoints, forms, API paths
+	// Note: registry Name is "katana-hunt" but actual binary is "katana"
+	// We override the binary lookup via the run() call using spec.Name mapped to "katana"
 	{
-		Name:        "katana-hunt",
+		Name:        "katana",
 		Phase:       2,
 		Timeout:     120,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/katana/cmd/katana@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
-			// Use live URLs from recon if available, else root target
 			u := target
 			if len(ctx.LiveURLs) > 0 {
 				u = ctx.LiveURLs[0]
@@ -52,7 +53,6 @@ var huntRegistry = []HuntToolSpec{
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			args := []string{"-u", u, "-silent", "-depth", "5", "-jc", "-kf", "all", "-aff"}
 			// If multiple live URLs, write to temp file
 			if len(ctx.LiveURLs) > 1 {
 				f := writeTempList(ctx.LiveURLs)
@@ -60,7 +60,7 @@ var huntRegistry = []HuntToolSpec{
 					return []string{"-list", f, "-silent", "-depth", "5", "-jc", "-kf", "all", "-aff"}
 				}
 			}
-			return args
+			return []string{"-u", u, "-silent", "-depth", "5", "-jc", "-kf", "all", "-aff"}
 		},
 	},
 
@@ -80,7 +80,8 @@ var huntRegistry = []HuntToolSpec{
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			return []string{"-u", u, "--output-format", "url", "-q"}
+			// x8 flags: -u URL, -w wordlist (uses built-in if not specified), -q quiet
+			return []string{"-u", u, "-q"}
 		},
 	},
 
@@ -93,8 +94,10 @@ var huntRegistry = []HuntToolSpec{
 		DomainOnly:  true,
 		InstallHint: "go install github.com/hahwul/dalfox/v2@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
-			// If we have historical URLs, scan them all via pipe mode
-			allURLs := append(ctx.LiveURLs, ctx.CrawledURLs...)
+			// Collect all URLs to scan
+			allURLs := make([]string, 0)
+			allURLs = append(allURLs, ctx.LiveURLs...)
+			allURLs = append(allURLs, ctx.CrawledURLs...)
 			// Deduplicate
 			seen := map[string]bool{}
 			var unique []string
@@ -107,14 +110,16 @@ var huntRegistry = []HuntToolSpec{
 			if len(unique) > 0 {
 				f := writeTempList(unique)
 				if f != "" {
-					args := []string{"file", f, "--silence", "--no-color", "--output-all"}
+					// dalfox pipe mode: reads URLs from file
+					args := []string{"pipe", "--silence", "--no-color", "-b", "https://hahwul.com/dalfox/"}
 					if ctx.WAFDetected {
 						args = append(args, "--delay", "500")
 					}
-					return args
+					// Use file mode instead of pipe for reliability
+					return []string{"file", f, "--silence", "--no-color"}
 				}
 			}
-			// Fallback: scan root target
+			// Fallback: scan root target URL
 			u := target
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
@@ -129,20 +134,19 @@ var huntRegistry = []HuntToolSpec{
 
 	// ── Phase 5: Deep Vulnerability Scan ────────────────────────────────────
 	// nuclei with ALL severity levels + specific vuln tags
+	// Uses "nuclei" binary but registered as separate hunt phase tool
 	{
-		Name:        "nuclei-hunt",
+		Name:        "nuclei",
 		Phase:       5,
 		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			args := []string{"-silent", "-no-color", "-severity", "critical,high,medium,low"}
-
 			// WAF-adaptive: exclude aggressive templates
 			if ctx.WAFDetected {
 				args = append(args, "-etags", "fuzzing,dos")
 			}
-
 			// Use crawled URLs for deeper coverage
 			allURLs := ctx.CrawledURLs
 			if len(allURLs) == 0 {
@@ -163,7 +167,7 @@ var huntRegistry = []HuntToolSpec{
 	// ── Phase 6: Network Vulnerability Scripts ───────────────────────────────
 	// nmap --script vuln — runs all vulnerability detection NSE scripts
 	{
-		Name:        "nmap-vuln",
+		Name:        "nmap",
 		Phase:       6,
 		Timeout:     180,
 		DomainOnly:  false,

@@ -682,7 +682,7 @@ func main() {
 			{"gau", "github.com/lc/gau/v2/cmd/gau"},
 			{"waybackurls", "github.com/tomnomnom/waybackurls"},
 			{"katana", "github.com/projectdiscovery/katana/cmd/katana"},
-			{"dalfox", "github.com/hahwul/dalfox/v2"},
+			{"dalfox", "github.com/hahwul/dalfox/v2/cmd/dalfox"},
 			{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei"},
 		}
 		aptHuntTools := []string{"nmap", "cargo"}

@@ -110,11 +110,6 @@ func targetType(target string) string {
 // lookPath can be overridden in tests.
 var lookPath = exec.LookPath
 
-func isAvailable(tool string) bool {
-	_, err := lookPath(tool)
-	return err == nil
-}
-
 // run executes a command with timeout, returns stdout+stderr.
 func run(timeoutSec int, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
@@ -298,7 +293,9 @@ func extractVulns(result HuntResult) []string {
 	var vulns []string
 	seen := map[string]bool{}
 	for _, tr := range result.Results {
-		if tr.Tool != "nuclei-hunt" {
+		// nuclei is used in both recon (phase 6) and hunt (phase 5)
+		// we capture all nuclei output here
+		if tr.Tool != "nuclei" {
 			continue
 		}
 		for _, line := range strings.Split(tr.Output, "\n") {
@@ -310,18 +307,6 @@ func extractVulns(result HuntResult) []string {
 		}
 	}
 	return vulns
-}
-
-// buildHuntCombined assembles combined output.
-func buildHuntCombined(result *HuntResult) string {
-	var b strings.Builder
-	for _, tr := range result.Results {
-		if tr.Output == "" {
-			continue
-		}
-		b.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", strings.ToUpper(tr.Tool), tr.Output))
-	}
-	return b.String()
 }
 
 // ─── Main Engine ──────────────────────────────────────────────────────────────
@@ -397,15 +382,17 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 			runTool(spec)
 		}
 	}
-	// Merge crawled URLs into context
+	// Merge katana phase-2 crawled URLs into context
+	// Track which results were added in phase 2 by counting before/after
 	for _, tr := range result.Results {
-		if tr.Tool == "katana-hunt" {
+		if tr.Tool == "katana" && tr.Output != "" {
 			for _, line := range strings.Split(tr.Output, "\n") {
 				line = strings.TrimSpace(line)
 				if m := urlRe.FindString(line); m != "" {
 					ctx.CrawledURLs = append(ctx.CrawledURLs, m)
 				}
 			}
+			break // only process first katana result (phase 2)
 		}
 	}
 
