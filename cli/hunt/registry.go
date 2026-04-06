@@ -110,13 +110,11 @@ var huntRegistry = []HuntToolSpec{
 			if len(unique) > 0 {
 				f := writeTempList(unique)
 				if f != "" {
-					// dalfox pipe mode: reads URLs from file
-					args := []string{"pipe", "--silence", "--no-color", "-b", "https://hahwul.com/dalfox/"}
+					args := []string{"file", f, "--silence", "--no-color"}
 					if ctx.WAFDetected {
 						args = append(args, "--delay", "500")
 					}
-					// Use file mode instead of pipe for reliability
-					return []string{"file", f, "--silence", "--no-color"}
+					return args
 				}
 			}
 			// Fallback: scan root target URL

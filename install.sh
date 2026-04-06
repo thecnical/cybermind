@@ -65,13 +65,10 @@ sudo chmod +x /usr/local/bin/cybermind
 cd ..
 echo -e "${GREEN}[✓] Installed globally${NC}"
 
-# Offer to install recon tools
+# Auto-install all recon + hunt tools (no prompt needed)
 echo ""
-read -p "[?] Install recon tools (nmap, nuclei, subfinder etc.)? [y/N] " install_tools
-if [[ "$install_tools" =~ ^[Yy]$ ]]; then
-    echo -e "${YELLOW}[*] Installing recon tools via cybermind /install-tools...${NC}"
-    cybermind /install-tools
-fi
+echo -e "${YELLOW}[*] Installing recon + hunt tools...${NC}"
+cybermind /install-tools
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

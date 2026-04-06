@@ -118,10 +118,9 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("       → full auto recon + AI analysis"))
 		fmt.Println(g.Render("  cybermind /recon <target> --tools nmap,httpx") + d.Render(" → run specific tools only"))
 		fmt.Println(g.Render("  cybermind /hunt <target>") + d.Render("        → vulnerability hunt (XSS, params, CVEs)"))
-		fmt.Println(g.Render("  cybermind /hunt <target> --tools dalfox,nuclei-hunt") + d.Render(" → specific hunt tools"))
+		fmt.Println(g.Render("  cybermind /hunt <target> --tools dalfox,nuclei") + d.Render(" → specific hunt tools"))
 		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → check installed recon tools"))
-		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("       → install all recon tools"))
-		fmt.Println(g.Render("  cybermind /install-hunt") + d.Render("        → install all hunt tools"))
+		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("       → install all recon + hunt tools"))
 		fmt.Println()
 	}
 
@@ -476,7 +475,7 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 
 	if len(result.Tools) == 0 {
 		fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ No hunt tools produced output."))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind /install-hunt to install hunt tools"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind /install-tools to install all tools"))
 		return
 	}
 
@@ -668,101 +667,24 @@ func main() {
 		// Manual mode — no recon context
 		runHunt(huntTarget, nil, huntRequested)
 
-	case "/install-hunt":
-		if runtime.GOOS != "linux" {
-			printError("/install-hunt is only available on Linux.")
-			os.Exit(1)
-		}
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  🎯 Installing Hunt Tools"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 50)))
-		fmt.Println()
-
-		goHuntTools := []struct{ bin, module string }{
-			{"gau", "github.com/lc/gau/v2/cmd/gau"},
-			{"waybackurls", "github.com/tomnomnom/waybackurls"},
-			{"katana", "github.com/projectdiscovery/katana/cmd/katana"},
-			{"dalfox", "github.com/hahwul/dalfox/v2/cmd/dalfox"},
-			{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei"},
-		}
-		aptHuntTools := []string{"nmap", "cargo"}
-
-		installed, skippedH, failed := 0, 0, 0
-
-		for _, tool := range aptHuntTools {
-			if _, err := exec.LookPath(tool); err == nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", tool)))
-				skippedH++
-				continue
-			}
-			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", tool)))
-			cmd2 := exec.Command("sudo", "apt", "install", "-y", tool)
-			cmd2.Stdout = os.Stdout
-			cmd2.Stderr = os.Stderr
-			if err := cmd2.Run(); err != nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", tool, err)))
-				failed++
-			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", tool)))
-				installed++
-			}
-		}
-
-		for _, gt := range goHuntTools {
-			if _, err := exec.LookPath(gt.bin); err == nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", gt.bin)))
-				skippedH++
-				continue
-			}
-			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", gt.bin)))
-			cmd2 := exec.Command("go", "install", gt.module+"@latest")
-			cmd2.Stdout = os.Stdout
-			cmd2.Stderr = os.Stderr
-			if err := cmd2.Run(); err != nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", gt.bin, err)))
-				failed++
-			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", gt.bin)))
-				installed++
-			}
-		}
-
-		// x8 via cargo
-		if _, err := exec.LookPath("x8"); err != nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ x8               installing via cargo..."))
-			cmd2 := exec.Command("cargo", "install", "x8")
-			cmd2.Stdout = os.Stdout
-			cmd2.Stderr = os.Stderr
-			if err := cmd2.Run(); err != nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ x8               failed: %v", err)))
-				failed++
-			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ x8               installed"))
-				installed++
-			}
-		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - x8               already installed"))
-			skippedH++
-		}
-
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
-			fmt.Sprintf("  Summary: %d installed, %d skipped, %d failed", installed, skippedH, failed)))
-		fmt.Println()
-
 	case "/install-tools":
 		if runtime.GOOS != "linux" {
 			printError("/install-tools is only available on Linux.")
 			os.Exit(1)
 		}
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🛠  Installing Recon Tools"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 50)))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🛠  Installing All CyberMind Tools (Recon + Hunt)"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 55)))
 		fmt.Println()
 
-		aptTools := []string{"nmap", "masscan", "rustscan", "whois", "dnsutils", "theharvester",
-			"whatweb", "ffuf", "feroxbuster", "gobuster", "nikto", "amass"}
+		// All apt tools (recon + hunt)
+		aptTools := []string{
+			"nmap", "masscan", "rustscan", "whois", "dnsutils", "theharvester",
+			"whatweb", "ffuf", "feroxbuster", "gobuster", "nikto", "amass", "cargo",
+		}
+		// All Go tools (recon + hunt)
 		goTools := []struct{ bin, module string }{
+			// Recon tools
 			{"subfinder", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder"},
 			{"httpx", "github.com/projectdiscovery/httpx/cmd/httpx"},
 			{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei"},
@@ -770,6 +692,10 @@ func main() {
 			{"dnsx", "github.com/projectdiscovery/dnsx/cmd/dnsx"},
 			{"tlsx", "github.com/projectdiscovery/tlsx/cmd/tlsx"},
 			{"katana", "github.com/projectdiscovery/katana/cmd/katana"},
+			// Hunt tools
+			{"gau", "github.com/lc/gau/v2/cmd/gau"},
+			{"waybackurls", "github.com/tomnomnom/waybackurls"},
+			{"dalfox", "github.com/hahwul/dalfox/v2/cmd/dalfox"},
 		}
 
 		installed, skipped2, failed := 0, 0, 0
@@ -810,6 +736,24 @@ func main() {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", gt.bin)))
 				installed++
 			}
+		}
+
+		// x8 via cargo (hunt tool — hidden parameter discovery)
+		if _, err := exec.LookPath("x8"); err != nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ x8               installing via cargo..."))
+			cmd2 := exec.Command("cargo", "install", "x8")
+			cmd2.Stdout = os.Stdout
+			cmd2.Stderr = os.Stderr
+			if err := cmd2.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ x8               failed: %v", err)))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ x8               installed"))
+				installed++
+			}
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - x8               already installed"))
+			skipped2++
 		}
 
 		fmt.Println()
@@ -885,6 +829,14 @@ func main() {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ✓ CyberMind updated successfully!"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind --version to confirm"))
+		// Auto-install any new tools added in this version
+		if runtime.GOOS == "linux" {
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Checking for new tools to install..."))
+			installCmd2 := exec.Command("cybermind", "/install-tools")
+			installCmd2.Stdout = os.Stdout
+			installCmd2.Stderr = os.Stderr
+			_ = installCmd2.Run() // best-effort, don't fail update if this fails
+		}
 
 	case "history":
 		if err := storage.Load(); err != nil {
