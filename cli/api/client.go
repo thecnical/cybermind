@@ -127,6 +127,29 @@ type ReconPayload struct {
 	RawCombined     string            `json:"raw"`
 }
 
+// HuntPayload is the structured JSON body sent to /hunt.
+type HuntPayload struct {
+	Target         string            `json:"target"`
+	TargetType     string            `json:"target_type"`
+	ToolsRun       []string          `json:"tools_run"`
+	ToolsFailed    []string          `json:"tools_failed"`
+	ToolsSkipped   []string          `json:"tools_skipped"`
+	Findings       map[string]string `json:"findings"`
+	XSSFound       []string          `json:"xss_found"`
+	ParamsFound    []string          `json:"params_found"`
+	VulnsFound     []string          `json:"vulns_found"`
+	HistoricalURLs int               `json:"historical_urls_count"`
+	WAFDetected    bool              `json:"waf_detected"`
+	WAFVendor      string            `json:"waf_vendor"`
+	OpenPorts      []int             `json:"open_ports"`
+	RawCombined    string            `json:"raw"`
+}
+
+// SendHunt sends structured hunt payload to AI for analysis.
+func SendHunt(payload HuntPayload) (string, error) {
+	return post("/hunt", payload)
+}
+
 // SendAnalysis sends structured recon payload to AI for analysis
 func SendAnalysis(payload ReconPayload) (string, error) {
 	return post("/analyze", payload)

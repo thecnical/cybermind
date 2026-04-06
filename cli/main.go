@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cybermind-cli/api"
+	"cybermind-cli/hunt"
 	"cybermind-cli/recon"
 	"cybermind-cli/storage"
 	"cybermind-cli/ui"
@@ -20,7 +21,7 @@ import (
 )
 
 var (
-	Version = "2.3.0"
+	Version = "2.4.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -113,11 +114,14 @@ func printHelp() {
 	fmt.Println()
 
 	if runtime.GOOS == "linux" {
-		fmt.Println(y.Render("  🐧 LINUX ONLY — AUTO RECON:"))
+		fmt.Println(y.Render("  🐧 LINUX ONLY — AUTO RECON + HUNT:"))
 		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("       → full auto recon + AI analysis"))
 		fmt.Println(g.Render("  cybermind /recon <target> --tools nmap,httpx") + d.Render(" → run specific tools only"))
+		fmt.Println(g.Render("  cybermind /hunt <target>") + d.Render("        → vulnerability hunt (XSS, params, CVEs)"))
+		fmt.Println(g.Render("  cybermind /hunt <target> --tools dalfox,nuclei-hunt") + d.Render(" → specific hunt tools"))
 		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → check installed recon tools"))
 		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("       → install all recon tools"))
+		fmt.Println(g.Render("  cybermind /install-hunt") + d.Render("        → install all hunt tools"))
 		fmt.Println()
 	}
 
@@ -341,6 +345,208 @@ func runAutoRecon(target string, requested []string) {
 	printResult("AI Analysis → "+target, clean)
 
 	_ = storage.AddEntry("/recon "+target, clean)
+
+	// ── Auto-prompt: offer to run /hunt on recon results ──────────────────
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
+		"  🎯 Recon complete. Start Hunt Mode on these results?"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		"  Hunt will run: gau, waybackurls, katana, x8, dalfox, nuclei, nmap-vuln"))
+	fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Render("  [y/N] → "))
+
+	var answer string
+	fmt.Scanln(&answer)
+	answer = strings.ToLower(strings.TrimSpace(answer))
+
+	if answer == "y" || answer == "yes" {
+		// Build hunt context from recon results
+		huntCtx := &hunt.HuntContext{
+			Target:      target,
+			TargetType:  ctx.TargetType,
+			LiveURLs:    liveURLs,
+			OpenPorts:   openPorts,
+			WAFDetected: ctx.WAFDetected,
+			WAFVendor:   ctx.WAFVendor,
+			Subdomains:  ctx.Subdomains,
+		}
+		runHunt(target, huntCtx, nil)
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+			"  Skipped. Run manually: cybermind /hunt " + target))
+		fmt.Println()
+	}
+}
+
+// printHuntSummary prints a per-tool status table after hunt completes.
+func printHuntSummary(result hunt.HuntResult) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  🎯 Hunt Summary"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	toolOutputs := make(map[string]hunt.HuntToolResult)
+	for _, tr := range result.Results {
+		toolOutputs[tr.Tool] = tr
+	}
+	failedSet := make(map[string]hunt.HuntToolResult)
+	for _, tr := range result.Failed {
+		failedSet[tr.Tool] = tr
+	}
+	skippedSet := make(map[string]hunt.HuntSkipped)
+	for _, s := range result.Skipped {
+		skippedSet[s.Tool] = s
+	}
+
+	for _, name := range hunt.HuntToolNames() {
+		if tr, ok := toolOutputs[name]; ok {
+			if tr.Partial {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+					fmt.Sprintf("  ⚡ %-16s partial — output kept", name)))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+					fmt.Sprintf("  ✓ %-16s done  (%s)", name, tr.Took.Round(time.Millisecond))))
+			}
+		} else if tr, ok := failedSet[name]; ok {
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-16s failed — %s", name, tr.Error)))
+		} else if s, ok := skippedSet[name]; ok {
+			hint := ""
+			if s.InstallHint != "" {
+				hint = "  (" + s.InstallHint + ")"
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  - %-16s skipped — %s%s", name, s.Reason, hint)))
+		}
+	}
+
+	// Print key findings summary
+	if result.Context != nil {
+		ctx := result.Context
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  🔥 Key Findings"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+			fmt.Sprintf("  XSS confirmed:       %d", len(ctx.XSSFound))))
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+			fmt.Sprintf("  Hidden params found: %d", len(ctx.ParamsFound))))
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+			fmt.Sprintf("  Vulnerabilities:     %d", len(ctx.VulnsFound))))
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+			fmt.Sprintf("  Historical URLs:     %d", len(ctx.HistoricalURLs))))
+		fmt.Println()
+	}
+}
+
+// runHunt runs the full hunt pipeline and sends results to AI for analysis.
+// reconCtx can be nil for manual mode (no prior recon).
+func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  🎯 HUNT MODE — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	if reconCtx != nil {
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+			fmt.Sprintf("  ℹ  Using recon context: %d live URLs, %d open ports, WAF=%v",
+				len(reconCtx.LiveURLs), len(reconCtx.OpenPorts), reconCtx.WAFDetected)))
+		fmt.Println()
+	}
+
+	result := hunt.RunHunt(target, reconCtx, requested, func(status hunt.HuntStatus) {
+		switch status.Kind {
+		case hunt.HuntRunning:
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
+				fmt.Sprintf("  ⟳ %-16s running...", status.Tool)))
+		case hunt.HuntDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				fmt.Sprintf("  ✓ %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case hunt.HuntPartial:
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				fmt.Sprintf("  ⚡ %-16s partial output kept", status.Tool)))
+		case hunt.HuntFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-16s failed — %s", status.Tool, status.Reason)))
+		case hunt.HuntKindSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)))
+		}
+	})
+
+	printHuntSummary(result)
+
+	if len(result.Tools) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ No hunt tools produced output."))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind /install-hunt to install hunt tools"))
+		return
+	}
+
+	// Build structured payload
+	findings := make(map[string]string)
+	for _, tr := range result.Results {
+		if tr.Output != "" {
+			findings[tr.Tool] = tr.Output
+		}
+	}
+	failedNames := make([]string, 0, len(result.Failed))
+	for _, tr := range result.Failed {
+		failedNames = append(failedNames, tr.Tool)
+	}
+	skippedNames := make([]string, 0, len(result.Skipped))
+	for _, s := range result.Skipped {
+		skippedNames = append(skippedNames, s.Tool)
+	}
+
+	var ctx hunt.HuntContext
+	if result.Context != nil {
+		ctx = *result.Context
+	}
+
+	xssFound := ctx.XSSFound
+	if xssFound == nil {
+		xssFound = []string{}
+	}
+	paramsFound := ctx.ParamsFound
+	if paramsFound == nil {
+		paramsFound = []string{}
+	}
+	vulnsFound := ctx.VulnsFound
+	if vulnsFound == nil {
+		vulnsFound = []string{}
+	}
+	openPorts := ctx.OpenPorts
+	if openPorts == nil {
+		openPorts = []int{}
+	}
+
+	payload := api.HuntPayload{
+		Target:         target,
+		TargetType:     ctx.TargetType,
+		ToolsRun:       result.Tools,
+		ToolsFailed:    failedNames,
+		ToolsSkipped:   skippedNames,
+		Findings:       findings,
+		XSSFound:       xssFound,
+		ParamsFound:    paramsFound,
+		VulnsFound:     vulnsFound,
+		HistoricalURLs: len(ctx.HistoricalURLs),
+		WAFDetected:    ctx.WAFDetected,
+		WAFVendor:      ctx.WAFVendor,
+		OpenPorts:      openPorts,
+		RawCombined:    hunt.GetHuntCombinedOutput(result),
+	}
+
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to AI for vulnerability analysis..."))
+	analysis, err := api.SendHunt(payload)
+	if err != nil {
+		printError("AI analysis failed: " + err.Error())
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("\n  Raw hunt output:\n"))
+		fmt.Println(hunt.GetHuntCombinedOutput(result))
+		return
+	}
+
+	clean := utils.StripMarkdown(analysis)
+	printResult("Hunt Analysis → "+target, clean)
+	_ = storage.AddEntry("/hunt "+target, clean)
 }
 
 func main() {
@@ -415,6 +621,133 @@ func main() {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Install missing: sudo apt install nmap whois dnsutils"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Go tools: go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"))
+		fmt.Println()
+
+	case "/hunt":
+		// Linux-only hunt mode
+		if runtime.GOOS != "linux" {
+			printError("Hunt Mode is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /hunt <target> [--tools tool1,tool2]")
+			printError("Example: cybermind /hunt example.com")
+			printError("Example: cybermind /hunt example.com --tools dalfox,nuclei-hunt")
+			os.Exit(1)
+		}
+		// Parse target and optional --tools flag
+		huntTarget := args[1]
+		var huntRequested []string
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--tools" && i+1 < len(args) {
+				for _, n := range strings.Split(args[i+1], ",") {
+					n = strings.TrimSpace(n)
+					if n != "" {
+						huntRequested = append(huntRequested, n)
+					}
+				}
+				i++
+			}
+		}
+		if len(huntRequested) > 0 {
+			validSet := make(map[string]bool)
+			for _, n := range hunt.HuntToolNames() {
+				validSet[n] = true
+			}
+			for _, t := range huntRequested {
+				if !validSet[t] {
+					printError(fmt.Sprintf("unknown hunt tool %q — valid: %s",
+						t, strings.Join(hunt.HuntToolNames(), ", ")))
+					os.Exit(1)
+				}
+			}
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		// Manual mode — no recon context
+		runHunt(huntTarget, nil, huntRequested)
+
+	case "/install-hunt":
+		if runtime.GOOS != "linux" {
+			printError("/install-hunt is only available on Linux.")
+			os.Exit(1)
+		}
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  🎯 Installing Hunt Tools"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 50)))
+		fmt.Println()
+
+		goHuntTools := []struct{ bin, module string }{
+			{"gau", "github.com/lc/gau/v2/cmd/gau"},
+			{"waybackurls", "github.com/tomnomnom/waybackurls"},
+			{"katana", "github.com/projectdiscovery/katana/cmd/katana"},
+			{"dalfox", "github.com/hahwul/dalfox/v2"},
+			{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei"},
+		}
+		aptHuntTools := []string{"nmap", "cargo"}
+
+		installed, skippedH, failed := 0, 0, 0
+
+		for _, tool := range aptHuntTools {
+			if _, err := exec.LookPath(tool); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", tool)))
+				skippedH++
+				continue
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", tool)))
+			cmd2 := exec.Command("sudo", "apt", "install", "-y", tool)
+			cmd2.Stdout = os.Stdout
+			cmd2.Stderr = os.Stderr
+			if err := cmd2.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", tool, err)))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", tool)))
+				installed++
+			}
+		}
+
+		for _, gt := range goHuntTools {
+			if _, err := exec.LookPath(gt.bin); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", gt.bin)))
+				skippedH++
+				continue
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", gt.bin)))
+			cmd2 := exec.Command("go", "install", gt.module+"@latest")
+			cmd2.Stdout = os.Stdout
+			cmd2.Stderr = os.Stderr
+			if err := cmd2.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", gt.bin, err)))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", gt.bin)))
+				installed++
+			}
+		}
+
+		// x8 via cargo
+		if _, err := exec.LookPath("x8"); err != nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ x8               installing via cargo..."))
+			cmd2 := exec.Command("cargo", "install", "x8")
+			cmd2.Stdout = os.Stdout
+			cmd2.Stderr = os.Stderr
+			if err := cmd2.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ x8               failed: %v", err)))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ x8               installed"))
+				installed++
+			}
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - x8               already installed"))
+			skippedH++
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
+			fmt.Sprintf("  Summary: %d installed, %d skipped, %d failed", installed, skippedH, failed)))
 		fmt.Println()
 
 	case "/install-tools":
@@ -528,7 +861,7 @@ func main() {
 		// go build
 		cliPath := repoPath + "/cli"
 		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Building new binary..."))
-		buildCmd := exec.Command("go", "build", "-ldflags=-X main.Version=2.3.0", "-o", "cybermind", ".")
+		buildCmd := exec.Command("go", "build", "-ldflags=-X main.Version=2.4.0", "-o", "cybermind", ".")
 		buildCmd.Dir = cliPath
 		buildCmd.Stdout = os.Stdout
 		buildCmd.Stderr = os.Stderr
