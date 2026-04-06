@@ -11,23 +11,20 @@
  ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝
 ```
 
-### ⚡ AI-Powered Cybersecurity CLI Tool
+### ⚡ AI-Powered Offensive Security CLI — Recon + Hunt + AI Analysis
 
-[![Version](https://img.shields.io/badge/version-2.2.0-00FFFF?style=for-the-badge)](https://github.com/thecnical/cybermind)
+[![Version](https://img.shields.io/badge/version-2.4.1-00FFFF?style=for-the-badge)](https://github.com/thecnical/cybermind)
 [![License](https://img.shields.io/badge/license-MIT-8A2BE2?style=for-the-badge)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
-[![Windows](https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#-windows-installation)
-[![Linux](https://img.shields.io/badge/Kali%20Linux-268BEE?style=for-the-badge&logo=kalilinux&logoColor=white)](#-kali-linux--ubuntu-installation)
-[![Privacy](https://img.shields.io/badge/chat-anonymous-00FF00?style=for-the-badge&logo=tor&logoColor=black)](#privacy--anonymity)
+[![Kali Linux](https://img.shields.io/badge/Kali%20Linux-268BEE?style=for-the-badge&logo=kalilinux&logoColor=white)](#kali-linux--ubuntu-installation)
+[![Windows](https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#windows-installation)
 [![Stars](https://img.shields.io/github/stars/thecnical/cybermind?style=for-the-badge&color=yellow)](https://github.com/thecnical/cybermind/stargazers)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/☕%20Buy%20Me%20A%20Coffee-chandanpandit-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/chandanpandit)
 
 *Created by [Chandan Pandey](https://github.com/thecnical)*
 
-**CyberMind is an open-source AI cybersecurity assistant CLI built for Kali Linux and Windows — for penetration testers, ethical hackers, red teamers, and bug bounty hunters.**
-
-<br/>
+**CyberMind is an open-source AI-powered offensive security CLI built for Kali Linux — featuring a fully automated 16-tool recon pipeline, a 6-phase vulnerability hunt engine, and deep AI analysis. Built for penetration testers, bug bounty hunters, and red teamers.**
 
 </div>
 
@@ -35,311 +32,180 @@
 
 ## What is CyberMind?
 
-CyberMind is an open-source, AI-powered cybersecurity CLI tool that connects to a powerful multi-provider AI backend and delivers real, working, copy-paste-ready cybersecurity commands and techniques directly in your terminal. No browser, no GUI, no distractions — just pure command-line power.
+CyberMind is a single Go binary that combines two things: a powerful automated attack pipeline and an AI cybersecurity assistant. On Kali Linux, it runs real tools — nmap, subfinder, nuclei, dalfox, katana, and more — then sends structured findings to AI for deep analysis. On Windows, it provides the full AI chat experience.
 
-Built in Go as a single binary, CyberMind works on Kali Linux, Ubuntu, Parrot OS, BlackArch, Windows, and macOS. The interactive terminal UI is powered by Bubble Tea and Lipgloss, giving you a clean hacker-style interface with typing animations, full conversation memory, and scrollable chat history.
+The tool is built around two core modes:
 
-CyberMind detects your OS on startup and greets you accordingly — Kali Linux users get access to the full Auto Recon Mode which runs real tools like nmap, subfinder, nuclei, gobuster, and more, then sends all output to AI for deep attack vector analysis. Windows users get the full AI chat experience. The AI adapts to your skill level — beginner, intermediate, advanced, or expert — and responds in your preferred language including Hindi and Urdu.
+**`/recon`** — Maps the attack surface. Runs 16 tools across 6 phases: passive OSINT, subdomain enumeration, port scanning, HTTP fingerprinting, directory discovery, and vulnerability scanning. Each phase feeds its output into the next. Results are sent to AI as a structured payload — per-tool findings, open ports, WAF status, live URLs, technologies — and the AI returns a ranked attack surface analysis with exact exploitation commands.
 
----
+**`/hunt`** — Finds vulnerabilities. Takes the recon output and goes deeper: collects historical URLs from Wayback Machine and AlienVault, deep-crawls with katana, discovers hidden parameters with x8, hunts XSS with dalfox, runs full nuclei template coverage, and runs nmap vuln scripts. Results are sent to AI which produces a bug bounty report with confirmed findings, PoCs, and CVSS scores.
 
-## What's New in v2.2.0
-
-**OS Detection + Personalized Greeting** — CyberMind detects your OS on startup and shows `🐧 Kali Linux` or `🪟 Windows` in the banner along with your local IP address.
-
-**Auto Recon Mode (Linux Only)** — The most powerful new feature. Run `cybermind /recon <target>` and CyberMind automatically executes whois, dig, nmap, subfinder, amass, httpx, whatweb, gobuster, and nuclei against your target. All output is collected and sent to AI which analyzes it and returns ranked attack vectors with exact exploitation commands.
-
-**Zero-Filter AI** — All restrictions removed from the AI. Every cybersecurity question gets a complete technical answer — offensive, defensive, red team, black hat techniques explained as security research. No refusals, no disclaimers.
-
-**Adaptive Learning** — The AI detects your skill level from your messages and adapts. Beginners get explanations. Experts get raw commands. The AI also detects your language — write in Hindi or Urdu and it responds in kind.
-
-**Bug Fixes** — Context memory leak fixed (proper circular buffer), history loading race condition fixed, version mismatch fixed, payload command now uses your detected local IP, direct prompt mode now saves to history, input focus restored properly after errors.
-
-**Ctrl+L** — Clear the chat screen without exiting.
+The two modes chain automatically — after `/recon` completes, CyberMind prompts you to start `/hunt` using the recon context (live URLs, open ports, WAF status) so hunt tools run against confirmed live targets instead of guessing.
 
 ---
 
-## ![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat-square&logo=windows&logoColor=white) Windows Installation
+## Kali Linux / Ubuntu Installation
 
-### Step 1 — Install Go
-
-Download from [go.dev/dl](https://go.dev/dl) — choose `go1.xx.windows-amd64.msi`. Install, then open a new PowerShell window and verify:
-
-```powershell
-go version
+```bash
+git clone https://github.com/thecnical/cybermind.git
+cd cybermind
+chmod +x install.sh && sudo ./install.sh
 ```
 
-### Step 2 — Install Git
+The install script builds the CLI, installs it to `/usr/local/bin`, and automatically installs all 23 recon + hunt tools. No manual setup needed.
 
-Download from [git-scm.com](https://git-scm.com/download/win) and install with default settings.
+After install, verify:
 
-### Step 3 — Clone and build
+```bash
+cybermind --version
+cybermind /doctor    # check all tools are installed
+```
 
+---
+
+## Windows Installation
+
+Windows supports the full AI chat experience. `/recon` and `/hunt` require Kali Linux.
+
+**Step 1** — Install [Go](https://go.dev/dl) and [Git](https://git-scm.com/download/win)
+
+**Step 2** — Build:
 ```powershell
 git clone https://github.com/thecnical/cybermind.git
 cd cybermind\cli
-go build -ldflags="-X main.Version=2.2.0" -o cybermind.exe .
+go build -o cybermind.exe .
 ```
 
-### Step 4 — Install globally (run from anywhere)
-
-Open PowerShell as Administrator:
-
+**Step 3** — Install globally (run as Administrator):
 ```powershell
 Move-Item cybermind.exe C:\Windows\System32\cybermind.exe
 ```
 
-### Step 5 — Launch
-
-```powershell
-cybermind
-```
-
 ---
 
-## ![Kali Linux](https://img.shields.io/badge/Kali%20Linux-268BEE?style=flat-square&logo=kalilinux&logoColor=white) Kali Linux / Ubuntu Installation
+## Auto Recon Mode — `/recon` 🐧 Kali Linux Only
 
-### Step 1 — Install Go
-
-```bash
-sudo apt update && sudo apt install golang-go -y
-go version
-```
-
-If version is older than 1.21, install latest:
+Fully automated 16-tool recon pipeline across 6 phases. Each phase feeds its output into the next.
 
 ```bash
-wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-source ~/.bashrc
-go version
-```
-
-### Step 2 — Clone and build
-
-```bash
-git clone https://github.com/thecnical/cybermind.git
-cd cybermind/cli
-go build -ldflags="-X main.Version=2.2.0" -o cybermind .
-```
-
-### Step 3 — Install globally
-
-```bash
-sudo mv cybermind /usr/local/bin/cybermind
-sudo chmod +x /usr/local/bin/cybermind
-```
-
-### Step 4 — Launch
-
-```bash
-cybermind
-```
-
-### One-Command Install
-
-```bash
-git clone https://github.com/thecnical/cybermind.git && cd cybermind && chmod +x install.sh && sudo ./install.sh
-```
-
----
-
-## Auto Recon Mode 🐧 Linux Only
-
-The most powerful feature of CyberMind. Just give it a target and it does everything automatically.
-
-```bash
-cybermind /recon 192.168.1.1
 cybermind /recon example.com
-cybermind /recon 10.0.0.0/24
+cybermind /recon 192.168.1.1
+cybermind /recon example.com --tools nmap,httpx,nuclei   # specific tools only
 ```
 
-CyberMind will automatically run all available tools in sequence — whois for registration info, dig for DNS records, nmap for port scanning and service detection, subfinder and amass for subdomain enumeration, httpx for live host probing, whatweb for technology fingerprinting, gobuster for directory bruteforce, and nuclei for vulnerability scanning. All output is collected and sent to AI which returns a complete analysis including identified vulnerabilities, CVEs, ranked attack vectors, and exact exploitation commands.
+**Pipeline:**
 
-If a tool is not installed, it is skipped and the AI provides guidance based on what was collected. If no tools are installed at all, the AI falls back to providing a complete manual recon guide.
+| Phase | Tools | What it discovers |
+|-------|-------|-------------------|
+| 1 — Passive OSINT | whois, theHarvester, dig | Registration, emails, DNS records |
+| 2 — Subdomain Enum | subfinder, amass, dnsx | Subdomains → live hosts |
+| 3 — Port Scanning | rustscan → naabu → nmap (cascade), masscan | Open ports, services, WAF |
+| 4 — HTTP Fingerprint | httpx, whatweb, tlsx | Live URLs, tech stack, TLS certs |
+| 5 — Dir Discovery | ffuf → feroxbuster → gobuster (cascade) | Hidden endpoints, directories |
+| 6 — Vuln Scanning | nuclei, nikto, katana | CVEs, misconfigs, crawled endpoints |
 
-```bash
-# Check which tools are installed
-cybermind /tools
+**Adaptive behavior:**
+- Port 443/8443 found → tlsx auto-queued
+- WAF detected → Phase 5 rate-limited to 10 req/s, nuclei excludes aggressive templates
+- No open ports after Phase 3 → Phases 4/5/6 skipped
+- IP target → domain-only tools skipped automatically
 
-# Install missing tools
-sudo apt install nmap whois dnsutils gobuster nuclei
-go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-go install -v github.com/owasp-amass/amass/v4/...@master
-```
+After recon completes, CyberMind prompts: **"Start Hunt Mode on these results? [y/N]"**
 
 ---
 
-## Features
+## Hunt Mode — `/hunt` 🐧 Kali Linux Only
 
+6-phase vulnerability hunting pipeline. Chains directly from recon output or runs standalone.
+
+```bash
+cybermind /hunt example.com
+cybermind /hunt example.com --tools dalfox,nuclei   # specific tools
 ```
-⚡ Interactive AI Chat        Fully responsive terminal UI with conversation memory
-🔍 Auto Recon Mode           Real tools: nmap, subfinder, nuclei, gobuster + AI analysis
-🧠 Adaptive Learning         AI adapts to beginner/intermediate/advanced/expert level
-🌍 Language Detection        Responds in Hindi, Urdu, or English automatically
-🚫 Zero Restrictions         All cybersecurity questions answered, no refusals
-🔍 Scan Mode                 AI-guided network & web scanning with exact commands
-🕵️  Recon Mode                OSINT, subdomain enum, passive/active recon
-💥 Exploit Mode              CVE guides, Metasploit modules, manual exploits
-🎯 Payload Mode              msfvenom with your detected local IP
-🛠️  Tool Mode                 Deep-dive for any Kali Linux tool (CLI + GUI)
-🔗 Research Feature          Real GitHub links, CVEs, exploit-db, resources
-� Local Chat History        Saved only on your machine, never uploaded
-� Zero Data Collection      No logs, no accounts, no tracking
-� 9 AI Providers            Parallel execution, 40+ models, never fails
-🪟 Windows Support           Full AI chat on Windows
-� Linux/Kali Support        Full recon + AI on Linux
-⌨️  Ctrl+L                    Clear chat screen instantly
-```
+
+**Pipeline:**
+
+| Phase | Tool | What it does |
+|-------|------|--------------|
+| 1 — URL Collection | gau, waybackurls | Historical URLs from Wayback Machine + AlienVault |
+| 2 — Deep Crawl | katana | JS endpoints, forms, API paths (depth 5) |
+| 3 — Parameter Discovery | x8 | Hidden GET/POST parameters (IDOR/SSRF/LFI surface) |
+| 4 — XSS Hunting | dalfox | Automated XSS with DOM verification |
+| 5 — Vuln Scan | nuclei | Full template coverage (critical/high/medium/low) |
+| 6 — Network Vulns | nmap | `--script vuln` on known open ports |
+
+**Context chaining:**
+- Phase 1 URLs → fed into dalfox (XSS) and nuclei (vuln scan)
+- Phase 2 crawled URLs → merged with recon live URLs for deeper coverage
+- Recon WAF status → dalfox adds delay, nuclei excludes aggressive templates
+- Recon open ports → nmap scans only known ports (much faster)
+
+**AI output:** Confirmed vulnerabilities with PoCs, XSS payloads, hidden parameter analysis, and a ready-to-submit bug bounty report template.
 
 ---
 
-## Usage
-
-### Interactive Chat
+## Tool Management
 
 ```bash
-cybermind
+cybermind /doctor          # check all 23 tools, auto-install missing ones
+cybermind /install-tools   # install all recon + hunt tools
+cybermind /tools           # quick status check
 ```
 
-Controls: `Enter` send · `PgUp/PgDn` scroll · `Ctrl+L` clear screen · `Ctrl+C` exit
-
-### Auto Recon (Linux only)
-
-```bash
-cybermind /recon <target>     # full auto recon + AI analysis
-cybermind /tools              # check installed tools
-```
-
-### AI-Guided Commands
-
-```bash
-cybermind scan 192.168.1.1 full
-cybermind scan example.com subdomain
-cybermind recon target.com osint
-cybermind exploit CVE-2021-44228 10.0.0.1
-cybermind payload windows x64
-cybermind payload linux x86
-cybermind tool sqlmap "find SQLi in login form"
-cybermind tool nmap "scan for SMB vulnerabilities"
-cybermind tool bloodhound "find paths to domain admin"
-```
-
-### Research
-
-```bash
-cybermind "give me github links for pentesting tools"
-cybermind "CVE-2021-44228 exploit links and PoC"
-cybermind "best wordlists for password cracking"
-```
-
-### Direct Prompt
-
-```bash
-cybermind "how to crack WPA2 with aircrack-ng"
-cybermind "kerberoasting step by step"
-cybermind "bypass UAC on Windows 10"
-```
-
-### History
-
-```bash
-cybermind history      # view saved conversations
-cybermind clear        # wipe local history
-cybermind help         # show all commands
-cybermind update       # update to latest version
-cybermind --version    # show version
-```
+`/doctor` is the recommended first step — it shows exactly which tools are installed and automatically installs any that are missing.
 
 ---
 
-## Scan Types
-
-| Type | Description |
-|------|-------------|
-| `quick` | Top 1000 ports, service detection |
-| `full` | All 65535 ports, scripts, OS detection |
-| `stealth` | SYN scan, slow timing, avoid detection |
-| `web` | nikto, whatweb, ffuf, directory bruteforce |
-| `vuln` | nmap vuln scripts, nuclei, searchsploit |
-| `subdomain` | subfinder, amass, dnsx, httpx pipeline |
-| `network` | Subnet discovery, live hosts, services |
-| `ad` | Active Directory: ldap, smb, kerberos, bloodhound |
-
----
-
-## Privacy & Anonymity
-
-Your conversations are completely private. No conversation logs are stored on the server. No user accounts. No tracking. No analytics. Your chat history is saved only on your machine at `~/.cybermind/history.json` (Linux) or `C:\Users\<you>\.cybermind\history.json` (Windows). Every request is stateless — the server processes it and immediately forgets it.
-
-```bash
-# Maximum anonymity through Tor
-torsocks cybermind "your question"
-proxychains cybermind scan target.com full
-```
-
----
-
-## Updating CyberMind
-
-### One Command Update (Linux/Kali)
+## Updating
 
 ```bash
 cybermind update
 ```
 
-This single command does everything automatically — pulls latest code from GitHub, rebuilds the binary, and installs it to `/usr/local/bin`. Done.
+Pulls latest code, rebuilds binary, installs to `/usr/local/bin`, and auto-installs any new tools added in the update.
 
-### Manual Update (Linux/Kali)
+---
+
+## AI Chat — All Platforms
 
 ```bash
-cd cybermind
-git pull origin main
-cd cli
-go build -ldflags="-X main.Version=2.2.0" -o cybermind .
-sudo mv cybermind /usr/local/bin/
-cybermind --version
+cybermind                              # interactive chat
+cybermind "how to exploit CVE-2021-44228"
+cybermind scan 192.168.1.1 full
+cybermind recon target.com osint
+cybermind exploit CVE-2021-44228 10.0.0.1
+cybermind payload windows x64
+cybermind tool sqlmap "find SQLi in login form"
+cybermind tool nmap "scan for SMB vulnerabilities"
+cybermind history                      # view saved conversations
+cybermind clear                        # wipe local history
 ```
 
-### Manual Update (Windows)
-
-```powershell
-cd cybermind
-git pull origin main
-cd cli
-go build -ldflags="-X main.Version=2.2.0" -o cybermind.exe .
-# Move to System32 as Administrator
-Move-Item -Force cybermind.exe C:\Windows\System32\cybermind.exe
-cybermind --version
-```
+**AI features:**
+- Zero restrictions — all cybersecurity questions answered
+- Adaptive skill detection (beginner → expert)
+- Language detection — responds in Hindi/Urdu if you write in it
+- 9 AI providers, 40+ models, parallel execution with auto-fallback
+- No data collection, no accounts, no tracking
 
 ---
 
+## Privacy
 
+All conversations are stateless — the server processes and immediately forgets. Chat history is saved only on your machine at `~/.cybermind/history.json`. No logs, no accounts, no analytics.
 
 ```bash
-make build          # current OS
-make build-linux    # Kali Linux amd64
-make build-windows  # Windows amd64
-make build-all      # all platforms
-make install        # install to /usr/local/bin
-make clean          # remove artifacts
+torsocks cybermind "your question"     # route through Tor
+proxychains cybermind /recon target    # use proxy chain
 ```
 
 ---
 
-## Contributing
+## Security
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-## Support
-
-[![Buy Me A Coffee](https://img.shields.io/badge/☕%20Buy%20Me%20A%20Coffee-chandanpandit-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/chandanpandit)
+- Target validation: only `[a-zA-Z0-9.\-_:/\[\]]+` accepted — prevents tool flag injection
+- No shell execution: all tools run via `exec.Command` with separate args — no shell injection possible
+- Output sanitization: ANSI codes stripped, 6000 char cap per tool before AI submission
 
 ---
 
@@ -360,9 +226,5 @@ CyberMind is for authorized security research, penetration testing with written 
 Made with ⚡ by [Chandan Pandey](https://github.com/thecnical)
 
 [GitHub](https://github.com/thecnical/cybermind) · [Buy Me A Coffee](https://buymeacoffee.com/chandanpandit)
-
----
-
-*CyberMind — AI cybersecurity CLI | Kali Linux AI assistant | Windows hacking tool | Auto recon | Ethical hacking AI | Penetration testing CLI | Open source hacking tool | AI pentest assistant | Bug bounty AI | Red team tool*
 
 </div>

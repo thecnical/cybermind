@@ -104,6 +104,23 @@ func sanitize(s string, maxLen int) string {
 	return clean
 }
 
+// validateTarget checks that target contains only safe characters.
+// Prevents tool flag injection via crafted target strings.
+var targetRe = regexp.MustCompile(`^[a-zA-Z0-9.\-_:/\[\]]+$`)
+
+func validateTarget(target string) error {
+	if target == "" {
+		return fmt.Errorf("target cannot be empty")
+	}
+	if !targetRe.MatchString(target) {
+		return fmt.Errorf("invalid target %q — only alphanumeric, dots, hyphens, underscores, colons, slashes, and brackets allowed", target)
+	}
+	if strings.HasPrefix(target, "-") {
+		return fmt.Errorf("invalid target %q — target cannot start with '-'", target)
+	}
+	return nil
+}
+
 func targetType(target string) string {
 	if net.ParseIP(target) != nil {
 		return "ip"
@@ -379,6 +396,12 @@ func mergeAllURLs(ctx *HuntContext) []string {
 // progress receives live status events.
 func RunHunt(target string, ctx *HuntContext, requested []string, progress func(HuntStatus)) HuntResult {
 	result := HuntResult{Target: target}
+
+	// Security: validate target before passing to any external tool
+	if err := validateTarget(target); err != nil {
+		result.Skipped = append(result.Skipped, HuntSkipped{Tool: "all", Reason: err.Error()})
+		return result
+	}
 
 	// Initialize context if not provided (manual mode)
 	if ctx == nil {

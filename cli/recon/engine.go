@@ -227,7 +227,30 @@ func sanitize(s string, maxLen int) string {
 	return clean
 }
 
-// targetType returns "ip" or "domain"
+// validateTarget checks that target contains only safe characters.
+// Prevents nmap/tool flag injection via crafted target strings.
+// Valid: hostnames, IPs, CIDR ranges. Invalid: anything with spaces, --, ;, etc.
+var targetRe = regexp.MustCompile(`^[a-zA-Z0-9.\-_:/\[\]]+$`)
+
+func validateTarget(target string) error {
+	if target == "" {
+		return fmt.Errorf("target cannot be empty")
+	}
+	if !targetRe.MatchString(target) {
+		return fmt.Errorf("invalid target %q — only alphanumeric, dots, hyphens, underscores, colons, slashes, and brackets allowed", target)
+	}
+	// Reject anything that looks like a flag
+	if strings.HasPrefix(target, "-") {
+		return fmt.Errorf("invalid target %q — target cannot start with '-'", target)
+	}
+	return nil
+}
+
+// ValidateTarget checks that target contains only safe characters.
+// Exported for use by main.go before calling RunAutoRecon.
+func ValidateTarget(target string) error {
+	return validateTarget(target)
+}
 func targetType(target string) string {
 	if net.ParseIP(target) != nil {
 		return "ip"
@@ -270,6 +293,13 @@ func addResult(result *ReconResult, spec ToolSpec, output string, err error, too
 // requested is the --tools filter (nil = run all). progress receives live status events.
 func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) ReconResult {
 	result := ReconResult{Target: target}
+
+	// Security: validate target before passing to any external tool
+	if err := validateTarget(target); err != nil {
+		result.Skipped = append(result.Skipped, SkippedTool{Tool: "all", Reason: err.Error()})
+		return result
+	}
+
 	ctx := &ReconContext{
 		Target:     target,
 		TargetType: targetType(target),

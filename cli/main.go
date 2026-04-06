@@ -574,11 +574,11 @@ func main() {
 		normalized := strings.TrimPrefix(cmd, "/")
 		linuxOnlyCmds := map[string]bool{
 			"recon": true, "hunt": true, "tools": true,
-			"install-tools": true, "install-hunt": true,
+			"install-tools": true, "install-hunt": true, "doctor": true,
 		}
 		if linuxOnlyCmds[normalized] || strings.HasPrefix(cmd, "/") {
 			printError("This command is only available on Linux/Kali.")
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  /recon, /hunt, /tools, /install-tools require Linux"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  /recon, /hunt, /doctor, /tools, /install-tools require Linux"))
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use: cybermind recon <target>  for AI-guided recon on Windows"))
 			os.Exit(1)
 		}
@@ -610,6 +610,11 @@ func main() {
 		target, requested, parseErr := parseToolsFlag(args[1:])
 		if parseErr != nil {
 			printError(parseErr.Error())
+			os.Exit(1)
+		}
+		// Security: validate target
+		if err := recon.ValidateTarget(target); err != nil {
+			printError(err.Error())
 			os.Exit(1)
 		}
 		if err := storage.Load(); err != nil {
@@ -680,6 +685,11 @@ func main() {
 		}
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
+		}
+		// Security: validate target
+		if err := recon.ValidateTarget(huntTarget); err != nil {
+			printError(err.Error())
+			os.Exit(1)
 		}
 		// Manual mode — no recon context
 		runHunt(huntTarget, nil, huntRequested)
