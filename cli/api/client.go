@@ -109,13 +109,27 @@ func SendPrompt(prompt string) (string, error) {
 	return post("/chat", chatRequest{Prompt: prompt, Messages: []Message{}})
 }
 
-// SendAnalysis sends raw recon data to AI for analysis
-func SendAnalysis(target, data, tools string) (string, error) {
-	return post("/analyze", map[string]string{
-		"target": target,
-		"data":   data,
-		"tools":  tools,
-	})
+// ReconPayload is the structured JSON body sent to /analyze.
+type ReconPayload struct {
+	Target          string            `json:"target"`
+	TargetType      string            `json:"target_type"`
+	ToolsRun        []string          `json:"tools_run"`
+	ToolsFailed     []string          `json:"tools_failed"`
+	ToolsSkipped    []string          `json:"tools_skipped"`
+	Findings        map[string]string `json:"findings"`
+	SubdomainsFound int               `json:"subdomains_found"`
+	LiveHostsFound  int               `json:"live_hosts_found"`
+	OpenPorts       []int             `json:"open_ports"`
+	WAFDetected     bool              `json:"waf_detected"`
+	WAFVendor       string            `json:"waf_vendor"`
+	LiveURLs        []string          `json:"live_urls"`
+	Technologies    []string          `json:"technologies"`
+	RawCombined     string            `json:"raw"`
+}
+
+// SendAnalysis sends structured recon payload to AI for analysis
+func SendAnalysis(payload ReconPayload) (string, error) {
+	return post("/analyze", payload)
 }
 
 // SendScan — AI-guided scan

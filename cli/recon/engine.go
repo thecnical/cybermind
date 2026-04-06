@@ -3,7 +3,10 @@ package recon
 import (
 	"bytes"
 	"fmt"
+	"net"
+	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -14,13 +17,38 @@ func IsLinux() bool {
 	return runtime.GOOS == "linux"
 }
 
+var wordlistCandidates = []string{
+	"/usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt",
+	"/usr/share/seclists/Discovery/Web-Content/common.txt",
+	"/usr/share/wordlists/dirb/common.txt",
+	"/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt",
+	os.Getenv("HOME") + "/.local/share/wordlists/common.txt",
+}
+
+func resolveWordlist() (string, bool) {
+	for _, path := range wordlistCandidates {
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+	}
+	return "", false
+}
+
 // ToolResult holds output from a single tool
 type ToolResult struct {
 	Tool    string
 	Command string
 	Output  string
 	Error   string
+	Partial bool
 	Took    time.Duration
+}
+
+// SkippedTool records a tool that was not run and why
+type SkippedTool struct {
+	Tool        string
+	Reason      string
+	InstallHint string
 }
 
 // ReconResult holds all tool outputs
@@ -28,13 +56,131 @@ type ReconResult struct {
 	Target  string
 	Results []ToolResult
 	Tools   []string
-	Failed  []string
+	Failed  []ToolResult
+	Skipped []SkippedTool
+	Context *ReconContext
 }
+
+// StatusKind represents the execution status of a tool
+type StatusKind string
+
+const (
+	StatusRunning StatusKind = "running"
+	StatusDone    StatusKind = "done"
+	StatusFailed  StatusKind = "failed"
+	StatusSkipped StatusKind = "skipped"
+	StatusTimeout StatusKind = "timeout"
+	StatusPartial StatusKind = "partial"
+)
+
+// ToolStatus reports the live status of a running tool
+type ToolStatus struct {
+	Tool   string
+	Kind   StatusKind
+	Reason string
+	Took   time.Duration
+}
+
+// ReconContext accumulates structured findings across phases
+type ReconContext struct {
+	Target          string
+	TargetType      string
+	Subdomains      []string
+	LiveHosts       []string
+	OpenPorts       []int
+	Services        map[int]string
+	WAFDetected     bool
+	WAFVendor       string
+	LiveURLs        []string
+	Technologies    []string
+	DiscoveredPaths []string
+	CrawledURLs     []string
+}
+
+// ToolSpec defines a tool's metadata and how to build its arguments
+type ToolSpec struct {
+	Name         string
+	Phase        int
+	Timeout      int
+	DomainOnly   bool
+	CascadeGroup string
+	BuildArgs    func(target string, ctx *ReconContext) []string
+	NeedsFile    string
+	InstallHint  string
+}
+
+
+
+// lookPath is the function used to check if a binary exists.
+// It can be overridden in tests.
+var lookPath = exec.LookPath
 
 // isAvailable checks if a tool is installed
 func isAvailable(tool string) bool {
 	_, err := exec.LookPath(tool)
 	return err == nil
+}
+
+// detectTools filters toolRegistry based on availability, --tools flag, wordlist, and cascade groups.
+// Returns available tools and a list of skipped tools with reasons.
+func detectTools(requested []string) (available []ToolSpec, skipped []SkippedTool, err error) {
+	// Validate requested tool names against registry
+	if requested != nil {
+		registryNames := make(map[string]bool)
+		for _, spec := range toolRegistry {
+			registryNames[spec.Name] = true
+		}
+		for _, name := range requested {
+			if !registryNames[name] {
+				return nil, nil, fmt.Errorf("unknown tool: %q — run 'cybermind /tools' to see valid tool names", name)
+			}
+		}
+	}
+
+	cascadeWinners := map[string]string{} // group → winning tool name
+
+	for _, spec := range toolRegistry {
+		// Filter by --tools flag
+		if requested != nil && !containsStr(requested, spec.Name) {
+			skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "not in --tools list"})
+			continue
+		}
+		// Check binary exists
+		if _, err := lookPath(spec.Name); err != nil {
+			skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "not installed", InstallHint: spec.InstallHint})
+			continue
+		}
+		// Check NeedsFile dependency
+		if spec.NeedsFile == "wordlist" {
+			if _, found := resolveWordlist(); !found {
+				skipped = append(skipped, SkippedTool{
+					Tool:   spec.Name,
+					Reason: "no wordlist found — install seclists: sudo apt install seclists",
+				})
+				continue
+			}
+		}
+		// Cascade: only first available in group wins
+		if spec.CascadeGroup != "" {
+			if winner, taken := cascadeWinners[spec.CascadeGroup]; taken {
+				skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "cascade: " + winner + " used"})
+				continue
+			}
+			cascadeWinners[spec.CascadeGroup] = spec.Name
+		}
+		available = append(available, spec)
+	}
+	return available, skipped, nil
+}
+
+// containsStr checks if a string slice contains a value
+func containsStr(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
 }
 
 // run executes a command with timeout, returns output
@@ -71,184 +217,214 @@ func run(timeoutSec int, name string, args ...string) (string, error) {
 }
 
 // sanitize removes ANSI codes and trims output to max length
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
 func sanitize(s string, maxLen int) string {
-	// Remove ANSI escape codes
-	var result strings.Builder
-	i := 0
-	for i < len(s) {
-		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			// Skip until 'm'
-			for i < len(s) && s[i] != 'm' {
-				i++
-			}
-			i++
-			continue
-		}
-		result.WriteByte(s[i])
-		i++
-	}
-	clean := result.String()
+	clean := ansiRe.ReplaceAllString(s, "")
 	if len(clean) > maxLen {
 		return clean[:maxLen] + "\n... [truncated]"
 	}
 	return clean
 }
 
-// isIP checks if target looks like an IP address
-func isIP(target string) bool {
-	parts := strings.Split(target, ".")
-	if len(parts) != 4 {
-		return false
+// targetType returns "ip" or "domain"
+func targetType(target string) string {
+	if net.ParseIP(target) != nil {
+		return "ip"
 	}
-	for _, p := range parts {
-		if len(p) == 0 || len(p) > 3 {
-			return false
-		}
-	}
-	return true
+	return "domain"
 }
 
-// RunAutoRecon runs all available recon tools against target
-func RunAutoRecon(target string, progress func(string)) ReconResult {
+// isIP checks if target looks like an IP address
+func isIP(target string) bool {
+	return targetType(target) == "ip"
+}
+
+// addResult processes a tool's execution result and updates ReconResult accordingly.
+// Three-branch logic:
+//   - output != "" → store sanitized output, set Partial=(err!=nil), append error annotation, add to result.Tools
+//   - output == "" && err != nil → add to result.Failed with error
+//   - output == "" && err == nil → no-op (tool ran but produced nothing)
+func addResult(result *ReconResult, spec ToolSpec, output string, err error, took time.Duration) {
+	tr := ToolResult{
+		Tool:    spec.Name,
+		Command: spec.Name,
+		Took:    took,
+	}
+	if output != "" {
+		tr.Output = sanitize(output, 6000)
+		tr.Partial = err != nil
+		if tr.Partial {
+			tr.Error = err.Error()
+			tr.Output += "\n[partial — exited non-zero: " + err.Error() + "]"
+		}
+		result.Tools = append(result.Tools, spec.Name)
+	} else if err != nil {
+		tr.Error = err.Error()
+		result.Failed = append(result.Failed, tr)
+	}
+	result.Results = append(result.Results, tr)
+}
+
+// RunAutoRecon runs all available recon tools against target in phase order.
+// requested is the --tools filter (nil = run all). progress receives live status events.
+func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) ReconResult {
 	result := ReconResult{Target: target}
-	var allOutput strings.Builder
-
-	addResult := func(tool, cmd, output, errMsg string, took time.Duration) {
-		tr := ToolResult{Tool: tool, Command: cmd, Took: took}
-		if output != "" && errMsg == "" {
-			tr.Output = sanitize(output, 5000)
-			result.Tools = append(result.Tools, tool)
-			allOutput.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", strings.ToUpper(tool), tr.Output))
-		} else {
-			tr.Error = errMsg
-			result.Failed = append(result.Failed, tool)
-		}
-		result.Results = append(result.Results, tr)
+	ctx := &ReconContext{
+		Target:     target,
+		TargetType: targetType(target),
 	}
 
-	// 1. WHOIS
-	if isAvailable("whois") {
-		progress("whois — domain registration info...")
+	available, skipped, err := detectTools(requested)
+	if err != nil {
+		// Unknown tool in --tools flag — return error in result
+		result.Skipped = append(result.Skipped, SkippedTool{Tool: "all", Reason: err.Error()})
+		return result
+	}
+	result.Skipped = skipped
+
+	// Emit skipped statuses upfront
+	for _, s := range skipped {
+		progress(ToolStatus{Tool: s.Tool, Kind: StatusSkipped, Reason: s.Reason})
+	}
+
+	// runPhase executes all available tools for a given phase number
+	runPhase := func(phase int) {
+		for _, spec := range available {
+			if spec.Phase != phase {
+				continue
+			}
+			// Skip domain-only tools for IP targets
+			if spec.DomainOnly && ctx.TargetType == "ip" {
+				result.Skipped = append(result.Skipped, SkippedTool{
+					Tool:   spec.Name,
+					Reason: "domain-only tool",
+				})
+				progress(ToolStatus{Tool: spec.Name, Kind: StatusSkipped, Reason: "domain-only tool"})
+				continue
+			}
+
+			progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
+			start := time.Now()
+			args := spec.BuildArgs(target, ctx)
+			output, runErr := run(spec.Timeout, spec.Name, args...)
+			took := time.Since(start)
+
+			addResult(&result, spec, output, runErr, took)
+
+			// Determine status kind for progress callback
+			last := result.Results[len(result.Results)-1]
+			var kind StatusKind
+			switch {
+			case last.Partial:
+				kind = StatusPartial
+			case last.Error != "" && last.Output == "":
+				kind = StatusFailed
+			default:
+				kind = StatusDone
+			}
+			progress(ToolStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
+		}
+	}
+
+	// Phase 1 — Passive OSINT
+	runPhase(1)
+
+	// Phase 2 — Subdomain Enum → populate ctx.Subdomains and ctx.LiveHosts
+	runPhase(2)
+	ctx.Subdomains = extractSubdomains(result)
+	ctx.LiveHosts = extractLiveHosts(result)
+
+	// Phase 3 — Port Scan → populate ctx.OpenPorts, ctx.WAFDetected
+	runPhase(3)
+	ctx.OpenPorts = extractOpenPorts(result)
+	ctx.WAFDetected, ctx.WAFVendor = extractWAF(result)
+
+	// Adaptive: auto-queue tlsx if 443 or 8443 found
+	if containsPort(ctx.OpenPorts, 443) || containsPort(ctx.OpenPorts, 8443) {
+		available = ensureToolQueued("tlsx", available, toolRegistry)
+	}
+
+	// Adaptive: skip phases 4/5/6 if no open ports found
+	if len(ctx.OpenPorts) == 0 {
+		buildCombined(&result)
+		result.Context = ctx
+		return result
+	}
+
+	// Phase 4 — HTTP Probe on live hosts → populate ctx.LiveURLs
+	runPhase(4)
+	ctx.LiveURLs = extractLiveURLs(result)
+
+	// Phase 5 — Dir Discovery on each live URL (WAF-adaptive rate limiting handled in BuildArgs)
+	runPhase(5)
+
+	// Phase 6 — Vuln Scan: katana first → populate ctx.CrawledURLs → nuclei uses them
+	// Run katana before nuclei by running phase 6 tools in registry order
+	// (katana is last in registry, but nuclei needs crawled URLs — run katana first if available)
+	// Actually: registry order is nuclei, nikto, katana. We need katana before nuclei.
+	// Solution: run katana separately first, then run the rest of phase 6.
+	runKatanaFirst := func() {
+		for _, spec := range available {
+			if spec.Phase == 6 && spec.Name == "katana" {
+				if spec.DomainOnly && ctx.TargetType == "ip" {
+					continue
+				}
+				progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
+				start := time.Now()
+				args := spec.BuildArgs(target, ctx)
+				output, runErr := run(spec.Timeout, spec.Name, args...)
+				took := time.Since(start)
+				addResult(&result, spec, output, runErr, took)
+				last := result.Results[len(result.Results)-1]
+				var kind StatusKind
+				switch {
+				case last.Partial:
+					kind = StatusPartial
+				case last.Error != "" && last.Output == "":
+					kind = StatusFailed
+				default:
+					kind = StatusDone
+				}
+				progress(ToolStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
+				ctx.CrawledURLs = extractCrawledURLs(result)
+				return
+			}
+		}
+	}
+	runKatanaFirst()
+
+	// Run remaining phase 6 tools (nuclei, nikto) — skip katana (already ran)
+	for _, spec := range available {
+		if spec.Phase != 6 || spec.Name == "katana" {
+			continue
+		}
+		if spec.DomainOnly && ctx.TargetType == "ip" {
+			result.Skipped = append(result.Skipped, SkippedTool{Tool: spec.Name, Reason: "domain-only tool"})
+			progress(ToolStatus{Tool: spec.Name, Kind: StatusSkipped, Reason: "domain-only tool"})
+			continue
+		}
+		progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
 		start := time.Now()
-		out, err := run(30, "whois", target)
-		errMsg := ""
-		if err != nil {
-			errMsg = err.Error()
+		args := spec.BuildArgs(target, ctx)
+		output, runErr := run(spec.Timeout, spec.Name, args...)
+		took := time.Since(start)
+		addResult(&result, spec, output, runErr, took)
+		last := result.Results[len(result.Results)-1]
+		var kind StatusKind
+		switch {
+		case last.Partial:
+			kind = StatusPartial
+		case last.Error != "" && last.Output == "":
+			kind = StatusFailed
+		default:
+			kind = StatusDone
 		}
-		addResult("whois", "whois "+target, out, errMsg, time.Since(start))
+		progress(ToolStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
 	}
 
-	// 2. DIG — DNS
-	if isAvailable("dig") {
-		progress("dig — DNS records...")
-		start := time.Now()
-		out, _ := run(15, "dig", "+short", "ANY", target)
-		if out == "" {
-			out, _ = run(15, "dig", "+short", target)
-		}
-		addResult("dig", "dig +short ANY "+target, out, "", time.Since(start))
-	}
-
-	// 3. NMAP — port scan
-	if isAvailable("nmap") {
-		progress("nmap — port scan + service detection (this may take a minute)...")
-		start := time.Now()
-		out, err := run(120, "nmap", "-sV", "-T4", "--open", "-Pn", "--top-ports", "1000", target)
-		errMsg := ""
-		if err != nil {
-			errMsg = err.Error()
-		}
-		addResult("nmap", "nmap -sV -T4 --open -Pn --top-ports 1000 "+target, out, errMsg, time.Since(start))
-	}
-
-	// Domain-only tools
-	if !isIP(target) {
-		// 4. SUBFINDER
-		if isAvailable("subfinder") {
-			progress("subfinder — subdomain enumeration...")
-			start := time.Now()
-			out, err := run(60, "subfinder", "-d", target, "-silent")
-			errMsg := ""
-			if err != nil {
-				errMsg = err.Error()
-			}
-			addResult("subfinder", "subfinder -d "+target+" -silent", out, errMsg, time.Since(start))
-		}
-
-		// 5. AMASS (passive only — fast)
-		if isAvailable("amass") {
-			progress("amass — passive subdomain enum...")
-			start := time.Now()
-			out, err := run(60, "amass", "enum", "-passive", "-d", target)
-			errMsg := ""
-			if err != nil {
-				errMsg = err.Error()
-			}
-			addResult("amass", "amass enum -passive -d "+target, out, errMsg, time.Since(start))
-		}
-
-		// 6. HTTPX — live hosts
-		if isAvailable("httpx") {
-			progress("httpx — HTTP probe + tech detection...")
-			start := time.Now()
-			out, err := run(30, "httpx", "-u", target, "-silent", "-status-code", "-title", "-tech-detect", "-follow-redirects")
-			errMsg := ""
-			if err != nil {
-				errMsg = err.Error()
-			}
-			addResult("httpx", "httpx -u "+target+" -silent -status-code -title -tech-detect", out, errMsg, time.Since(start))
-		}
-
-		// 7. WHATWEB — fingerprint
-		if isAvailable("whatweb") {
-			progress("whatweb — technology fingerprint...")
-			start := time.Now()
-			out, err := run(30, "whatweb", "--color=never", "-a", "3", target)
-			errMsg := ""
-			if err != nil {
-				errMsg = err.Error()
-			}
-			addResult("whatweb", "whatweb --color=never -a 3 "+target, out, errMsg, time.Since(start))
-		}
-
-		// 8. GOBUSTER — directory bruteforce (fast wordlist)
-		if isAvailable("gobuster") {
-			progress("gobuster — directory bruteforce...")
-			start := time.Now()
-			// Use common wordlist if available
-			wordlist := "/usr/share/wordlists/dirb/common.txt"
-			if !isAvailable("ls") {
-				wordlist = "/usr/share/wordlists/dirb/common.txt"
-			}
-			out, err := run(60, "gobuster", "dir", "-u", "http://"+target, "-w", wordlist, "-q", "--no-error", "-t", "20")
-			errMsg := ""
-			if err != nil {
-				errMsg = err.Error()
-			}
-			addResult("gobuster", "gobuster dir -u http://"+target+" -w "+wordlist+" -q -t 20", out, errMsg, time.Since(start))
-		}
-
-		// 9. NUCLEI — vulnerability scan (fast templates)
-		if isAvailable("nuclei") {
-			progress("nuclei — vulnerability scan...")
-			start := time.Now()
-			out, err := run(90, "nuclei", "-u", target, "-silent", "-severity", "critical,high,medium", "-no-color")
-			errMsg := ""
-			if err != nil {
-				errMsg = err.Error()
-			}
-			addResult("nuclei", "nuclei -u "+target+" -silent -severity critical,high,medium", out, errMsg, time.Since(start))
-		}
-	}
-
-	// Store combined output
-	if allOutput.Len() > 0 {
-		result.Results = append([]ToolResult{{
-			Tool:   "combined",
-			Output: allOutput.String(),
-		}}, result.Results...)
-	}
-
+	buildCombined(&result)
+	result.Context = ctx
 	return result
 }
 

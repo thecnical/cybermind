@@ -7,11 +7,13 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"cybermind-cli/api"
 	"cybermind-cli/recon"
 	"cybermind-cli/storage"
 	"cybermind-cli/ui"
+	"cybermind-cli/utils"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -113,7 +115,9 @@ func printHelp() {
 	if runtime.GOOS == "linux" {
 		fmt.Println(y.Render("  🐧 LINUX ONLY — AUTO RECON:"))
 		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("       → full auto recon + AI analysis"))
+		fmt.Println(g.Render("  cybermind /recon <target> --tools nmap,httpx") + d.Render(" → run specific tools only"))
 		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → check installed recon tools"))
+		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("       → install all recon tools"))
 		fmt.Println()
 	}
 
@@ -143,25 +147,124 @@ func printError(msg string) {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ✗ " + msg))
 }
 
-func runAutoRecon(target string) {
+// parseToolsFlag parses the target and optional --tools flag from /recon args.
+// args is everything after "/recon" (i.e. os.Args[2:])
+// Returns target, comma-split tool names (nil if no --tools), and error for unknown tools.
+func parseToolsFlag(args []string) (target string, tools []string, err error) {
+	if len(args) == 0 {
+		return "", nil, fmt.Errorf("target required")
+	}
+	target = args[0]
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--tools" && i+1 < len(args) {
+			names := strings.Split(args[i+1], ",")
+			for _, n := range names {
+				n = strings.TrimSpace(n)
+				if n != "" {
+					tools = append(tools, n)
+				}
+			}
+			i++ // skip the value
+		}
+	}
+	// Validate tool names against registry
+	if len(tools) > 0 {
+		validNames := recon.ToolNames()
+		validSet := make(map[string]bool)
+		for _, n := range validNames {
+			validSet[n] = true
+		}
+		for _, t := range tools {
+			if !validSet[t] {
+				return "", nil, fmt.Errorf("unknown tool %q — valid tools: %s", t, strings.Join(validNames, ", "))
+			}
+		}
+	}
+	return target, tools, nil
+}
+
+// printReconSummary prints a per-tool status table after recon completes.
+func printReconSummary(result recon.ReconResult) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  📋 Recon Summary"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	// Build lookup maps
+	toolOutputs := make(map[string]recon.ToolResult)
+	for _, tr := range result.Results {
+		if tr.Tool != "combined" {
+			toolOutputs[tr.Tool] = tr
+		}
+	}
+	failedSet := make(map[string]recon.ToolResult)
+	for _, tr := range result.Failed {
+		failedSet[tr.Tool] = tr
+	}
+	skippedSet := make(map[string]recon.SkippedTool)
+	for _, s := range result.Skipped {
+		skippedSet[s.Tool] = s
+	}
+
+	// Print one row per registry tool in phase order
+	for _, name := range recon.ToolNames() {
+		if tr, ok := toolOutputs[name]; ok {
+			if tr.Partial {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+					fmt.Sprintf("  ⚡ %-14s partial — exited non-zero (output kept)", name)))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+					fmt.Sprintf("  ✓ %-14s done  (%s)", name, tr.Took.Round(time.Millisecond))))
+			}
+		} else if tr, ok := failedSet[name]; ok {
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-14s failed — %s", name, tr.Error)))
+		} else if s, ok := skippedSet[name]; ok {
+			hint := ""
+			if s.InstallHint != "" {
+				hint = "  (" + s.InstallHint + ")"
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  - %-14s skipped — %s%s", name, s.Reason, hint)))
+		}
+	}
+	fmt.Println()
+}
+
+// runAutoRecon runs the full recon pipeline and sends results to AI for analysis.
+func runAutoRecon(target string, requested []string) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render("  🔍 AUTO RECON MODE — " + target))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
 
-	// Run all tools with progress updates
-	result := recon.RunAutoRecon(target, func(msg string) {
-		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ " + msg))
+	result := recon.RunAutoRecon(target, requested, func(status recon.ToolStatus) {
+		switch status.Kind {
+		case recon.StatusRunning:
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
+				fmt.Sprintf("  ⟳ %-14s running...", status.Tool)))
+		case recon.StatusDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				fmt.Sprintf("  ✓ %-14s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case recon.StatusPartial:
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				fmt.Sprintf("  ⚡ %-14s partial output kept", status.Tool)))
+		case recon.StatusFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-14s failed — %s", status.Tool, status.Reason)))
+		case recon.StatusSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  - %-14s skipped — %s", status.Tool, status.Reason)))
+		}
 	})
 
-	// Show what was collected
-	fmt.Println()
+	printReconSummary(result)
+
+	// Fall back to AI guide if no tools ran
 	if len(result.Tools) == 0 {
-		fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ No recon tools found. Install: nmap, subfinder, httpx, dig, whois"))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: sudo apt install nmap whois dnsutils"))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"))
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ No recon tools produced output."))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind /install-tools to install recon tools"))
 		fmt.Println()
-		// Fall back to AI guide
 		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Falling back to AI recon guide..."))
 		result2, err := api.SendRecon(target, "full")
 		if err != nil {
@@ -172,25 +275,58 @@ func runAutoRecon(target string) {
 		return
 	}
 
-	fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Collected data from: %s", strings.Join(result.Tools, ", "))))
-	fmt.Println()
+	// Build structured payload
+	findings := make(map[string]string)
+	for _, tr := range result.Results {
+		if tr.Tool != "combined" && tr.Output != "" {
+			findings[tr.Tool] = tr.Output
+		}
+	}
+	failedNames := make([]string, 0, len(result.Failed))
+	for _, tr := range result.Failed {
+		failedNames = append(failedNames, tr.Tool)
+	}
+	skippedNames := make([]string, 0, len(result.Skipped))
+	for _, s := range result.Skipped {
+		skippedNames = append(skippedNames, s.Tool)
+	}
 
-	// Send to AI for analysis
+	var ctx recon.ReconContext
+	if result.Context != nil {
+		ctx = *result.Context
+	}
+
+	payload := api.ReconPayload{
+		Target:          target,
+		TargetType:      ctx.TargetType,
+		ToolsRun:        result.Tools,
+		ToolsFailed:     failedNames,
+		ToolsSkipped:    skippedNames,
+		Findings:        findings,
+		SubdomainsFound: len(ctx.Subdomains),
+		LiveHostsFound:  len(ctx.LiveHosts),
+		OpenPorts:       ctx.OpenPorts,
+		WAFDetected:     ctx.WAFDetected,
+		WAFVendor:       ctx.WAFVendor,
+		LiveURLs:        ctx.LiveURLs,
+		Technologies:    ctx.Technologies,
+		RawCombined:     recon.GetCombinedOutput(result),
+	}
+
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to AI for analysis..."))
-	combined := recon.GetCombinedOutput(result)
-	analysis, err := api.SendAnalysis(target, combined, strings.Join(result.Tools, ", "))
+	analysis, err := api.SendAnalysis(payload)
 	if err != nil {
 		printError("AI analysis failed: " + err.Error())
-		// Show raw output as fallback
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("\n  Raw recon output:\n"))
-		fmt.Println(combined)
+		fmt.Println(recon.GetCombinedOutput(result))
 		return
 	}
 
-	printResult("AI Analysis → "+target, analysis)
+	// Strip markdown before printing
+	clean := utils.StripMarkdown(analysis)
+	printResult("AI Analysis → "+target, clean)
 
-	// Save to history
-	_ = storage.AddEntry("/recon "+target, analysis)
+	_ = storage.AddEntry("/recon "+target, clean)
 }
 
 func main() {
@@ -230,16 +366,20 @@ func main() {
 			os.Exit(1)
 		}
 		if len(args) < 2 {
-			printError("Usage: cybermind /recon <target>")
+			printError("Usage: cybermind /recon <target> [--tools tool1,tool2]")
 			printError("Example: cybermind /recon 192.168.1.1")
-			printError("Example: cybermind /recon example.com")
+			printError("Example: cybermind /recon example.com --tools nmap,httpx,nuclei")
 			os.Exit(1)
 		}
-		target := args[1]
+		target, requested, parseErr := parseToolsFlag(args[1:])
+		if parseErr != nil {
+			printError(parseErr.Error())
+			os.Exit(1)
+		}
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
 		}
-		runAutoRecon(target)
+		runAutoRecon(target, requested)
 
 	case "/tools":
 		// Show available recon tools
@@ -261,6 +401,73 @@ func main() {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Install missing: sudo apt install nmap whois dnsutils"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Go tools: go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"))
+		fmt.Println()
+
+	case "/install-tools":
+		if runtime.GOOS != "linux" {
+			printError("/install-tools is only available on Linux.")
+			os.Exit(1)
+		}
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🛠  Installing Recon Tools"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 50)))
+		fmt.Println()
+
+		aptTools := []string{"nmap", "masscan", "rustscan", "whois", "dnsutils", "theharvester",
+			"whatweb", "ffuf", "feroxbuster", "gobuster", "nikto", "amass"}
+		goTools := []struct{ bin, module string }{
+			{"subfinder", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder"},
+			{"httpx", "github.com/projectdiscovery/httpx/cmd/httpx"},
+			{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei"},
+			{"naabu", "github.com/projectdiscovery/naabu/v2/cmd/naabu"},
+			{"dnsx", "github.com/projectdiscovery/dnsx/cmd/dnsx"},
+			{"tlsx", "github.com/projectdiscovery/tlsx/cmd/tlsx"},
+			{"katana", "github.com/projectdiscovery/katana/cmd/katana"},
+		}
+
+		installed, skipped2, failed := 0, 0, 0
+
+		for _, tool := range aptTools {
+			if _, err := exec.LookPath(tool); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", tool)))
+				skipped2++
+				continue
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", tool)))
+			cmd2 := exec.Command("sudo", "apt", "install", "-y", tool)
+			cmd2.Stdout = os.Stdout
+			cmd2.Stderr = os.Stderr
+			if err := cmd2.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", tool, err)))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", tool)))
+				installed++
+			}
+		}
+
+		for _, gt := range goTools {
+			if _, err := exec.LookPath(gt.bin); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", gt.bin)))
+				skipped2++
+				continue
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", gt.bin)))
+			cmd2 := exec.Command("go", "install", gt.module+"@latest")
+			cmd2.Stdout = os.Stdout
+			cmd2.Stderr = os.Stderr
+			if err := cmd2.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", gt.bin, err)))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", gt.bin)))
+				installed++
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(
+			fmt.Sprintf("  Summary: %d installed, %d skipped, %d failed", installed, skipped2, failed)))
 		fmt.Println()
 
 	case "update":
