@@ -801,7 +801,6 @@ func main() {
 				if t.isCargo {
 					cmd2 = exec.Command("cargo", "install", t.name)
 				} else if t.isGo {
-					// extract module path from install hint
 					parts := strings.Fields(t.install)
 					cmd2 = exec.Command("go", "install", parts[len(parts)-1])
 				} else {
@@ -813,6 +812,15 @@ func main() {
 					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", t.name, err)))
 					instFail++
 				} else {
+					// For Go tools: symlink to /usr/local/bin
+					if t.isGo {
+						homedir2, _ := os.UserHomeDir()
+						goBin := homedir2 + "/go/bin/" + t.name
+						if _, err2 := os.Stat(goBin); err2 == nil {
+							symlinkCmd := exec.Command("sudo", "ln", "-sf", goBin, "/usr/local/bin/"+t.name)
+							_ = symlinkCmd.Run()
+						}
+					}
 					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
 					instOK++
 				}
@@ -889,6 +897,13 @@ func main() {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", gt.bin, err)))
 				failed++
 			} else {
+				// Symlink Go binary to /usr/local/bin so it's in PATH globally
+				homedir2, _ := os.UserHomeDir()
+				goBin := homedir2 + "/go/bin/" + gt.bin
+				if _, err2 := os.Stat(goBin); err2 == nil {
+					symlinkCmd := exec.Command("sudo", "ln", "-sf", goBin, "/usr/local/bin/"+gt.bin)
+					_ = symlinkCmd.Run()
+				}
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", gt.bin)))
 				installed++
 			}
@@ -922,15 +937,22 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ⟳ Updating CyberMind..."))
 		fmt.Println()
 
-		// Find repo root (go up from binary location or use GOPATH)
-		// Try common locations
+		// Find repo root — check multiple locations including where binary lives
 		homedir, _ := os.UserHomeDir()
-		repoPaths := []string{
-			".", // current dir
-			homedir + "/cybermind",
-			homedir + "/CyberMind",
-			"/opt/cybermind",
+		// Also check if CYBERMIND_REPO env var is set
+		envRepo := os.Getenv("CYBERMIND_REPO")
+		repoPaths := []string{}
+		if envRepo != "" {
+			repoPaths = append(repoPaths, envRepo)
 		}
+		repoPaths = append(repoPaths,
+			".",
+			homedir+"/cybermind",
+			homedir+"/CyberMind",
+			homedir+"/go/src/cybermind",
+			"/opt/cybermind",
+			"/opt/CyberMind",
+		)
 
 		repoPath := ""
 		for _, p := range repoPaths {
@@ -941,8 +963,11 @@ func main() {
 		}
 
 		if repoPath == "" {
-			printError("Cannot find CyberMind repo. Run from inside the cloned repo:")
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  cd cybermind/cli && git pull && go build -ldflags=\"-X main.Version=2.2.0\" -o cybermind . && sudo mv cybermind /usr/local/bin/"))
+			printError("Cannot find CyberMind repo.")
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  Set CYBERMIND_REPO env var to your repo path:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  export CYBERMIND_REPO=/path/to/cybermind"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Or run manually:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  cd /path/to/cybermind/cli && git pull && go build -o cybermind . && sudo mv cybermind /usr/local/bin/"))
 			os.Exit(1)
 		}
 
@@ -961,7 +986,7 @@ func main() {
 		// go build
 		cliPath := repoPath + "/cli"
 		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Building new binary..."))
-		buildCmd := exec.Command("go", "build", "-ldflags=-X main.Version=2.4.0", "-o", "cybermind", ".")
+		buildCmd := exec.Command("go", "build", "-o", "cybermind", ".")
 		buildCmd.Dir = cliPath
 		buildCmd.Stdout = os.Stdout
 		buildCmd.Stderr = os.Stderr
@@ -987,11 +1012,11 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind --version to confirm"))
 		// Auto-install any new tools added in this version
 		if runtime.GOOS == "linux" {
-			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Checking for new tools to install..."))
-			installCmd2 := exec.Command("cybermind", "/install-tools")
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Checking for new/missing tools..."))
+			installCmd2 := exec.Command("/usr/local/bin/cybermind", "/doctor")
 			installCmd2.Stdout = os.Stdout
 			installCmd2.Stderr = os.Stderr
-			_ = installCmd2.Run() // best-effort, don't fail update if this fails
+			_ = installCmd2.Run()
 		}
 
 	case "history":

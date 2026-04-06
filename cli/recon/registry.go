@@ -79,41 +79,51 @@ var toolRegistry = []ToolSpec{
 	{
 		Name:         "rustscan",
 		Phase:        3,
-		Timeout:      60,
+		Timeout:      120,
 		CascadeGroup: "portscan",
 		InstallHint:  "sudo apt install rustscan",
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			return []string{"-a", target, "--ulimit", "5000", "--", "-sV", "-sC"}
+			// Scan all 65535 ports fast, pipe to nmap for service detection
+			return []string{"-a", target, "--ulimit", "10000", "-b", "2000", "--", "-sV", "-sC", "-T4", "--open"}
 		},
 	},
 	{
 		Name:         "naabu",
 		Phase:        3,
-		Timeout:      60,
+		Timeout:      120,
 		CascadeGroup: "portscan",
 		InstallHint:  "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest",
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			return []string{"-host", target, "-silent", "-top-ports", "1000"}
+			// Full port scan with nmap integration
+			return []string{"-host", target, "-p", "-", "-silent", "-nmap-cli", "nmap -sV -sC -T4 --open"}
 		},
 	},
 	{
 		Name:         "nmap",
 		Phase:        3,
-		Timeout:      120,
+		Timeout:      300,
 		CascadeGroup: "portscan",
 		InstallHint:  "sudo apt install nmap",
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			return []string{"-sV", "-T4", "--open", "-Pn", "--top-ports", "1000",
-				"--script", "http-waf-detect", target}
+			// Deep scan: all ports, service detection, OS detection, vuln scripts, WAF detect
+			return []string{
+				"-sS", "-sV", "-sC",
+				"-T4", "--open", "-Pn",
+				"-p-",
+				"--script", "http-waf-detect,http-headers,banner",
+				"-O", "--osscan-guess",
+				target,
+			}
 		},
 	},
 	{
 		Name:        "masscan",
 		Phase:       3,
-		Timeout:     60,
+		Timeout:     120,
 		InstallHint: "sudo apt install masscan",
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			return []string{"-p", "1-65535", "--rate", "1000", target}
+			// Fast full-port scan at high rate
+			return []string{"-p", "1-65535", "--rate", "10000", target}
 		},
 	},
 
@@ -233,15 +243,15 @@ var toolRegistry = []ToolSpec{
 	{
 		Name:        "nuclei",
 		Phase:       6,
-		Timeout:     120,
+		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			args := []string{"-silent", "-no-color"}
+			args := []string{"-silent", "-no-color", "-stats"}
 			if ctx.WAFDetected {
-				args = append(args, "-etags", "fuzzing,dos")
+				args = append(args, "-etags", "fuzzing,dos", "-severity", "critical,high,medium")
 			} else {
-				args = append(args, "-severity", "critical,high,medium")
+				args = append(args, "-severity", "critical,high,medium,low")
 			}
 			if len(ctx.CrawledURLs) > 0 {
 				f := writeTempList(ctx.CrawledURLs)
