@@ -199,7 +199,14 @@ func containsPort(ports []int, port int) bool {
 }
 
 // buildCombined assembles the combined output string from all tool results.
+// Safe to call multiple times — skips if "combined" entry already exists.
 func buildCombined(result *ReconResult) {
+	// Guard: don't add a second combined entry
+	for _, tr := range result.Results {
+		if tr.Tool == "combined" {
+			return
+		}
+	}
 	var b strings.Builder
 	for _, tr := range result.Results {
 		if tr.Tool == "combined" || tr.Output == "" {

@@ -67,7 +67,9 @@ var toolRegistry = []ToolSpec{
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			if len(ctx.Subdomains) > 0 {
 				f := writeTempList(ctx.Subdomains)
-				return []string{"-l", f, "-silent", "-a", "-resp"}
+				if f != "" {
+					return []string{"-l", f, "-silent", "-a", "-resp"}
+				}
 			}
 			return []string{"-d", target, "-silent", "-a", "-resp"}
 		},
@@ -125,7 +127,9 @@ var toolRegistry = []ToolSpec{
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			if len(ctx.LiveHosts) > 0 {
 				f := writeTempList(ctx.LiveHosts)
-				return []string{"-l", f, "-silent", "-status-code", "-title", "-tech-detect"}
+				if f != "" {
+					return []string{"-l", f, "-silent", "-status-code", "-title", "-tech-detect"}
+				}
 			}
 			return []string{"-u", target, "-silent", "-status-code", "-title", "-tech-detect"}
 		},
@@ -241,13 +245,19 @@ var toolRegistry = []ToolSpec{
 			}
 			if len(ctx.CrawledURLs) > 0 {
 				f := writeTempList(ctx.CrawledURLs)
-				args = append(args, "-l", f)
-			} else if len(ctx.LiveURLs) > 0 {
-				f := writeTempList(ctx.LiveURLs)
-				args = append(args, "-l", f)
-			} else {
-				args = append(args, "-u", target)
+				if f != "" {
+					args = append(args, "-l", f)
+					return args
+				}
 			}
+			if len(ctx.LiveURLs) > 0 {
+				f := writeTempList(ctx.LiveURLs)
+				if f != "" {
+					args = append(args, "-l", f)
+					return args
+				}
+			}
+			args = append(args, "-u", target)
 			return args
 		},
 	},
@@ -294,8 +304,12 @@ func ToolNames() []string {
 }
 
 // writeTempList writes a slice of strings to a temp file and returns the path.
-// Callers accept that temp files persist for the process lifetime.
+// Returns "" if the file cannot be created — callers must check for empty string.
+// Temp files persist for the process lifetime (intentional).
 func writeTempList(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
 	f, err := os.CreateTemp("", "cybermind-list-*.txt")
 	if err != nil {
 		return ""

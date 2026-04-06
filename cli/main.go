@@ -296,6 +296,20 @@ func runAutoRecon(target string, requested []string) {
 		ctx = *result.Context
 	}
 
+	// Ensure slices are never nil so they marshal as [] not null in JSON
+	openPorts := ctx.OpenPorts
+	if openPorts == nil {
+		openPorts = []int{}
+	}
+	liveURLs := ctx.LiveURLs
+	if liveURLs == nil {
+		liveURLs = []string{}
+	}
+	technologies := ctx.Technologies
+	if technologies == nil {
+		technologies = []string{}
+	}
+
 	payload := api.ReconPayload{
 		Target:          target,
 		TargetType:      ctx.TargetType,
@@ -305,11 +319,11 @@ func runAutoRecon(target string, requested []string) {
 		Findings:        findings,
 		SubdomainsFound: len(ctx.Subdomains),
 		LiveHostsFound:  len(ctx.LiveHosts),
-		OpenPorts:       ctx.OpenPorts,
+		OpenPorts:       openPorts,
 		WAFDetected:     ctx.WAFDetected,
 		WAFVendor:       ctx.WAFVendor,
-		LiveURLs:        ctx.LiveURLs,
-		Technologies:    ctx.Technologies,
+		LiveURLs:        liveURLs,
+		Technologies:    technologies,
 		RawCombined:     recon.GetCombinedOutput(result),
 	}
 
@@ -514,7 +528,7 @@ func main() {
 		// go build
 		cliPath := repoPath + "/cli"
 		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Building new binary..."))
-		buildCmd := exec.Command("go", "build", "-ldflags=-X main.Version=2.2.0", "-o", "cybermind", ".")
+		buildCmd := exec.Command("go", "build", "-ldflags=-X main.Version=2.3.0", "-o", "cybermind", ".")
 		buildCmd.Dir = cliPath
 		buildCmd.Stdout = os.Stdout
 		buildCmd.Stderr = os.Stderr
