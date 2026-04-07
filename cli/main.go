@@ -556,12 +556,12 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 }
 
 // installReconftw installs reconftw via git clone — must run as root.
-// reconftw is NOT an apt package. It requires git clone + ./install.sh.
 func installReconftw() error {
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ reconftw requires root. Cloning from GitHub..."))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Installing reconftw (git clone method)..."))
 
 	// Remove old broken install
 	exec.Command("sudo", "rm", "-rf", "/opt/reconftw").Run()
+	exec.Command("sudo", "rm", "-f", "/usr/local/bin/reconftw").Run()
 
 	// Clone
 	cloneCmd := exec.Command("sudo", "git", "clone", "--depth=1",
@@ -572,73 +572,86 @@ func installReconftw() error {
 		return fmt.Errorf("git clone failed: %v", err)
 	}
 
-	// Make executable
-	exec.Command("sudo", "chmod", "+x", "/opt/reconftw/reconftw.sh",
-		"/opt/reconftw/install.sh").Run()
+	// Make scripts executable
+	exec.Command("sudo", "chmod", "+x", "/opt/reconftw/reconftw.sh").Run()
+	exec.Command("sudo", "chmod", "+x", "/opt/reconftw/install.sh").Run()
 
-	// Run install.sh (may have partial failures — that's OK)
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Running reconftw install.sh (5-10 min)..."))
-	installCmd := exec.Command("sudo", "bash", "/opt/reconftw/install.sh")
-	installCmd.Dir = "/opt/reconftw"
+	// Run install.sh — partial failures are OK, reconftw still works
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Running reconftw/install.sh (5-15 min, errors are normal)..."))
+	installCmd := exec.Command("sudo", "bash", "-c", "cd /opt/reconftw && ./install.sh")
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
-	installCmd.Run() // ignore error — partial install is fine
+	installCmd.Run() // intentionally ignore error — partial install is fine
 
-	// Create wrapper script (correct way — not symlink)
-	wrapper := `#!/bin/bash
-cd /opt/reconftw && bash reconftw.sh "$@"
-`
-	if err := os.WriteFile("/tmp/reconftw_wrapper", []byte(wrapper), 0755); err == nil {
-		exec.Command("sudo", "cp", "/tmp/reconftw_wrapper", "/usr/local/bin/reconftw").Run()
-		exec.Command("sudo", "chmod", "+x", "/usr/local/bin/reconftw").Run()
-	}
+	// Create proper wrapper that preserves working directory
+	// reconftw MUST run from /opt/reconftw — it sources lib/ and modules/ relative to itself
+	wrapperContent := "#!/bin/bash\nexec bash /opt/reconftw/reconftw.sh \"$@\"\n"
+	writeCmd := exec.Command("sudo", "bash", "-c",
+		fmt.Sprintf("cat > /usr/local/bin/reconftw << 'WRAPPER'\n%sWRAPPER\nchmod +x /usr/local/bin/reconftw", wrapperContent))
+	writeCmd.Run()
+
+	// Alternative: use tee
+	teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/reconftw")
+	teeCmd.Stdin = strings.NewReader("#!/bin/bash\nexec bash /opt/reconftw/reconftw.sh \"$@\"\n")
+	teeCmd.Run()
+	exec.Command("sudo", "chmod", "+x", "/usr/local/bin/reconftw").Run()
 
 	// Verify
-	if _, err := exec.LookPath("reconftw"); err == nil {
+	if _, err := os.Stat("/opt/reconftw/reconftw.sh"); err == nil {
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ reconftw installed at /opt/reconftw/reconftw.sh"))
 		return nil
 	}
-	// Check if script exists even if not in PATH
-	if _, err := os.Stat("/opt/reconftw/reconftw.sh"); err == nil {
-		return nil // installed, just wrapper issue
-	}
-	return fmt.Errorf("reconftw install incomplete")
+	return fmt.Errorf("reconftw.sh not found after install")
 }
 
-// installX8 installs x8 with proper OpenSSL dependencies.
+// installX8 installs x8 from GitHub releases (binary) — avoids cargo/openssl issues.
 func installX8() error {
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Installing OpenSSL dev libs for x8..."))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Downloading x8 binary from GitHub releases..."))
 
-	// Install all required deps
-	depsCmd := exec.Command("sudo", "apt", "install", "-y",
-		"libssl-dev", "pkg-config", "build-essential", "cargo")
-	depsCmd.Stdout = os.Stdout
-	depsCmd.Stderr = os.Stderr
-	depsCmd.Run()
-
-	// Set OpenSSL env vars
-	env := append(os.Environ(),
-		"OPENSSL_DIR=/usr",
-		"OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu",
-		"OPENSSL_INCLUDE_DIR=/usr/include/openssl",
-		"PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig",
-	)
-
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Building x8 via cargo (may take 5-10 min)..."))
-	cargoCmd := exec.Command("cargo", "install", "x8")
-	cargoCmd.Env = env
-	cargoCmd.Stdout = os.Stdout
-	cargoCmd.Stderr = os.Stderr
-	if err := cargoCmd.Run(); err != nil {
-		return fmt.Errorf("cargo install x8 failed: %v", err)
+	// Method 1: Download pre-built binary from releases (fastest, no openssl issues)
+	dlCmd := exec.Command("bash", "-c",
+		`set -e
+LATEST=$(curl -s https://api.github.com/repos/Sh1Yo/x8/releases/latest | grep browser_download_url | grep linux | grep x86_64 | grep -v '.sha' | cut -d'"' -f4 | head -1)
+if [ -z "$LATEST" ]; then
+  echo "No release binary found"
+  exit 1
+fi
+echo "Downloading: $LATEST"
+curl -sL "$LATEST" -o /tmp/x8_release
+# Check if it's a tar.gz or direct binary
+if file /tmp/x8_release | grep -q 'gzip\|tar'; then
+  tar -xzf /tmp/x8_release -C /tmp/ 2>/dev/null || true
+  find /tmp -name 'x8' -type f -exec sudo cp {} /usr/local/bin/x8 \; 2>/dev/null || true
+else
+  sudo cp /tmp/x8_release /usr/local/bin/x8
+fi
+sudo chmod +x /usr/local/bin/x8
+x8 --version`)
+	dlCmd.Stdout = os.Stdout
+	dlCmd.Stderr = os.Stderr
+	if err := dlCmd.Run(); err == nil {
+		return nil
 	}
 
-	// Symlink
-	homedir, _ := os.UserHomeDir()
-	x8bin := homedir + "/.cargo/bin/x8"
-	if _, err := os.Stat(x8bin); err == nil {
-		exec.Command("sudo", "ln", "-sf", x8bin, "/usr/local/bin/x8").Run()
-	}
-	return nil
+	// Method 2: Build from source with proper deps
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Binary download failed, building from source..."))
+	buildCmd := exec.Command("bash", "-c",
+		`set -e
+sudo apt-get install -y libssl-dev pkg-config build-essential curl git 2>/dev/null
+export OPENSSL_DIR=/usr
+export OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
+export OPENSSL_INCLUDE_DIR=/usr/include
+export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig
+rm -rf /tmp/x8_src
+git clone --depth=1 https://github.com/sh1yo/x8 /tmp/x8_src
+cd /tmp/x8_src
+cargo build --release
+sudo cp ./target/release/x8 /usr/local/bin/x8
+sudo chmod +x /usr/local/bin/x8
+x8 --version`)
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	return buildCmd.Run()
 }
 
 // installRustscan installs rustscan via .deb release (most reliable on Kali).
