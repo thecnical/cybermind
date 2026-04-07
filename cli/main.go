@@ -246,19 +246,22 @@ func runAutoRecon(target string, requested []string) {
 		switch status.Kind {
 		case recon.StatusRunning:
 			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
-				fmt.Sprintf("  ⟳ %-14s running...", status.Tool)))
+				fmt.Sprintf("  ⟳ %-16s running...", status.Tool)))
 		case recon.StatusDone:
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
-				fmt.Sprintf("  ✓ %-14s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+				fmt.Sprintf("  ✓ %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
 		case recon.StatusPartial:
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
-				fmt.Sprintf("  ⚡ %-14s partial output kept", status.Tool)))
+				fmt.Sprintf("  ⚡ %-16s partial output kept", status.Tool)))
 		case recon.StatusFailed:
 			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
-				fmt.Sprintf("  ✗ %-14s failed — %s", status.Tool, status.Reason)))
+				fmt.Sprintf("  ✗ %-16s failed — %s", status.Tool, status.Reason)))
 		case recon.StatusSkipped:
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				fmt.Sprintf("  - %-14s skipped — %s", status.Tool, status.Reason)))
+				fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)))
+		case recon.StatusRetry:
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				fmt.Sprintf("  ↻ %-16s %s", status.Tool, status.Reason)))
 		}
 	})
 
@@ -740,6 +743,8 @@ func main() {
 			{"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false},
 			{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2@latest", true, false},
 			{"x8", "hunt", "cargo install x8", false, true},
+			// reconftw — meta subdomain tool
+			{"reconftw", "recon", "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh && sudo ln -sf /opt/reconftw/reconftw.sh /usr/local/bin/reconftw", false, false},
 		}
 
 		var missing []toolEntry
@@ -967,7 +972,7 @@ func main() {
 
 		// ── Step 4: x8 via cargo ─────────────────────────────────────────────
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [4/4] Installing x8 (hidden param discovery)..."))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [4/5] Installing x8 (hidden param discovery)..."))
 		if _, err := exec.LookPath("x8"); err == nil {
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - x8               already installed"))
 			skipped2++
@@ -982,6 +987,46 @@ func main() {
 				x8bin := homedir2 + "/.cargo/bin/x8"
 				if _, err2 := os.Stat(x8bin); err2 == nil {
 					exec.Command("sudo", "ln", "-sf", x8bin, "/usr/local/bin/x8").Run()
+				}
+			}
+		}
+
+		// ── Step 5: reconftw (meta subdomain tool) ───────────────────────────
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [5/5] Installing reconftw (meta subdomain pipeline)..."))
+		if _, err := exec.LookPath("reconftw"); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - reconftw         already installed"))
+			skipped2++
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ reconftw         cloning from GitHub..."))
+			// Remove old install if exists
+			exec.Command("sudo", "rm", "-rf", "/opt/reconftw").Run()
+			// Clone
+			cloneCmd := exec.Command("git", "clone", "--depth=1", "https://github.com/six2dez/reconftw.git", "/opt/reconftw")
+			cloneCmd.Stdout = os.Stdout
+			cloneCmd.Stderr = os.Stderr
+			if err := cloneCmd.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ reconftw         clone failed: " + err.Error()))
+				failed++
+			} else {
+				// Run reconftw install script
+				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ reconftw         running install.sh (this may take 5-10 minutes)..."))
+				installCmd3 := exec.Command("bash", "/opt/reconftw/install.sh")
+				installCmd3.Dir = "/opt/reconftw"
+				installCmd3.Stdout = os.Stdout
+				installCmd3.Stderr = os.Stderr
+				if err := installCmd3.Run(); err != nil {
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ reconftw         install.sh had errors (may still work)"))
+				}
+				// Symlink to /usr/local/bin
+				exec.Command("sudo", "ln", "-sf", "/opt/reconftw/reconftw.sh", "/usr/local/bin/reconftw").Run()
+				exec.Command("sudo", "chmod", "+x", "/opt/reconftw/reconftw.sh").Run()
+				if _, err := exec.LookPath("reconftw"); err == nil {
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ reconftw         installed"))
+					installed++
+				} else {
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ reconftw         installed at /opt/reconftw/reconftw.sh"))
+					installed++
 				}
 			}
 		}
