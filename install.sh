@@ -22,7 +22,6 @@ cat << 'BANNER'
 BANNER
 echo -e "${NC}"
 echo -e "${GREEN}⚡ CyberMind CLI Installer v2.5.0 — github.com/thecnical${NC}"
-echo -e "${CYAN}   Backend: Live on Render (no local setup needed)${NC}"
 echo ""
 
 # ── Step 1: Check Go ──────────────────────────────────────────────────────────
@@ -189,6 +188,5 @@ echo -e "  ${CYAN}Recon:${NC}     cybermind /recon example.com"
 echo -e "  ${CYAN}Hunt:${NC}      cybermind /hunt example.com"
 echo -e "  ${CYAN}Doctor:${NC}    cybermind /doctor"
 echo ""
-echo -e "  ${YELLOW}Backend is live on Render — no local setup needed.${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
