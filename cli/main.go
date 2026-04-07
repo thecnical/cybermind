@@ -555,6 +555,113 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	_ = storage.AddEntry("/hunt "+target, clean)
 }
 
+// installReconftw installs reconftw via git clone — must run as root.
+// reconftw is NOT an apt package. It requires git clone + ./install.sh.
+func installReconftw() error {
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ reconftw requires root. Cloning from GitHub..."))
+
+	// Remove old broken install
+	exec.Command("sudo", "rm", "-rf", "/opt/reconftw").Run()
+
+	// Clone
+	cloneCmd := exec.Command("sudo", "git", "clone", "--depth=1",
+		"https://github.com/six2dez/reconftw.git", "/opt/reconftw")
+	cloneCmd.Stdout = os.Stdout
+	cloneCmd.Stderr = os.Stderr
+	if err := cloneCmd.Run(); err != nil {
+		return fmt.Errorf("git clone failed: %v", err)
+	}
+
+	// Make executable
+	exec.Command("sudo", "chmod", "+x", "/opt/reconftw/reconftw.sh",
+		"/opt/reconftw/install.sh").Run()
+
+	// Run install.sh (may have partial failures — that's OK)
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Running reconftw install.sh (5-10 min)..."))
+	installCmd := exec.Command("sudo", "bash", "/opt/reconftw/install.sh")
+	installCmd.Dir = "/opt/reconftw"
+	installCmd.Stdout = os.Stdout
+	installCmd.Stderr = os.Stderr
+	installCmd.Run() // ignore error — partial install is fine
+
+	// Create wrapper script (correct way — not symlink)
+	wrapper := `#!/bin/bash
+cd /opt/reconftw && bash reconftw.sh "$@"
+`
+	if err := os.WriteFile("/tmp/reconftw_wrapper", []byte(wrapper), 0755); err == nil {
+		exec.Command("sudo", "cp", "/tmp/reconftw_wrapper", "/usr/local/bin/reconftw").Run()
+		exec.Command("sudo", "chmod", "+x", "/usr/local/bin/reconftw").Run()
+	}
+
+	// Verify
+	if _, err := exec.LookPath("reconftw"); err == nil {
+		return nil
+	}
+	// Check if script exists even if not in PATH
+	if _, err := os.Stat("/opt/reconftw/reconftw.sh"); err == nil {
+		return nil // installed, just wrapper issue
+	}
+	return fmt.Errorf("reconftw install incomplete")
+}
+
+// installX8 installs x8 with proper OpenSSL dependencies.
+func installX8() error {
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Installing OpenSSL dev libs for x8..."))
+
+	// Install all required deps
+	depsCmd := exec.Command("sudo", "apt", "install", "-y",
+		"libssl-dev", "pkg-config", "build-essential", "cargo")
+	depsCmd.Stdout = os.Stdout
+	depsCmd.Stderr = os.Stderr
+	depsCmd.Run()
+
+	// Set OpenSSL env vars
+	env := append(os.Environ(),
+		"OPENSSL_DIR=/usr",
+		"OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu",
+		"OPENSSL_INCLUDE_DIR=/usr/include/openssl",
+		"PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig",
+	)
+
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Building x8 via cargo (may take 5-10 min)..."))
+	cargoCmd := exec.Command("cargo", "install", "x8")
+	cargoCmd.Env = env
+	cargoCmd.Stdout = os.Stdout
+	cargoCmd.Stderr = os.Stderr
+	if err := cargoCmd.Run(); err != nil {
+		return fmt.Errorf("cargo install x8 failed: %v", err)
+	}
+
+	// Symlink
+	homedir, _ := os.UserHomeDir()
+	x8bin := homedir + "/.cargo/bin/x8"
+	if _, err := os.Stat(x8bin); err == nil {
+		exec.Command("sudo", "ln", "-sf", x8bin, "/usr/local/bin/x8").Run()
+	}
+	return nil
+}
+
+// installRustscan installs rustscan via .deb release (most reliable on Kali).
+func installRustscan() error {
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Downloading rustscan .deb from GitHub releases..."))
+	dlCmd := exec.Command("bash", "-c",
+		`LATEST=$(curl -s https://api.github.com/repos/RustScan/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4) && `+
+			`if [ -n "$LATEST" ]; then curl -sL "$LATEST" -o /tmp/rustscan.deb && sudo dpkg -i /tmp/rustscan.deb; `+
+			`else echo "No .deb found"; exit 1; fi`)
+	dlCmd.Stdout = os.Stdout
+	dlCmd.Stderr = os.Stderr
+	if err := dlCmd.Run(); err == nil {
+		return nil
+	}
+	// Fallback: cargo install
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ .deb failed, trying cargo install rustscan..."))
+	exec.Command("sudo", "apt", "install", "-y", "libssl-dev", "pkg-config", "cargo").Run()
+	cargoCmd := exec.Command("cargo", "install", "rustscan")
+	cargoCmd.Stdout = os.Stdout
+	cargoCmd.Stderr = os.Stderr
+	return cargoCmd.Run()
+}
+
 // updateAllTools silently updates all installed tools to latest versions.
 // Called automatically before /recon and /hunt to ensure latest tool versions.
 // Errors are non-fatal — we log and continue.
@@ -863,59 +970,89 @@ func main() {
 			for _, t := range missing {
 				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", t.name)))
 
-				// Pre-deps: naabu needs libpcap-dev
-				if t.name == "naabu" {
-					exec.Command("sudo", "apt", "install", "-y", "libpcap-dev").Run()
-				}
+				var installErr error
 
-				var cmd2 *exec.Cmd
-				if t.isCargo {
-					if _, cargoErr := exec.LookPath("cargo"); cargoErr != nil {
-						exec.Command("sudo", "apt", "install", "-y", "cargo").Run()
-					}
-					cmd2 = exec.Command("cargo", "install", t.name)
-				} else if t.isGo {
-					parts := strings.Fields(t.install)
-					cmd2 = exec.Command("go", "install", parts[len(parts)-1])
-				} else {
-					cmd2 = exec.Command("sudo", "apt", "install", "-y", t.name)
-				}
-				cmd2.Stdout = os.Stdout
-				cmd2.Stderr = os.Stderr
-				if err := cmd2.Run(); err != nil {
-					// rustscan fallback: download .deb release
-					if t.name == "rustscan" {
-						fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ↳ trying .deb release..."))
-						dlCmd := exec.Command("bash", "-c",
-							`LATEST=$(curl -s https://api.github.com/repos/RustScan/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4) && curl -sL "$LATEST" -o /tmp/rustscan.deb && sudo dpkg -i /tmp/rustscan.deb`)
-						dlCmd.Stdout = os.Stdout
-						dlCmd.Stderr = os.Stderr
-						if err2 := dlCmd.Run(); err2 == nil {
-							fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
-							instOK++
-							continue
-						}
-					}
-					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", t.name, err)))
-					instFail++
-				} else {
-					homedir2, _ := os.UserHomeDir()
-					// Symlink Go tools
-					if t.isGo {
-						for _, gobin := range []string{homedir2 + "/go/bin/" + t.name, "/root/go/bin/" + t.name} {
+				switch t.name {
+				case "reconftw":
+					// reconftw must be installed as root via git clone — NOT via apt
+					installErr = installReconftw()
+
+				case "x8":
+					// x8 needs openssl dev libs first, then cargo install
+					installErr = installX8()
+
+				case "rustscan":
+					// rustscan: try cargo first, then .deb fallback
+					installErr = installRustscan()
+
+				case "naabu":
+					// naabu needs libpcap-dev
+					exec.Command("sudo", "apt", "install", "-y", "libpcap-dev").Run()
+					cmd2 := exec.Command("go", "install", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+					if installErr == nil {
+						homedir2, _ := os.UserHomeDir()
+						for _, gobin := range []string{homedir2 + "/go/bin/naabu", "/root/go/bin/naabu"} {
 							if _, err2 := os.Stat(gobin); err2 == nil {
-								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/"+t.name).Run()
+								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/naabu").Run()
 								break
 							}
 						}
 					}
-					// Symlink cargo tools
+
+				default:
 					if t.isCargo {
-						cargobin := homedir2 + "/.cargo/bin/" + t.name
-						if _, err2 := os.Stat(cargobin); err2 == nil {
-							exec.Command("sudo", "ln", "-sf", cargobin, "/usr/local/bin/"+t.name).Run()
+						// Install openssl deps first for any cargo tool
+						exec.Command("sudo", "apt", "install", "-y", "libssl-dev", "pkg-config").Run()
+						if _, cargoErr := exec.LookPath("cargo"); cargoErr != nil {
+							exec.Command("sudo", "apt", "install", "-y", "cargo").Run()
 						}
+						cmd2 := exec.Command("cargo", "install", t.name)
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						installErr = cmd2.Run()
+						if installErr == nil {
+							homedir2, _ := os.UserHomeDir()
+							cargobin := homedir2 + "/.cargo/bin/" + t.name
+							if _, err2 := os.Stat(cargobin); err2 == nil {
+								exec.Command("sudo", "ln", "-sf", cargobin, "/usr/local/bin/"+t.name).Run()
+							}
+						}
+					} else if t.isGo {
+						parts := strings.Fields(t.install)
+						cmd2 := exec.Command("go", "install", parts[len(parts)-1])
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						installErr = cmd2.Run()
+						if installErr == nil {
+							homedir2, _ := os.UserHomeDir()
+							for _, gobin := range []string{homedir2 + "/go/bin/" + t.name, "/root/go/bin/" + t.name} {
+								if _, err2 := os.Stat(gobin); err2 == nil {
+									exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/"+t.name).Run()
+									break
+								}
+							}
+						}
+					} else {
+						cmd2 := exec.Command("sudo", "apt", "install", "-y", t.name)
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						installErr = cmd2.Run()
 					}
+				}
+
+				if installErr != nil {
+					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", t.name, installErr)))
+					// Send error to AI for diagnosis
+					errMsg := fmt.Sprintf("Tool installation failed: %s\nError: %v\nOS: Linux/Kali\nPlease provide exact fix commands.", t.name, installErr)
+					if fix, aiErr := api.SendPrompt(errMsg); aiErr == nil {
+						fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  💡 AI Fix suggestion:"))
+						fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).MarginLeft(4).Render(fix))
+					}
+					instFail++
+				} else {
 					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
 					instOK++
 				}
