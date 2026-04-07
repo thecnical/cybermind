@@ -71,6 +71,7 @@ const (
 	StatusSkipped StatusKind = "skipped"
 	StatusTimeout StatusKind = "timeout"
 	StatusPartial StatusKind = "partial"
+	StatusRetry   StatusKind = "retry"
 )
 
 // ToolStatus reports the live status of a running tool
@@ -105,14 +106,14 @@ type ToolSpec struct {
 	DomainOnly   bool
 	CascadeGroup string
 	BuildArgs    func(target string, ctx *ReconContext) []string
+	// FallbackArgs: if primary run returns empty output, try these args instead.
+	// This ensures 100% tool usage — we exhaust every option before giving up.
+	FallbackArgs []func(target string, ctx *ReconContext) []string
 	NeedsFile    string
 	InstallHint  string
 }
 
-
-
 // lookPath is the function used to check if a binary exists.
-// It can be overridden in tests.
 var lookPath = exec.LookPath
 
 // isAvailable checks if a tool is installed
@@ -122,9 +123,7 @@ func isAvailable(tool string) bool {
 }
 
 // detectTools filters toolRegistry based on availability, --tools flag, wordlist, and cascade groups.
-// Returns available tools and a list of skipped tools with reasons.
 func detectTools(requested []string) (available []ToolSpec, skipped []SkippedTool, err error) {
-	// Validate requested tool names against registry
 	if requested != nil {
 		registryNames := make(map[string]bool)
 		for _, spec := range toolRegistry {
@@ -137,20 +136,17 @@ func detectTools(requested []string) (available []ToolSpec, skipped []SkippedToo
 		}
 	}
 
-	cascadeWinners := map[string]string{} // group → winning tool name
+	cascadeWinners := map[string]string{}
 
 	for _, spec := range toolRegistry {
-		// Filter by --tools flag
 		if requested != nil && !containsStr(requested, spec.Name) {
 			skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "not in --tools list"})
 			continue
 		}
-		// Check binary exists
 		if _, err := lookPath(spec.Name); err != nil {
 			skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "not installed", InstallHint: spec.InstallHint})
 			continue
 		}
-		// Check NeedsFile dependency
 		if spec.NeedsFile == "wordlist" {
 			if _, found := resolveWordlist(); !found {
 				skipped = append(skipped, SkippedTool{
@@ -160,7 +156,6 @@ func detectTools(requested []string) (available []ToolSpec, skipped []SkippedToo
 				continue
 			}
 		}
-		// Cascade: only first available in group wins
 		if spec.CascadeGroup != "" {
 			if winner, taken := cascadeWinners[spec.CascadeGroup]; taken {
 				skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "cascade: " + winner + " used"})
@@ -173,7 +168,6 @@ func detectTools(requested []string) (available []ToolSpec, skipped []SkippedToo
 	return available, skipped, nil
 }
 
-// containsStr checks if a string slice contains a value
 func containsStr(slice []string, val string) bool {
 	for _, s := range slice {
 		if s == val {
@@ -216,6 +210,48 @@ func run(timeoutSec int, name string, args ...string) (string, error) {
 	}
 }
 
+// runToolExhaustive runs a tool with its primary args, then tries each FallbackArgs
+// if the primary run returns empty output. This ensures 100% tool usage —
+// we exhaust every command variant before moving to the next tool.
+//
+// Logic:
+//   1. Run primary BuildArgs → if output found, done.
+//   2. If empty → try FallbackArgs[0] → if output found, done.
+//   3. If still empty → try FallbackArgs[1] → ... and so on.
+//   4. Only after ALL variants exhausted with no output → mark as failed.
+func runToolExhaustive(spec ToolSpec, target string, ctx *ReconContext, progress func(ToolStatus)) (string, error) {
+	// Primary run
+	args := spec.BuildArgs(target, ctx)
+	output, err := run(spec.Timeout, spec.Name, args...)
+
+	// If we got output, return immediately — tool succeeded
+	if strings.TrimSpace(output) != "" {
+		return output, err
+	}
+
+	// Primary returned empty — try each fallback variant
+	for i, fallbackFn := range spec.FallbackArgs {
+		progress(ToolStatus{
+			Tool:   spec.Name,
+			Kind:   StatusRetry,
+			Reason: fmt.Sprintf("primary returned empty, trying fallback %d/%d", i+1, len(spec.FallbackArgs)),
+		})
+
+		fbArgs := fallbackFn(target, ctx)
+		fbOutput, fbErr := run(spec.Timeout, spec.Name, fbArgs...)
+
+		if strings.TrimSpace(fbOutput) != "" {
+			// Fallback produced output — prepend note and return
+			return fmt.Sprintf("[fallback-%d used]\n%s", i+1, fbOutput), fbErr
+		}
+		// This fallback also empty — try next
+		_ = fbErr
+	}
+
+	// All variants exhausted — return whatever we have (likely empty + error)
+	return output, err
+}
+
 // sanitize removes ANSI codes and trims output to max length
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
@@ -228,21 +264,12 @@ func sanitize(s string, maxLen int) string {
 }
 
 // validateTarget checks that target contains only safe characters.
-// Prevents nmap/tool flag injection via crafted target strings.
-// Regex: ^[a-zA-Z0-9._:\-/\[\]]+$ — covers:
-//   - Hostnames: example.com, sub.example.com
-//   - IPv4: 192.168.1.1
-//   - IPv6: [::1], 2001:db8::1
-//   - CIDR: 192.168.1.0/24
-//   - Ports: example.com:8080
-// Blocks: spaces, --, ;, |, &, $, `, (, ), {, }, <, >, \, ', "
 var targetRe = regexp.MustCompile(`^[a-zA-Z0-9._:\-/\[\]]+$`)
 
 func validateTarget(target string) error {
 	if target == "" {
 		return fmt.Errorf("target cannot be empty")
 	}
-	// Strip www. prefix for validation (common user input)
 	check := target
 	if strings.HasPrefix(strings.ToLower(check), "www.") {
 		check = check[4:]
@@ -250,11 +277,9 @@ func validateTarget(target string) error {
 	if !targetRe.MatchString(target) {
 		return fmt.Errorf("invalid target %q — use hostname, IP, or CIDR (e.g. example.com, 192.168.1.1, 10.0.0.0/24)", target)
 	}
-	// Reject anything starting with - (flag injection)
 	if strings.HasPrefix(target, "-") {
 		return fmt.Errorf("invalid target %q — target cannot start with '-'", target)
 	}
-	// Reject double-dash (flag injection like --script-args)
 	if strings.Contains(target, "--") {
 		return fmt.Errorf("invalid target %q — target cannot contain '--'", target)
 	}
@@ -262,11 +287,11 @@ func validateTarget(target string) error {
 	return nil
 }
 
-// ValidateTarget checks that target contains only safe characters.
-// Exported for use by main.go before calling RunAutoRecon.
+// ValidateTarget is exported for use by main.go
 func ValidateTarget(target string) error {
 	return validateTarget(target)
 }
+
 func targetType(target string) string {
 	if net.ParseIP(target) != nil {
 		return "ip"
@@ -274,16 +299,11 @@ func targetType(target string) string {
 	return "domain"
 }
 
-// isIP checks if target looks like an IP address
 func isIP(target string) bool {
 	return targetType(target) == "ip"
 }
 
-// addResult processes a tool's execution result and updates ReconResult accordingly.
-// Three-branch logic:
-//   - output != "" → store sanitized output, set Partial=(err!=nil), append error annotation, add to result.Tools
-//   - output == "" && err != nil → add to result.Failed with error
-//   - output == "" && err == nil → no-op (tool ran but produced nothing)
+// addResult processes a tool's execution result and updates ReconResult.
 func addResult(result *ReconResult, spec ToolSpec, output string, err error, took time.Duration) {
 	tr := ToolResult{
 		Tool:    spec.Name,
@@ -291,7 +311,7 @@ func addResult(result *ReconResult, spec ToolSpec, output string, err error, too
 		Took:    took,
 	}
 	if output != "" {
-		tr.Output = sanitize(output, 6000)
+		tr.Output = sanitize(output, 50000)
 		tr.Partial = err != nil
 		if tr.Partial {
 			tr.Error = err.Error()
@@ -306,11 +326,10 @@ func addResult(result *ReconResult, spec ToolSpec, output string, err error, too
 }
 
 // RunAutoRecon runs all available recon tools against target in phase order.
-// requested is the --tools filter (nil = run all). progress receives live status events.
+// Each tool is run exhaustively — primary args first, then fallbacks if empty.
 func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) ReconResult {
 	result := ReconResult{Target: target}
 
-	// Security: validate target before passing to any external tool
 	if err := validateTarget(target); err != nil {
 		result.Skipped = append(result.Skipped, SkippedTool{Tool: "all", Reason: err.Error()})
 		return result
@@ -323,42 +342,36 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 
 	available, skipped, err := detectTools(requested)
 	if err != nil {
-		// Unknown tool in --tools flag — return error in result
 		result.Skipped = append(result.Skipped, SkippedTool{Tool: "all", Reason: err.Error()})
 		return result
 	}
 	result.Skipped = skipped
 
-	// Emit skipped statuses upfront
 	for _, s := range skipped {
 		progress(ToolStatus{Tool: s.Tool, Kind: StatusSkipped, Reason: s.Reason})
 	}
 
-	// runPhase executes all available tools for a given phase number
+	// runPhase executes all tools for a phase — each tool runs exhaustively
 	runPhase := func(phase int) {
 		for _, spec := range available {
 			if spec.Phase != phase {
 				continue
 			}
-			// Skip domain-only tools for IP targets
 			if spec.DomainOnly && ctx.TargetType == "ip" {
-				result.Skipped = append(result.Skipped, SkippedTool{
-					Tool:   spec.Name,
-					Reason: "domain-only tool",
-				})
+				result.Skipped = append(result.Skipped, SkippedTool{Tool: spec.Name, Reason: "domain-only tool"})
 				progress(ToolStatus{Tool: spec.Name, Kind: StatusSkipped, Reason: "domain-only tool"})
 				continue
 			}
 
 			progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
 			start := time.Now()
-			args := spec.BuildArgs(target, ctx)
-			output, runErr := run(spec.Timeout, spec.Name, args...)
+
+			// ── EXHAUSTIVE RUN: primary → fallbacks → give up ──────────────
+			output, runErr := runToolExhaustive(spec, target, ctx, progress)
 			took := time.Since(start)
 
 			addResult(&result, spec, output, runErr, took)
 
-			// Determine status kind for progress callback
 			last := result.Results[len(result.Results)-1]
 			var kind StatusKind
 			switch {
@@ -398,18 +411,14 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 		return result
 	}
 
-	// Phase 4 — HTTP Probe on live hosts → populate ctx.LiveURLs
+	// Phase 4 — HTTP Probe → populate ctx.LiveURLs
 	runPhase(4)
 	ctx.LiveURLs = extractLiveURLs(result)
 
-	// Phase 5 — Dir Discovery on each live URL (WAF-adaptive rate limiting handled in BuildArgs)
+	// Phase 5 — Dir Discovery
 	runPhase(5)
 
-	// Phase 6 — Vuln Scan: katana first → populate ctx.CrawledURLs → nuclei uses them
-	// Run katana before nuclei by running phase 6 tools in registry order
-	// (katana is last in registry, but nuclei needs crawled URLs — run katana first if available)
-	// Actually: registry order is nuclei, nikto, katana. We need katana before nuclei.
-	// Solution: run katana separately first, then run the rest of phase 6.
+	// Phase 6 — Vuln Scan: katana first (crawl) → nuclei uses crawled URLs → nikto
 	runKatanaFirst := func() {
 		for _, spec := range available {
 			if spec.Phase == 6 && spec.Name == "katana" {
@@ -418,8 +427,7 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 				}
 				progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
 				start := time.Now()
-				args := spec.BuildArgs(target, ctx)
-				output, runErr := run(spec.Timeout, spec.Name, args...)
+				output, runErr := runToolExhaustive(spec, target, ctx, progress)
 				took := time.Since(start)
 				addResult(&result, spec, output, runErr, took)
 				last := result.Results[len(result.Results)-1]
@@ -452,8 +460,7 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 		}
 		progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
 		start := time.Now()
-		args := spec.BuildArgs(target, ctx)
-		output, runErr := run(spec.Timeout, spec.Name, args...)
+		output, runErr := runToolExhaustive(spec, target, ctx, progress)
 		took := time.Since(start)
 		addResult(&result, spec, output, runErr, took)
 		last := result.Results[len(result.Results)-1]
@@ -494,11 +501,12 @@ func GetCombinedOutput(r ReconResult) string {
 // CheckTools returns which recon tools are available
 func CheckTools() map[string]bool {
 	tools := []string{
-		"nmap", "masscan", "rustscan",
+		"nmap", "masscan", "rustscan", "naabu",
 		"subfinder", "amass", "httpx", "whatweb",
-		"dig", "whois", "nuclei",
+		"dig", "whois", "nuclei", "dnsx",
 		"gobuster", "ffuf", "feroxbuster",
-		"nikto", "sqlmap", "burpsuite",
+		"nikto", "katana", "tlsx",
+		"reconftw",
 	}
 	result := make(map[string]bool)
 	for _, t := range tools {

@@ -49,6 +49,7 @@ const (
 	HuntFailed      HuntStatusKind = "failed"
 	HuntKindSkipped HuntStatusKind = "skipped"
 	HuntPartial     HuntStatusKind = "partial"
+	HuntRetry       HuntStatusKind = "retry"
 )
 
 // HuntStatus is emitted for each tool during execution.
@@ -89,6 +90,9 @@ type HuntToolSpec struct {
 	DomainOnly   bool
 	CascadeGroup string // only first available in group runs
 	BuildArgs    func(target string, ctx *HuntContext) []string
+	// FallbackArgs: tried in order if primary returns empty output.
+	// Ensures 100% tool usage — exhaust every variant before giving up.
+	FallbackArgs []func(target string, ctx *HuntContext) []string
 	InstallHint  string
 }
 
@@ -196,6 +200,33 @@ func dedup(items []string) []string {
 	return out
 }
 
+// runHuntToolExhaustive runs a hunt tool with primary args, then fallbacks if empty.
+// Ensures 100% tool usage — exhaust every command variant before giving up.
+func runHuntToolExhaustive(spec HuntToolSpec, target string, ctx *HuntContext, progress func(HuntStatus)) (string, error) {
+	args := spec.BuildArgs(target, ctx)
+	output, err := run(spec.Timeout, spec.Name, args...)
+
+	if strings.TrimSpace(output) != "" {
+		return output, err
+	}
+
+	for i, fallbackFn := range spec.FallbackArgs {
+		progress(HuntStatus{
+			Tool:   spec.Name,
+			Kind:   HuntRetry,
+			Reason: fmt.Sprintf("primary returned empty, trying fallback %d/%d", i+1, len(spec.FallbackArgs)),
+		})
+		fbArgs := fallbackFn(target, ctx)
+		fbOutput, fbErr := run(spec.Timeout, spec.Name, fbArgs...)
+		if strings.TrimSpace(fbOutput) != "" {
+			return fmt.Sprintf("[fallback-%d used]\n%s", i+1, fbOutput), fbErr
+		}
+		_ = fbErr
+	}
+
+	return output, err
+}
+
 // addResult processes one tool's output into HuntResult.
 func addResult(result *HuntResult, spec HuntToolSpec, output string, err error, took time.Duration) {
 	tr := HuntToolResult{
@@ -204,7 +235,7 @@ func addResult(result *HuntResult, spec HuntToolSpec, output string, err error, 
 		Took:    took,
 	}
 	if output != "" {
-		tr.Output = sanitize(output, 6000)
+		tr.Output = sanitize(output, 50000) // increased — full tool output for AI analysis
 		tr.Partial = err != nil
 		if tr.Partial {
 			tr.Error = err.Error()
@@ -449,8 +480,8 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 
 			progress(HuntStatus{Tool: spec.Name, Kind: HuntRunning})
 			start := time.Now()
-			args := spec.BuildArgs(target, ctx)
-			output, runErr := run(spec.Timeout, spec.Name, args...)
+			// Exhaustive run: primary → fallbacks → give up
+			output, runErr := runHuntToolExhaustive(spec, target, ctx, progress)
 			took := time.Since(start)
 
 			addResult(&result, spec, output, runErr, took)
