@@ -15,20 +15,33 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
 }
 
-// extractSubdomains parses subfinder/amass output lines for subdomain names.
-// Each non-empty line is treated as a subdomain.
+// extractSubdomains parses subfinder/amass/reconftw output lines for subdomain names.
+// Each non-empty line that looks like a hostname is treated as a subdomain.
 func extractSubdomains(result ReconResult) []string {
 	var subs []string
 	seen := map[string]bool{}
+	// domainRe matches valid hostnames/subdomains
+	domainRe := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$`)
+
 	for _, tr := range result.Results {
-		if tr.Tool != "subfinder" && tr.Tool != "amass" {
+		if tr.Tool != "subfinder" && tr.Tool != "amass" && tr.Tool != "reconftw" {
 			continue
 		}
 		for _, line := range strings.Split(tr.Output, "\n") {
 			line = strings.TrimSpace(line)
-			if line != "" && !seen[line] {
-				seen[line] = true
-				subs = append(subs, line)
+			// Skip empty lines, comments, paths, and non-hostname lines
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
+				continue
+			}
+			// Extract hostname from lines like "sub.example.com [1.2.3.4]" or just "sub.example.com"
+			host := line
+			if idx := strings.IndexAny(line, " \t["); idx > 0 {
+				host = line[:idx]
+			}
+			host = strings.TrimSpace(host)
+			if host != "" && domainRe.MatchString(host) && !seen[host] {
+				seen[host] = true
+				subs = append(subs, host)
 			}
 		}
 	}
@@ -68,22 +81,37 @@ func extractLiveHosts(result ReconResult) []string {
 // portRe matches port lines like "80/tcp open http" or "443/tcp open ssl/http"
 var portRe = regexp.MustCompile(`(\d+)/tcp\s+open`)
 
-// extractOpenPorts parses nmap/rustscan/naabu output for open port numbers.
+// masscanPortRe matches masscan JSON output: "port": 80
+var masscanPortRe = regexp.MustCompile(`"port"\s*:\s*(\d+)`)
+
+// extractOpenPorts parses nmap/rustscan/naabu/masscan output for open port numbers.
 func extractOpenPorts(result ReconResult) []int {
 	var ports []int
 	seen := map[int]bool{}
 	for _, tr := range result.Results {
-		if tr.Tool != "nmap" && tr.Tool != "rustscan" && tr.Tool != "naabu" {
-			continue
-		}
-		for _, match := range portRe.FindAllStringSubmatch(tr.Output, -1) {
-			if len(match) < 2 {
-				continue
+		switch tr.Tool {
+		case "nmap", "rustscan", "naabu":
+			for _, match := range portRe.FindAllStringSubmatch(tr.Output, -1) {
+				if len(match) < 2 {
+					continue
+				}
+				p, err := strconv.Atoi(match[1])
+				if err == nil && !seen[p] {
+					seen[p] = true
+					ports = append(ports, p)
+				}
 			}
-			p, err := strconv.Atoi(match[1])
-			if err == nil && !seen[p] {
-				seen[p] = true
-				ports = append(ports, p)
+		case "masscan":
+			// masscan JSON: {"ip": "1.2.3.4", "ports": [{"port": 80, ...}]}
+			for _, match := range masscanPortRe.FindAllStringSubmatch(tr.Output, -1) {
+				if len(match) < 2 {
+					continue
+				}
+				p, err := strconv.Atoi(match[1])
+				if err == nil && !seen[p] {
+					seen[p] = true
+					ports = append(ports, p)
+				}
 			}
 		}
 	}

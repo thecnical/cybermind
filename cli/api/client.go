@@ -19,7 +19,7 @@ func getBaseURL() string {
 	return defaultBackendURL
 }
 
-var httpClient = &http.Client{Timeout: 120 * time.Second}
+var httpClient = &http.Client{Timeout: 200 * time.Second} // 200s — backend AI timeout is 180s
 
 // Message for conversation history
 type Message struct {

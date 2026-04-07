@@ -53,6 +53,16 @@ var toolRegistry = []ToolSpec{
 				"--dns-tls",
 			}
 		},
+		// Fallback 1: fewer sources (some may be rate-limited)
+		// Fallback 2: minimal — just google+bing
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-l", "2000", "-b", "google,bing,yahoo,duckduckgo,otx"}
+			},
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-l", "500", "-b", "google,bing"}
+			},
+		},
 	},
 	{
 		Name:        "dig",

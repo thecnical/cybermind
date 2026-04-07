@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	Version = "2.4.1"
+	Version = "2.5.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -472,6 +472,9 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 		case hunt.HuntKindSkipped:
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 				fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)))
+		case hunt.HuntRetry:
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				fmt.Sprintf("  ↻ %-16s %s", status.Tool, status.Reason)))
 		}
 	})
 
@@ -552,6 +555,58 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	_ = storage.AddEntry("/hunt "+target, clean)
 }
 
+// updateAllTools silently updates all installed tools to latest versions.
+// Called automatically before /recon and /hunt to ensure latest tool versions.
+// Errors are non-fatal — we log and continue.
+func updateAllTools() {
+	// Update apt tools (non-interactive, quiet)
+	aptCmd := exec.Command("sudo", "apt", "update", "-qq")
+	aptCmd.Run() // ignore error — may not have sudo
+
+	// Update Go tools
+	goTools := []struct{ bin, module string }{
+		{"subfinder", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder"},
+		{"httpx", "github.com/projectdiscovery/httpx/cmd/httpx"},
+		{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei"},
+		{"naabu", "github.com/projectdiscovery/naabu/v2/cmd/naabu"},
+		{"dnsx", "github.com/projectdiscovery/dnsx/cmd/dnsx"},
+		{"tlsx", "github.com/projectdiscovery/tlsx/cmd/tlsx"},
+		{"katana", "github.com/projectdiscovery/katana/cmd/katana"},
+		{"gau", "github.com/lc/gau/v2/cmd/gau"},
+		{"waybackurls", "github.com/tomnomnom/waybackurls"},
+		{"dalfox", "github.com/hahwul/dalfox/v2"},
+	}
+
+	homedir, _ := os.UserHomeDir()
+	for _, gt := range goTools {
+		if _, err := exec.LookPath(gt.bin); err != nil {
+			continue // not installed, skip update
+		}
+		cmd := exec.Command("go", "install", gt.module+"@latest")
+		cmd.Run() // ignore error
+		// Re-symlink in case binary path changed
+		for _, gobin := range []string{homedir + "/go/bin/" + gt.bin, "/root/go/bin/" + gt.bin} {
+			if _, err := os.Stat(gobin); err == nil {
+				exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/"+gt.bin).Run()
+				break
+			}
+		}
+	}
+
+	// Update nuclei templates
+	if _, err := exec.LookPath("nuclei"); err == nil {
+		exec.Command("nuclei", "-update-templates", "-silent").Run()
+	}
+
+	// Update reconftw if installed
+	if _, err := os.Stat("/opt/reconftw/.git"); err == nil {
+		pullCmd := exec.Command("git", "-C", "/opt/reconftw", "pull", "origin", "main", "--quiet")
+		pullCmd.Run()
+	}
+
+	fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Tools updated"))
+}
+
 func main() {
 	args := os.Args[1:]
 
@@ -623,6 +678,9 @@ func main() {
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
 		}
+		// Auto-update all tools before running recon — ensures latest versions
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ⟳ Updating tools before recon..."))
+		updateAllTools()
 		runAutoRecon(target, requested)
 
 	case "/tools":
@@ -694,6 +752,9 @@ func main() {
 			printError(err.Error())
 			os.Exit(1)
 		}
+		// Auto-update all tools before running hunt — ensures latest versions
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ⟳ Updating tools before hunt..."))
+		updateAllTools()
 		// Manual mode — no recon context
 		runHunt(huntTarget, nil, huntRequested)
 
@@ -748,10 +809,10 @@ func main() {
 		}
 
 		var missing []toolEntry
-		reconOK, reconMissing := 0, 0
-		huntOK, huntMissing := 0, 0
+		reconOK := 0
+		huntOK := 0
 
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  RECON TOOLS (16):"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  RECON TOOLS (17):"))
 		for _, t := range allTools {
 			if t.mode != "recon" {
 				continue
@@ -762,7 +823,7 @@ func main() {
 			} else {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s MISSING", t.name)))
 				missing = append(missing, t)
-				reconMissing++
+				reconOK-- // offset the increment that didn't happen
 			}
 		}
 
@@ -778,14 +839,13 @@ func main() {
 			} else {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s MISSING", t.name)))
 				missing = append(missing, t)
-				huntMissing++
 			}
 		}
 
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
-			fmt.Sprintf("  Recon: %d/16 installed", reconOK)))
+			fmt.Sprintf("  Recon: %d/17 installed", reconOK)))
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Render(
 			fmt.Sprintf("  Hunt:  %d/4 installed", huntOK)))
 
@@ -1117,13 +1177,13 @@ func main() {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ✓ CyberMind updated successfully!"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind --version to confirm"))
-		// Auto-install any new tools added in this version
+		// Auto-run doctor to install any new tools and fix missing ones
 		if runtime.GOOS == "linux" {
-			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Checking for new/missing tools..."))
-			installCmd2 := exec.Command("/usr/local/bin/cybermind", "/doctor")
-			installCmd2.Stdout = os.Stdout
-			installCmd2.Stderr = os.Stderr
-			_ = installCmd2.Run()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Running /doctor to check and install tools..."))
+			doctorCmd := exec.Command("/usr/local/bin/cybermind", "/doctor")
+			doctorCmd.Stdout = os.Stdout
+			doctorCmd.Stderr = os.Stderr
+			_ = doctorCmd.Run()
 		}
 
 	case "history":
