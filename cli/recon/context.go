@@ -2,6 +2,8 @@ package recon
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,33 +17,190 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
 }
 
-// extractSubdomains parses subfinder/amass/reconftw output lines for subdomain names.
-// Each non-empty line that looks like a hostname is treated as a subdomain.
+// domainRe matches valid hostnames/subdomains
+var domainRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$`)
+
+// addSubdomain validates and adds a hostname to the seen map and slice
+func addSubdomain(line string, seen map[string]bool, subs *[]string) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
+		return
+	}
+	// Extract hostname from lines like "sub.example.com [1.2.3.4]" or just "sub.example.com"
+	host := line
+	if idx := strings.IndexAny(line, " \t["); idx > 0 {
+		host = line[:idx]
+	}
+	host = strings.TrimSpace(host)
+	if host != "" && domainRe.MatchString(host) && !seen[host] {
+		seen[host] = true
+		*subs = append(*subs, host)
+	}
+}
+
+// readReconFTWSubdomains reads all subdomain files from reconftw's structured output directory.
+// reconftw writes results to: <outdir>/subdomains/subdomains.txt and related files.
+// This gives us the FULL reconftw subdomain coverage — passive + brute + permutations + cert transparency.
+func readReconFTWSubdomains(target string, seen map[string]bool, subs *[]string) {
+	// reconftw output directory pattern
+	outDirs := []string{
+		"/tmp/cybermind_reconftw_" + target,
+		"/tmp/cybermind_reconftw/" + target,
+		"/opt/reconftw/Recon/" + target,
+	}
+
+	// All subdomain files reconftw produces
+	subFiles := []string{
+		"subdomains/subdomains.txt",           // all unique subdomains
+		"subdomains/subdomains_alive.txt",     // live subdomains only
+		"subdomains/subdomains_resolved.txt",  // DNS-resolved subdomains
+		"subdomains/all_subdomains.txt",       // combined all sources
+		"subdomains/subdomains_http.txt",      // HTTP-alive subdomains
+		"subdomains/subdomains_https.txt",     // HTTPS-alive subdomains
+		"subdomains/subdomains_ips.txt",       // subdomains with IPs
+		"subdomains/subdomains_takeover.txt",  // takeover candidates
+		"subdomains/subdomains_brute.txt",     // brute-forced subdomains
+		"subdomains/subdomains_permut.txt",    // permutation-discovered
+		"subdomains/subdomains_crt.txt",       // cert transparency
+		"subdomains/subdomains_passive.txt",   // passive sources
+	}
+
+	for _, dir := range outDirs {
+		if _, err := os.Stat(dir); err != nil {
+			continue // directory doesn't exist
+		}
+		for _, sf := range subFiles {
+			path := filepath.Join(dir, sf)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				addSubdomain(line, seen, subs)
+			}
+		}
+	}
+}
+
+// readReconFTWLiveURLs reads live URL files from reconftw's output directory.
+func readReconFTWLiveURLs(target string) []string {
+	var urls []string
+	seen := map[string]bool{}
+
+	outDirs := []string{
+		"/tmp/cybermind_reconftw_" + target,
+		"/tmp/cybermind_reconftw/" + target,
+		"/opt/reconftw/Recon/" + target,
+	}
+
+	urlFiles := []string{
+		"webs/webs.txt",           // all live web targets
+		"webs/webs_all.txt",       // all web targets including uncommon ports
+		"webs/webs_alive.txt",     // confirmed alive
+		"webs/webs_urls.txt",      // collected URLs
+		"webs/urls.txt",           // URL list
+		"webs/katana.txt",         // katana crawled URLs
+		"webs/waymore.txt",        // waymore passive URLs
+	}
+
+	for _, dir := range outDirs {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, uf := range urlFiles {
+			path := filepath.Join(dir, uf)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && strings.HasPrefix(line, "http") && !seen[line] {
+					seen[line] = true
+					urls = append(urls, line)
+				}
+			}
+		}
+	}
+	return urls
+}
+
+// readReconFTWVulns reads vulnerability findings from reconftw's output directory.
+func readReconFTWVulns(target string) []string {
+	var vulns []string
+	seen := map[string]bool{}
+
+	outDirs := []string{
+		"/tmp/cybermind_reconftw_" + target,
+		"/tmp/cybermind_reconftw/" + target,
+		"/opt/reconftw/Recon/" + target,
+	}
+
+	vulnFiles := []string{
+		"vulns/vulns.txt",
+		"vulns/nuclei.txt",
+		"vulns/xss.txt",
+		"vulns/sqli.txt",
+		"vulns/ssrf.txt",
+		"vulns/lfi.txt",
+		"vulns/ssti.txt",
+		"vulns/crlf.txt",
+		"vulns/open_redirect.txt",
+		"vulns/cors.txt",
+	}
+
+	for _, dir := range outDirs {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, vf := range vulnFiles {
+			path := filepath.Join(dir, vf)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !seen[line] {
+					seen[line] = true
+					vulns = append(vulns, line)
+				}
+			}
+		}
+	}
+	return vulns
+}
+
+// extractSubdomains parses subfinder/amass/reconftw output for subdomain names.
+// For reconftw: reads both stdout AND structured output files for maximum coverage.
 func extractSubdomains(result ReconResult) []string {
 	var subs []string
 	seen := map[string]bool{}
-	// domainRe matches valid hostnames/subdomains
-	domainRe := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$`)
 
 	for _, tr := range result.Results {
-		if tr.Tool != "subfinder" && tr.Tool != "amass" && tr.Tool != "reconftw" {
-			continue
-		}
-		for _, line := range strings.Split(tr.Output, "\n") {
-			line = strings.TrimSpace(line)
-			// Skip empty lines, comments, paths, and non-hostname lines
-			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
-				continue
+		switch tr.Tool {
+		case "subfinder", "amass":
+			for _, line := range strings.Split(tr.Output, "\n") {
+				addSubdomain(line, seen, &subs)
 			}
-			// Extract hostname from lines like "sub.example.com [1.2.3.4]" or just "sub.example.com"
-			host := line
-			if idx := strings.IndexAny(line, " \t["); idx > 0 {
-				host = line[:idx]
+		case "reconftw":
+			// Parse stdout output
+			for _, line := range strings.Split(tr.Output, "\n") {
+				addSubdomain(line, seen, &subs)
 			}
-			host = strings.TrimSpace(host)
-			if host != "" && domainRe.MatchString(host) && !seen[host] {
-				seen[host] = true
-				subs = append(subs, host)
+			// CRITICAL: Also read reconftw's structured output files
+			// reconftw writes 10+ subdomain files with different sources
+			// This gives us passive + brute + permutations + cert transparency
+			// Extract target from output (reconftw prints the target domain)
+			for _, line := range strings.Split(tr.Output, "\n") {
+				if strings.Contains(line, "Target:") || strings.Contains(line, "domain:") {
+					parts := strings.Fields(line)
+					for _, p := range parts {
+						if domainRe.MatchString(p) {
+							readReconFTWSubdomains(p, seen, &subs)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -49,8 +208,6 @@ func extractSubdomains(result ReconResult) []string {
 }
 
 // extractLiveHosts parses dnsx output lines for resolved hostnames.
-// dnsx -resp output format: "sub.example.com [1.2.3.4]"
-// We extract the hostname part (before the space or bracket).
 func extractLiveHosts(result ReconResult) []string {
 	var hosts []string
 	seen := map[string]bool{}
@@ -63,7 +220,6 @@ func extractLiveHosts(result ReconResult) []string {
 			if line == "" {
 				continue
 			}
-			// Extract hostname: everything before first space or '['
 			host := line
 			if idx := strings.IndexAny(line, " ["); idx > 0 {
 				host = line[:idx]
@@ -78,7 +234,7 @@ func extractLiveHosts(result ReconResult) []string {
 	return hosts
 }
 
-// portRe matches port lines like "80/tcp open http" or "443/tcp open ssl/http"
+// portRe matches port lines like "80/tcp open http"
 var portRe = regexp.MustCompile(`(\d+)/tcp\s+open`)
 
 // masscanPortRe matches masscan JSON output: "port": 80
@@ -102,7 +258,6 @@ func extractOpenPorts(result ReconResult) []int {
 				}
 			}
 		case "masscan":
-			// masscan JSON: {"ip": "1.2.3.4", "ports": [{"port": 80, ...}]}
 			for _, match := range masscanPortRe.FindAllStringSubmatch(tr.Output, -1) {
 				if len(match) < 2 {
 					continue
@@ -122,7 +277,7 @@ func extractOpenPorts(result ReconResult) []int {
 var wafRe = regexp.MustCompile(`(?i)http-waf-detect[^\n]*\n[^\n]*detected[^\n]*`)
 var wafVendorRe = regexp.MustCompile(`(?i)(cloudflare|akamai|imperva|f5|barracuda|sucuri|incapsula|modsecurity|aws|azure|fastly)`)
 
-// extractWAF scans nmap output for http-waf-detect NSE results.
+// extractWAF scans nmap output for WAF detection.
 func extractWAF(result ReconResult) (bool, string) {
 	for _, tr := range result.Results {
 		if tr.Tool != "nmap" {
@@ -135,7 +290,6 @@ func extractWAF(result ReconResult) (bool, string) {
 			}
 			return true, vendor
 		}
-		// Also check for simpler WAF mention
 		lower := strings.ToLower(tr.Output)
 		if strings.Contains(lower, "waf") && strings.Contains(lower, "detected") {
 			vendor := ""
@@ -151,24 +305,39 @@ func extractWAF(result ReconResult) (bool, string) {
 // urlRe matches URLs with http/https scheme
 var urlRe = regexp.MustCompile(`https?://[^\s\[\]]+`)
 
-// extractLiveURLs parses httpx output lines for URLs with scheme.
-// httpx -status-code output format: "https://example.com [200]"
+// extractLiveURLs parses httpx output + reconftw web files for live URLs.
 func extractLiveURLs(result ReconResult) []string {
 	var urls []string
 	seen := map[string]bool{}
+
 	for _, tr := range result.Results {
-		if tr.Tool != "httpx" {
-			continue
-		}
-		for _, line := range strings.Split(tr.Output, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			if m := urlRe.FindString(line); m != "" {
-				if !seen[m] {
+		switch tr.Tool {
+		case "httpx":
+			for _, line := range strings.Split(tr.Output, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				if m := urlRe.FindString(line); m != "" && !seen[m] {
 					seen[m] = true
 					urls = append(urls, m)
+				}
+			}
+		case "reconftw":
+			// Also read reconftw's web output files for live URLs
+			for _, line := range strings.Split(tr.Output, "\n") {
+				if strings.Contains(line, "Target:") || strings.Contains(line, "domain:") {
+					parts := strings.Fields(line)
+					for _, p := range parts {
+						if domainRe.MatchString(p) {
+							for _, u := range readReconFTWLiveURLs(p) {
+								if !seen[u] {
+									seen[u] = true
+									urls = append(urls, u)
+								}
+							}
+						}
+					}
 				}
 			}
 		}
@@ -189,11 +358,9 @@ func extractCrawledURLs(result ReconResult) []string {
 			if line == "" {
 				continue
 			}
-			if m := urlRe.FindString(line); m != "" {
-				if !seen[m] {
-					seen[m] = true
-					urls = append(urls, m)
-				}
+			if m := urlRe.FindString(line); m != "" && !seen[m] {
+				seen[m] = true
+				urls = append(urls, m)
 			}
 		}
 	}
@@ -201,11 +368,10 @@ func extractCrawledURLs(result ReconResult) []string {
 }
 
 // ensureToolQueued adds a tool to available if not already present.
-// Used for auto-queuing tlsx when port 443/8443 is found.
 func ensureToolQueued(name string, available []ToolSpec, registry []ToolSpec) []ToolSpec {
 	for _, spec := range available {
 		if spec.Name == name {
-			return available // already present
+			return available
 		}
 	}
 	for _, spec := range registry {
@@ -227,9 +393,7 @@ func containsPort(ports []int, port int) bool {
 }
 
 // buildCombined assembles the combined output string from all tool results.
-// Safe to call multiple times — skips if "combined" entry already exists.
 func buildCombined(result *ReconResult) {
-	// Guard: don't add a second combined entry
 	for _, tr := range result.Results {
 		if tr.Tool == "combined" {
 			return
@@ -242,7 +406,6 @@ func buildCombined(result *ReconResult) {
 		}
 		b.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", strings.ToUpper(tr.Tool), tr.Output))
 	}
-	// Prepend combined entry
 	if b.Len() > 0 {
 		combined := ToolResult{Tool: "combined", Output: b.String()}
 		result.Results = append([]ToolResult{combined}, result.Results...)

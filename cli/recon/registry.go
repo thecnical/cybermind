@@ -155,31 +155,72 @@ var toolRegistry = []ToolSpec{
 			}
 		},
 	},
-	// reconftw — runs AFTER subfinder/amass/dnsx to catch anything they missed
-	// reconftw is a meta-tool that runs its own full subdomain pipeline internally
-	// Install: git clone https://github.com/six2dez/reconftw && cd reconftw && ./install.sh
+	// reconftw — PHASE 2 PRIMARY TOOL — runs BEFORE subfinder/amass
+	// reconftw is a meta-tool that internally runs 50+ tools across all phases:
+	// passive enum, cert transparency, brute force, permutations, web probing,
+	// vuln scanning, OSINT, JS analysis, parameter discovery, and more.
+	//
+	// CyberMind uses reconftw in FULL RECON mode (-r) with --deep for maximum coverage.
+	// reconftw output is parsed to extract subdomains, live hosts, URLs, and vulns
+	// which then feed into CyberMind's own Phase 3-6 tools for additional coverage.
+	//
+	// Install: git clone https://github.com/six2dez/reconftw.git /opt/reconftw
+	//          cd /opt/reconftw && ./install.sh
+	//          sudo tee /usr/local/bin/reconftw > /dev/null << 'EOF'
+	//          #!/bin/bash
+	//          cd /opt/reconftw && bash reconftw.sh "$@"
+	//          EOF
+	//          sudo chmod +x /usr/local/bin/reconftw
 	{
 		Name:        "reconftw",
 		Phase:       2,
-		Timeout:     3600, // reconftw can take 1+ hours — we wait
+		Timeout:     14400, // 4 hours max — reconftw is thorough, we wait
 		DomainOnly:  true,
-		InstallHint: "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh && sudo ln -sf /opt/reconftw/reconftw.sh /usr/local/bin/reconftw",
-		// Power command: subdomain enumeration only mode (-s), output to /tmp
+		InstallHint: "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh && sudo tee /usr/local/bin/reconftw > /dev/null << 'EOF'\n#!/bin/bash\ncd /opt/reconftw && bash reconftw.sh \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/reconftw",
+		// PRIMARY: Full recon mode with deep scanning + parallel execution
+		// -r = full recon (subdomains + web probing + vuln checks, no active attacks)
+		// --deep = enable deep scanning (more thorough, slower)
+		// --parallel = run independent functions in parallel (faster)
+		// -o = output directory for structured results
 		BuildArgs: func(target string, ctx *ReconContext) []string {
+			outDir := "/tmp/cybermind_reconftw_" + target
 			return []string{
 				"-d", target,
-				"-s",                              // subdomain enumeration only
-				"-o", "/tmp/cybermind_reconftw/",  // output directory
+				"-r",          // full recon mode
+				"--deep",      // deep scanning — no shortcuts
+				"--parallel",  // parallel execution for speed
+				"-o", outDir,  // structured output directory
 			}
 		},
-		// Fallback 1: passive only (faster, less noise)
-		// Fallback 2: full recon mode if subdomain mode fails
+		// Fallback 1: full recon without --deep (faster, still comprehensive)
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
-				return []string{"-d", target, "-p", "-o", "/tmp/cybermind_reconftw/"}
+				outDir := "/tmp/cybermind_reconftw_" + target
+				return []string{
+					"-d", target,
+					"-r",
+					"--parallel",
+					"-o", outDir,
+				}
 			},
+			// Fallback 2: subdomain-only mode (-s) — fastest, still very thorough
 			func(target string, ctx *ReconContext) []string {
-				return []string{"-d", target, "-a", "-o", "/tmp/cybermind_reconftw/"}
+				outDir := "/tmp/cybermind_reconftw_" + target
+				return []string{
+					"-d", target,
+					"-s",         // subdomain enumeration only
+					"--parallel",
+					"-o", outDir,
+				}
+			},
+			// Fallback 3: passive only (-p) — no active probing, stealthy
+			func(target string, ctx *ReconContext) []string {
+				outDir := "/tmp/cybermind_reconftw_" + target
+				return []string{
+					"-d", target,
+					"-p",         // passive only
+					"-o", outDir,
+				}
 			},
 		},
 	},
