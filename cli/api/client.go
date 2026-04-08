@@ -45,9 +45,14 @@ func getAPIKey() string {
 	return cfg.Key
 }
 
-// isValidKey checks if a key has the correct prefix
+// isValidKey checks if a key has the correct prefix (both old and new format)
 func isValidKey(key string) bool {
-	return strings.HasPrefix(key, "cp_live_") || strings.HasPrefix(key, "sk_live_cm_") // backward compat
+	return strings.HasPrefix(key, "cp_live_") || strings.HasPrefix(key, "sk_live_cm_")
+}
+
+// needsMigration returns true if key uses the old prefix
+func needsMigration(key string) bool {
+	return strings.HasPrefix(key, "sk_live_cm_")
 }
 
 // httpClient for actual AI requests — long timeout because AI can take 60-180s
@@ -75,6 +80,7 @@ type promptResponse struct {
 	Model    string `json:"model"`
 	Time     string `json:"time"`
 	Error    string `json:"error"`
+	Action   string `json:"action"` // migration/upgrade message
 }
 
 // WakeUp pings /ping to check if backend is alive.
@@ -177,6 +183,10 @@ func doPost(endpoint string, payload []byte) (string, error) {
 	if !result.Success {
 		if result.Error == "" {
 			return "", fmt.Errorf("backend error (status %d)", resp.StatusCode)
+		}
+		// Check for legacy/migration error — show upgrade steps
+		if result.Action != "" {
+			return "", fmt.Errorf("UPGRADE_REQUIRED:%s|%s", result.Error, result.Action)
 		}
 		return "", fmt.Errorf("%s", result.Error)
 	}

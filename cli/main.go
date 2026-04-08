@@ -1178,6 +1178,19 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 				"  Set key: cybermind --key cp_live_xxxxx"))
 			fmt.Println()
+		} else if strings.HasPrefix(key, "sk_live_cm_") {
+			// Legacy key — show migration warning
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
+				"  ⚠  Your API key is outdated (old format)."))
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				"  CyberMind has been upgraded. Please get a new key:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+				"  1. Visit: https://cybermind.thecnical.dev"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+				"  2. Sign up / log in → Dashboard → Copy new key"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+				"  3. Run: cybermind --key cp_live_xxxxx"))
+			fmt.Println()
 		} else {
 			masked := key[:min(15, len(key))] + strings.Repeat("•", max(0, len(key)-15))
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(

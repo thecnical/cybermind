@@ -182,9 +182,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.state = stateInput
 			errStr := msg.err.Error()
-			// Backend cold start — clear message
-			if strings.Contains(errStr, "starting up") || strings.Contains(errStr, "cold start") {
-				m.errMsg = "⟳ Backend is starting up (30-60s). Your message was sent — please resend once connected"
+			// Upgrade required — legacy user without API key
+			if strings.HasPrefix(errStr, "UPGRADE_REQUIRED:") {
+				parts := strings.SplitN(strings.TrimPrefix(errStr, "UPGRADE_REQUIRED:"), "|", 2)
+				m.errMsg = "⚠  " + parts[0]
+				if len(parts) > 1 {
+					m.errMsg += "\n  " + parts[1]
+				}
+				m.errMsg += "\n  Get your free key: https://cybermind.thecnical.dev"
+			} else if strings.Contains(errStr, "starting up") || strings.Contains(errStr, "cold start") {
+				m.errMsg = "⟳ Backend is starting up (30-60s). Please resend once connected"
 			} else if strings.Contains(errStr, "cannot connect") || strings.Contains(errStr, "backend_down") {
 				m.errMsg = "⟳ Connecting to backend... please resend your message"
 			} else {
