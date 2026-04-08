@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,11 @@ func getAPIKey() string {
 		return ""
 	}
 	return cfg.Key
+}
+
+// isValidKey checks if a key has the correct prefix
+func isValidKey(key string) bool {
+	return strings.HasPrefix(key, "cp_live_") || strings.HasPrefix(key, "sk_live_cm_") // backward compat
 }
 
 // httpClient for actual AI requests — long timeout because AI can take 60-180s

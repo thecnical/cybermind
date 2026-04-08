@@ -66,7 +66,7 @@ func getOSLabel() (string, string) {
 	case "windows":
 		return "🪟 Windows", "#0078D6"
 	case "darwin":
-		return "🍎 macOS", "#999999"
+		return "🍎 macOS", "#A8A8A8"
 	default:
 		return runtime.GOOS, "#777777"
 	}
@@ -103,8 +103,12 @@ func printBanner() {
 	if runtime.GOOS == "linux" {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Auto Recon Mode available  →  cybermind /recon <target>"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Abhimanyu Mode available   →  cybermind /abhimanyu <target>"))
+	} else if runtime.GOOS == "darwin" {
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  macOS: AI chat mode available"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
 	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Auto Recon/Hunt/Abhimanyu Mode: Linux only"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Windows: AI chat mode available"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
 	}
 	fmt.Println()
 }
@@ -1172,7 +1176,7 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 				"  Get your free key: https://cybermind.thecnical.dev/dashboard"))
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				"  Set key: cybermind --key sk_live_cm_xxxxx"))
+				"  Set key: cybermind --key cp_live_xxxxx"))
 			fmt.Println()
 		} else {
 			masked := key[:min(15, len(key))] + strings.Repeat("•", max(0, len(key)-15))
@@ -1197,11 +1201,16 @@ func main() {
 		linuxOnlyCmds := map[string]bool{
 			"recon": true, "hunt": true, "tools": true,
 			"install-tools": true, "install-hunt": true, "doctor": true,
+			"abhimanyu": true,
 		}
 		if linuxOnlyCmds[normalized] || strings.HasPrefix(cmd, "/") {
 			printError("This command is only available on Linux/Kali.")
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  /recon, /hunt, /doctor, /tools, /install-tools require Linux"))
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use: cybermind recon <target>  for AI-guided recon on Windows"))
+			if runtime.GOOS == "darwin" {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  macOS supports AI chat only: cybermind"))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows supports AI chat only: cybermind"))
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use Kali Linux for full recon/hunt/abhimanyu pipeline"))
 			os.Exit(1)
 		}
 	}
@@ -1219,7 +1228,7 @@ func main() {
 	case "--key":
 		// Save API key to ~/.cybermind/config.json
 		if len(args) < 2 {
-			printError("Usage: cybermind --key sk_live_cm_xxxxx")
+			printError("Usage: cybermind --key cp_live_xxxxx")
 			os.Exit(1)
 		}
 		key := args[1]
@@ -1235,7 +1244,7 @@ func main() {
 		key := api.GetAPIKey()
 		if key == "" {
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  No API key set. Get yours at https://cybermind.thecnical.dev/dashboard"))
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Set key: cybermind --key sk_live_cm_xxxxx"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Set key: cybermind --key cp_live_xxxxx"))
 		} else {
 			masked := key[:15] + strings.Repeat("•", len(key)-15)
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ API key: " + masked))
