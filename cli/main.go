@@ -89,16 +89,14 @@ func printBanner() {
 	for _, l := range lines {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(l.color)).Render(l.text))
 	}
-	fmt.Println()
 
-	// Personalized greeting
+	// Personalized greeting — no extra blank line between banner and info
 	greeting := fmt.Sprintf("  ⚡ CyberMind CLI v%s  |  %s", Version,
 		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(osColor)).Render(osLabel))
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(greeting))
 	fmt.Println(lipgloss.NewStyle().Foreground(credit).Render("  created by github.com/thecnical (Chandan Pandey)"))
-	fmt.Println()
 
-	// System info
+	// System info — compact, no extra blank lines
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Local IP:  %s", localIP)))
 
 	// Linux-only recon notice
@@ -1167,6 +1165,21 @@ func main() {
 			fmt.Println("Warning: could not load history:", err)
 		}
 		printBanner()
+		// Show API key status — prompt user if no key set
+		if key := api.GetAPIKey(); key == "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				"  ⚠  No API key set. Running in anonymous mode (20 req/day limit)."))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Get your free key: https://cybermind.thecnical.dev/dashboard"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Set key: cybermind --key sk_live_cm_xxxxx"))
+			fmt.Println()
+		} else {
+			masked := key[:min(15, len(key))] + strings.Repeat("•", max(0, len(key)-15))
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				"  ✓ API key: " + masked))
+			fmt.Println()
+		}
 		p := tea.NewProgram(ui.NewModel(getLocalIP()))
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

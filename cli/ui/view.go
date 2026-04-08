@@ -7,6 +7,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Version is set by main package via ldflags or directly
+var Version = "2.5.0"
+
 // Fixed bottom section height: divider(1) + input label(1) + input box(3) + footer(1) = 6
 const bottomHeight = 6
 
@@ -33,7 +36,7 @@ func (m Model) View() string {
 	b.WriteString(lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#00FFFF")).
-		Render(fmt.Sprintf("  ⚡ CyberMind v2.2.0  🧠 AI  |  🔌 Live  |  PgUp/PgDn scroll  |  Ctrl+L clear")))
+		Render(fmt.Sprintf("  ⚡ CyberMind v%s  🧠 AI  |  🔌 Live  |  PgUp/PgDn scroll  |  Ctrl+L clear", Version)))
 	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#1a1a1a")).
@@ -122,6 +125,13 @@ func buildChatLines(m Model, rw int) []string {
 				lipgloss.NewStyle().Foreground(lipgloss.Color("#CCCCCC")).
 					Render("    "+rl))
 		}
+		// Context usage line — shows tokens used for this exchange
+		promptRunes := len([]rune(entry.Prompt))
+		respRunes := len([]rune(entry.Response))
+		totalChars := promptRunes + respRunes
+		lines = append(lines,
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).
+				Render(fmt.Sprintf("  ─ context: ~%d chars used this exchange", totalChars)))
 		lines = append(lines, "") // blank separator
 	}
 
