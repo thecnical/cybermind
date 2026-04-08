@@ -98,6 +98,12 @@ func (m Model) View() string {
 	b.WriteString(lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#333333")).
 		Render("  Enter=send  Ctrl+C=exit  PgUp/PgDn=scroll"))
+	if m.lastUsage != "" {
+		b.WriteString("  ")
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#444444")).
+			Render("│  " + m.lastUsage))
+	}
 	b.WriteString("\n")
 
 	return b.String()

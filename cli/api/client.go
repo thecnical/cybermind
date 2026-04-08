@@ -204,6 +204,37 @@ func GetPublicIP() string {
 	return string(body)
 }
 
+// FetchUsage fetches current key usage from backend (exported)
+func FetchUsage(key string) (plan string, today int, limit int, err error) {
+	return fetchUsage(key)
+}
+
+// fetchUsage fetches current key usage from backend (non-blocking)
+func fetchUsage(key string) (plan string, today int, limit int, err error) {
+	req, err := http.NewRequest("GET", getBaseURL()+"/auth/usage", nil)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	req.Header.Set("X-API-Key", key)
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var result struct {
+		Success       bool   `json:"success"`
+		Plan          string `json:"plan"`
+		RequestsToday int    `json:"requests_today"`
+		LimitToday    int    `json:"limit_today"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", 0, 0, err
+	}
+	return result.Plan, result.RequestsToday, result.LimitToday, nil
+}
+
 // GetAPIKey returns the current API key (exported for main.go)
 func GetAPIKey() string {
 	return getAPIKey()

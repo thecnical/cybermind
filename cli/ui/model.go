@@ -3,6 +3,7 @@ package ui
 import (
 	"cybermind-cli/api"
 	"cybermind-cli/storage"
+	"fmt"
 	"strings"
 	"time"
 
@@ -51,6 +52,7 @@ type Model struct {
 	width           int
 	height          int
 	localIP         string // passed in from main
+	lastUsage       string // "plan:free  today:3/20"
 }
 
 func NewModel(localIP string) Model {
@@ -223,6 +225,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Prompt:   m.lastPrompt,
 			Response: m.fullResponse,
 		})
+
+		// Fetch and update usage in background
+		go func() {
+			if key := api.GetAPIKey(); key != "" {
+				plan, today, limit, err := api.FetchUsage(key)
+				if err == nil {
+					m.lastUsage = fmt.Sprintf("plan:%s  today:%d/%s", plan, today, func() string {
+						if limit < 0 {
+							return "∞"
+						}
+						return fmt.Sprintf("%d", limit)
+					}())
+				}
+			}
+		}()
 
 		// BUG FIX: proper context trimming — circular buffer
 		m.contextMessages = append(m.contextMessages,
