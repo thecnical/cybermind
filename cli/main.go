@@ -153,6 +153,8 @@ func printHelp() {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  HISTORY:"))
 	fmt.Println(g.Render("  cybermind history") + d.Render("               → view chat history"))
 	fmt.Println(g.Render("  cybermind clear") + d.Render("                 → clear history"))
+	fmt.Println(g.Render("  cybermind --key <key>") + d.Render("           → save API key"))
+	fmt.Println(g.Render("  cybermind whoami") + d.Render("                → show current key + plan"))
 	fmt.Println()
 }
 
@@ -838,6 +840,20 @@ func printAbhimanyuSummary(results []abhimanyu.ExploitResult, ctx *abhimanyu.Abh
 	fmt.Println()
 }
 
+// saveAPIKey saves the API key to ~/.cybermind/config.json
+func saveAPIKey(key string) error {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dir := homedir + "/.cybermind"
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	data := fmt.Sprintf(`{"key":"%s"}`, key)
+	return os.WriteFile(dir+"/config.json", []byte(data), 0600)
+}
+
 // autoExecuteAICommands extracts and runs commands from AI analysis output.
 func autoExecuteAICommands(clean string) {
 	fmt.Println()
@@ -1186,6 +1202,38 @@ func main() {
 	case "version", "--version", "-v":
 		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  CyberMind CLI v" + Version))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  github.com/thecnical"))
+
+	case "--key":
+		// Save API key to ~/.cybermind/config.json
+		if len(args) < 2 {
+			printError("Usage: cybermind --key sk_live_cm_xxxxx")
+			os.Exit(1)
+		}
+		key := args[1]
+		if err := saveAPIKey(key); err != nil {
+			printError("Failed to save key: " + err.Error())
+			os.Exit(1)
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ API key saved to ~/.cybermind/config.json"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Key will be used automatically for all requests"))
+
+	case "whoami":
+		// Show current key and plan
+		key := api.GetAPIKey()
+		if key == "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  No API key set. Get yours at https://cybermind.thecnical.dev/dashboard"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Set key: cybermind --key sk_live_cm_xxxxx"))
+		} else {
+			masked := key[:15] + strings.Repeat("•", len(key)-15)
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ API key: " + masked))
+			// Validate key with backend
+			plan, err := api.ValidateKey(key)
+			if err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ Key validation failed: " + err.Error()))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Plan: " + strings.ToUpper(plan)))
+			}
+		}
 
 	case "/recon":
 		// Linux-only auto recon

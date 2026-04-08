@@ -19,6 +19,31 @@ func getBaseURL() string {
 	return defaultBackendURL
 }
 
+// getAPIKey returns the API key from env, config file, or empty string
+func getAPIKey() string {
+	// 1. Environment variable
+	if key := os.Getenv("CYBERMIND_KEY"); key != "" {
+		return key
+	}
+	// 2. Config file ~/.cybermind/config.json
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	configPath := homedir + "/.cybermind/config.json"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Key
+}
+
 // httpClient for actual AI requests — long timeout because AI can take 60-180s
 var httpClient = &http.Client{Timeout: 200 * time.Second}
 
@@ -113,11 +138,17 @@ func post(endpoint string, body interface{}) (string, error) {
 
 // doPost performs a single HTTP POST and parses the JSON response.
 func doPost(endpoint string, payload []byte) (string, error) {
-	resp, err := httpClient.Post(
-		getBaseURL()+endpoint,
-		"application/json",
-		bytes.NewBuffer(payload),
-	)
+	req, err := http.NewRequest("POST", getBaseURL()+endpoint, bytes.NewBuffer(payload))
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: request build failed")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Attach API key if available
+	if key := getAPIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("_backend_down: cannot connect — %s", err.Error())
 	}
@@ -171,6 +202,43 @@ func GetPublicIP() string {
 		return "unknown"
 	}
 	return string(body)
+}
+
+// GetAPIKey returns the current API key (exported for main.go)
+func GetAPIKey() string {
+	return getAPIKey()
+}
+
+// ValidateKey validates an API key with the backend and returns the plan
+func ValidateKey(key string) (string, error) {
+	payload, _ := json.Marshal(map[string]string{"key": key})
+	req, err := http.NewRequest("POST", getBaseURL()+"/auth/validate-key", bytes.NewBuffer(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", key)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("cannot reach backend")
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	var result struct {
+		Success bool   `json:"success"`
+		Plan    string `json:"plan"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("invalid response")
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	return result.Plan, nil
 }
 
 // SendChat sends prompt with conversation history
