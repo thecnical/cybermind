@@ -555,6 +555,62 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	_ = storage.AddEntry("/hunt "+target, clean)
 }
 
+// installPythonPipTool installs a Python tool via pip3.
+func installPythonPipTool(name string) error {
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ pip3 install %s...", name)))
+	cmd := exec.Command("pip3", "install", name, "--break-system-packages")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		// Try without --break-system-packages
+		cmd2 := exec.Command("pip3", "install", name)
+		cmd2.Stdout = os.Stdout
+		cmd2.Stderr = os.Stderr
+		return cmd2.Run()
+	}
+	return nil
+}
+
+// installPythonGitTool installs a Python tool from git + creates wrapper script.
+func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Cloning %s from GitHub...", name)))
+
+	exec.Command("sudo", "rm", "-rf", installDir).Run()
+	cloneCmd := exec.Command("git", "clone", "--depth=1", repoURL, installDir)
+	cloneCmd.Stdout = os.Stdout
+	cloneCmd.Stderr = os.Stderr
+	if err := cloneCmd.Run(); err != nil {
+		return fmt.Errorf("git clone failed: %v", err)
+	}
+
+	// Install requirements
+	reqFile := installDir + "/requirements.txt"
+	if _, err := os.Stat(reqFile); err == nil {
+		pipCmd := exec.Command("pip3", "install", "-r", reqFile, "--break-system-packages", "-q")
+		pipCmd.Stdout = os.Stdout
+		pipCmd.Stderr = os.Stderr
+		pipCmd.Run()
+	}
+
+	// Create wrapper script
+	scriptPath := installDir + "/" + mainScript
+	wrapper := fmt.Sprintf("#!/bin/bash\npython3 %s \"$@\"\n", scriptPath)
+	wrapperPath := "/usr/local/bin/" + name
+	teeCmd := exec.Command("sudo", "tee", wrapperPath)
+	teeCmd.Stdin = strings.NewReader(wrapper)
+	teeCmd.Run()
+	exec.Command("sudo", "chmod", "+x", wrapperPath).Run()
+
+	// Verify
+	if _, err := exec.LookPath(name); err == nil {
+		return nil
+	}
+	if _, err := os.Stat(scriptPath); err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s install incomplete", name)
+}
+
 // installReconftw installs reconftw via git clone — must run as root.
 func installReconftw() error {
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Installing reconftw (git clone method)..."))
@@ -919,13 +975,17 @@ func main() {
 			{"nuclei", "recon", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false},
 			{"nikto", "recon", "sudo apt install nikto", false, false},
 			{"katana", "recon", "go install github.com/projectdiscovery/katana/cmd/katana@latest", true, false},
-			// Hunt tools
-			{"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false},
-			{"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false},
-			{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2@latest", true, false},
-			{"x8", "hunt", "cargo install x8", false, true},
-			// reconftw — meta subdomain tool
-			{"reconftw", "recon", "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh && sudo ln -sf /opt/reconftw/reconftw.sh /usr/local/bin/reconftw", false, false},
+	// Hunt tools — upgraded arsenal
+	{"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false},
+	{"waymore", "hunt", "go install github.com/xnl-h4ck3r/waymore@latest", true, false},
+	{"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false},
+	{"gospider", "hunt", "go install github.com/jaeles-project/gospider@latest", true, false},
+	{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2@latest", true, false},
+	{"paramspider", "hunt", "git clone https://github.com/devanshbatham/ParamSpider /opt/ParamSpider && pip3 install -r /opt/ParamSpider/requirements.txt -q && sudo ln -sf /opt/ParamSpider/paramspider.py /usr/local/bin/paramspider && sudo chmod +x /usr/local/bin/paramspider", false, false},
+	{"arjun", "hunt", "pip3 install arjun -q", false, false},
+	{"xsstrike", "hunt", "git clone https://github.com/s0md3v/XSStrike.git /opt/XSStrike && pip3 install -r /opt/XSStrike/requirements.txt -q && sudo ln -sf /opt/XSStrike/xsstrike.py /usr/local/bin/xsstrike && sudo chmod +x /usr/local/bin/xsstrike", false, false},
+	// reconftw — meta subdomain tool
+	{"reconftw", "recon", "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh", false, false},
 		}
 
 		var missing []toolEntry
@@ -948,7 +1008,7 @@ func main() {
 		}
 
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  HUNT TOOLS (4):"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  HUNT TOOLS (8):"))
 		for _, t := range allTools {
 			if t.mode != "hunt" {
 				continue
@@ -967,7 +1027,7 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
 			fmt.Sprintf("  Recon: %d/17 installed", reconOK)))
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Render(
-			fmt.Sprintf("  Hunt:  %d/4 installed", huntOK)))
+			fmt.Sprintf("  Hunt:  %d/8 installed", huntOK)))
 
 		if len(missing) == 0 {
 			fmt.Println()
@@ -987,19 +1047,15 @@ func main() {
 
 				switch t.name {
 				case "reconftw":
-					// reconftw must be installed as root via git clone — NOT via apt
 					installErr = installReconftw()
 
 				case "x8":
-					// x8 needs openssl dev libs first, then cargo install
 					installErr = installX8()
 
 				case "rustscan":
-					// rustscan: try cargo first, then .deb fallback
 					installErr = installRustscan()
 
 				case "naabu":
-					// naabu needs libpcap-dev
 					exec.Command("sudo", "apt", "install", "-y", "libpcap-dev").Run()
 					cmd2 := exec.Command("go", "install", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest")
 					cmd2.Stdout = os.Stdout
@@ -1013,6 +1069,74 @@ func main() {
 								break
 							}
 						}
+					}
+
+				case "paramspider":
+					installErr = installPythonGitTool(
+						"paramspider",
+						"https://github.com/devanshbatham/ParamSpider",
+						"/opt/ParamSpider",
+						"paramspider.py",
+					)
+
+				case "arjun":
+					installErr = installPythonPipTool("arjun")
+
+				case "xsstrike":
+					installErr = installPythonGitTool(
+						"xsstrike",
+						"https://github.com/s0md3v/XSStrike",
+						"/opt/XSStrike",
+						"xsstrike.py",
+					)
+
+				case "waymore":
+					cmd2 := exec.Command("go", "install", "github.com/xnl-h4ck3r/waymore@latest")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+					if installErr == nil {
+						homedir2, _ := os.UserHomeDir()
+						for _, gobin := range []string{homedir2 + "/go/bin/waymore", "/root/go/bin/waymore"} {
+							if _, err2 := os.Stat(gobin); err2 == nil {
+								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/waymore").Run()
+								break
+							}
+						}
+					}
+
+				case "gospider":
+					cmd2 := exec.Command("go", "install", "github.com/jaeles-project/gospider@latest")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+					if installErr == nil {
+						homedir2, _ := os.UserHomeDir()
+						for _, gobin := range []string{homedir2 + "/go/bin/gospider", "/root/go/bin/gospider"} {
+							if _, err2 := os.Stat(gobin); err2 == nil {
+								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/gospider").Run()
+								break
+							}
+						}
+					}
+
+				case "gf":
+					cmd2 := exec.Command("go", "install", "github.com/tomnomnom/gf@latest")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+					if installErr == nil {
+						homedir2, _ := os.UserHomeDir()
+						for _, gobin := range []string{homedir2 + "/go/bin/gf", "/root/go/bin/gf"} {
+							if _, err2 := os.Stat(gobin); err2 == nil {
+								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/gf").Run()
+								break
+							}
+						}
+						// Install gf patterns
+						exec.Command("bash", "-c",
+							"git clone --depth=1 https://github.com/1ndianl33t/Gf-Patterns /tmp/gf-patterns 2>/dev/null; "+
+								"mkdir -p ~/.gf; cp /tmp/gf-patterns/*.json ~/.gf/ 2>/dev/null || true").Run()
 					}
 
 				default:
@@ -1049,7 +1173,8 @@ func main() {
 							}
 						}
 					} else {
-						cmd2 := exec.Command("sudo", "apt", "install", "-y", t.name)
+						// Python/git tools — use bash to run the install string
+						cmd2 := exec.Command("bash", "-c", t.install)
 						cmd2.Stdout = os.Stdout
 						cmd2.Stderr = os.Stderr
 						installErr = cmd2.Run()
@@ -1167,6 +1292,8 @@ func main() {
 			{"gau", "github.com/lc/gau/v2/cmd/gau"},
 			{"waybackurls", "github.com/tomnomnom/waybackurls"},
 			{"dalfox", "github.com/hahwul/dalfox/v2"},
+			{"waymore", "github.com/xnl-h4ck3r/waymore"},
+			{"gospider", "github.com/jaeles-project/gospider"},
 		}
 		for _, gt := range goTools {
 			if _, err := exec.LookPath(gt.bin); err == nil {
@@ -1198,6 +1325,86 @@ func main() {
 				if _, err2 := os.Stat(x8bin); err2 == nil {
 					exec.Command("sudo", "ln", "-sf", x8bin, "/usr/local/bin/x8").Run()
 				}
+			}
+		}
+
+		// ── Step 4.5: Python hunt tools ──────────────────────────────────────
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [4.5/6] Installing Python hunt tools..."))
+
+		// Ensure pip3 available
+		exec.Command("sudo", "apt", "install", "-y", "python3-pip", "python3-venv", "-qq").Run()
+
+		pythonTools := []struct {
+			bin     string
+			pipPkg  string
+			gitRepo string
+			gitDir  string
+			script  string
+		}{
+			{"arjun", "arjun", "", "", ""},
+			{"paramspider", "", "https://github.com/devanshbatham/ParamSpider", "/opt/ParamSpider", "paramspider.py"},
+			{"xsstrike", "", "https://github.com/s0md3v/XSStrike.git", "/opt/XSStrike", "xsstrike.py"},
+		}
+
+		for _, pt := range pythonTools {
+			if _, err := exec.LookPath(pt.bin); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-16s already installed", pt.bin)))
+				skipped2++
+				continue
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", pt.bin)))
+
+			var installOK bool
+			if pt.pipPkg != "" {
+				// pip install
+				cmd2 := exec.Command("pip3", "install", pt.pipPkg, "-q", "--break-system-packages")
+				cmd2.Stdout = os.Stdout
+				cmd2.Stderr = os.Stderr
+				if err := cmd2.Run(); err == nil {
+					installOK = true
+				} else {
+					// Try without --break-system-packages
+					cmd3 := exec.Command("pip3", "install", pt.pipPkg, "-q")
+					cmd3.Stdout = os.Stdout
+					cmd3.Stderr = os.Stderr
+					installOK = cmd3.Run() == nil
+				}
+			} else if pt.gitRepo != "" {
+				// git clone + pip install requirements
+				exec.Command("sudo", "rm", "-rf", pt.gitDir).Run()
+				cloneCmd := exec.Command("git", "clone", "--depth=1", pt.gitRepo, pt.gitDir)
+				cloneCmd.Stdout = os.Stdout
+				cloneCmd.Stderr = os.Stderr
+				if err := cloneCmd.Run(); err == nil {
+					reqFile := pt.gitDir + "/requirements.txt"
+					if _, err2 := os.Stat(reqFile); err2 == nil {
+						pipCmd := exec.Command("pip3", "install", "-r", reqFile, "-q", "--break-system-packages")
+						pipCmd.Stdout = os.Stdout
+						pipCmd.Stderr = os.Stderr
+						if pipCmd.Run() != nil {
+							pipCmd2 := exec.Command("pip3", "install", "-r", reqFile, "-q")
+							pipCmd2.Stdout = os.Stdout
+							pipCmd2.Stderr = os.Stderr
+							pipCmd2.Run()
+						}
+					}
+					// Create symlink
+					scriptPath := pt.gitDir + "/" + pt.script
+					if _, err2 := os.Stat(scriptPath); err2 == nil {
+						exec.Command("sudo", "ln", "-sf", scriptPath, "/usr/local/bin/"+pt.bin).Run()
+						exec.Command("sudo", "chmod", "+x", "/usr/local/bin/"+pt.bin).Run()
+						installOK = true
+					}
+				}
+			}
+
+			if installOK {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", pt.bin)))
+				installed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed", pt.bin)))
+				failed++
 			}
 		}
 
@@ -1290,8 +1497,11 @@ func main() {
 
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Found repo at: " + repoPath))
 
-		// git pull
+		// git pull — force reset local changes first
 		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Pulling latest changes..."))
+		// Reset any local changes that would block pull
+		resetCmd := exec.Command("git", "-C", repoPath, "reset", "--hard", "HEAD")
+		resetCmd.Run()
 		pullCmd := exec.Command("git", "-C", repoPath, "pull", "origin", "main")
 		pullCmd.Stdout = os.Stdout
 		pullCmd.Stderr = os.Stderr

@@ -75,11 +75,12 @@ type HuntContext struct {
 	Subdomains  []string
 
 	// Populated during hunt phases
-	HistoricalURLs []string // gau + waybackurls
+	HistoricalURLs []string // waymore + gau + waybackurls
 	AllURLs        []string // merged: LiveURLs + CrawledURLs + HistoricalURLs (deduped)
-	ParamsFound    []string // x8 hidden parameters
-	XSSFound       []string // dalfox confirmed XSS
+	ParamsFound    []string // paramspider + arjun + x8 hidden parameters
+	XSSFound       []string // xsstrike + dalfox confirmed XSS
 	VulnsFound     []string // nuclei confirmed vulns
+	GFPatterns     map[string][]string // gf pattern matches: xss, sqli, ssrf, lfi, rce
 }
 
 // HuntToolSpec defines a hunt tool.
