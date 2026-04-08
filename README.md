@@ -24,7 +24,7 @@
 
 *Created by [Chandan Pandey](https://github.com/thecnical)*
 
-**CyberMind is an open-source AI-powered offensive security CLI built for Kali Linux — featuring a fully automated 17-tool recon pipeline (including reconftw), a 6-phase vulnerability hunt engine, exhaustive tool execution, and deep AI analysis. Built for penetration testers, bug bounty hunters, and red teamers.**
+**CyberMind is an open-source AI-powered offensive security CLI built for Kali Linux — featuring a fully automated 20-tool recon pipeline (including reconftw), an 11-tool vulnerability hunt engine, and a full 6-phase Abhimanyu exploit mode with post-exploitation, lateral movement, and exfiltration. Built for penetration testers, bug bounty hunters, and red teamers.**
 
 </div>
 
@@ -81,7 +81,7 @@ Move-Item cybermind.exe C:\Windows\System32\cybermind.exe
 
 ## Auto Recon Mode — `/recon` 🐧 Kali Linux Only
 
-Fully automated 17-tool recon pipeline across 6 phases. Each phase feeds its output into the next. Tools auto-update before running.
+Fully automated 20-tool recon pipeline across 6 phases. Each phase feeds its output into the next. Tools auto-update before running.
 
 ```bash
 cybermind /recon example.com
@@ -100,30 +100,13 @@ cybermind /recon example.com --tools nmap,httpx,nuclei   # specific tools only
 | 5 — Dir Discovery | ffuf → feroxbuster → gobuster (cascade) | Hidden endpoints, API paths, backup files |
 | 6 — Vuln Scanning | katana, nuclei, nikto | CVEs, misconfigs, XSS, SQLi, SSRF, exposures |
 
-**Power commands used:**
-- `whois -v target` → verbose, all RIR chains
-- `theHarvester -d target -l 5000 -b all --dns-tls` → all sources, 5k limit
-- `subfinder -d target -all -t 500` → all passive sources, 500 threads
-- `reconftw -d target -s` → full subdomain meta-pipeline (passive+active+brute+permutations+cert transparency)
-- `rustscan --ulimit 10000 -b 2000 -- -sS -sV -sC -T4` → all 65535 ports
-- `nmap -p- --min-rate 10000 --script 12-scripts -O` → deep service scan
-- `httpx -threads 500 -tech-detect -tls-probe -csp-probe -cdn` → full fingerprint
-- `nuclei -c 500 -rl 100 -tags cve,xss,sqli,ssrf,lfi,rce,xxe,idor,misconfig,exposure,takeover`
-
-**Adaptive behavior:**
-- Port 443/8443 found → tlsx auto-queued for TLS fingerprinting
-- WAF detected → Phase 5 rate-limited to 10 req/s, nuclei excludes aggressive templates
-- No open ports after Phase 3 → Phases 4/5/6 skipped
-- IP target → domain-only tools skipped automatically
-- Empty output → fallback commands tried automatically (tool exhaustion)
-
 After recon completes, CyberMind prompts: **"Start Hunt Mode on these results? [y/N]"**
 
 ---
 
 ## Hunt Mode — `/hunt` 🐧 Kali Linux Only
 
-6-phase vulnerability hunting pipeline. Chains directly from recon output or runs standalone. Tools auto-update before running.
+11-tool vulnerability hunting pipeline across 6 phases. Chains directly from recon output or runs standalone. Tools auto-update before running.
 
 ```bash
 cybermind /hunt example.com
@@ -132,26 +115,61 @@ cybermind /hunt example.com --tools dalfox,nuclei   # specific tools
 
 **Pipeline:**
 
-| Phase | Tool | What it does |
-|-------|------|--------------|
-| 1 — URL Collection | gau, waybackurls | Historical URLs from Wayback Machine + AlienVault OTX + CommonCrawl + URLScan |
-| 2 — Deep Crawl | katana | JS endpoints, forms, API paths (depth 10, 500 concurrency) |
-| 3 — Parameter Discovery | x8 | Hidden GET/POST parameters (IDOR/SSRF/LFI surface) |
-| 4 — XSS Hunting | dalfox | Automated XSS with WAF bypass + DOM verification |
-| 5 — Vuln Scan | nuclei | Full template coverage (1000 concurrency, all severities, all tags) |
-| 6 — Network Vulns | nmap | `--script vuln,exploit,auth,ssl-heartbleed,smb-vuln*` on known open ports |
+| Phase | Tools | What it does |
+|-------|-------|--------------|
+| 1 — URL Collection | waymore, gau, waybackurls | Historical URLs from Wayback + OTX + CommonCrawl + URLScan |
+| 2 — Deep Crawl | gospider, katana | JS endpoints, forms, API paths (depth 10, 500 concurrency) |
+| 3 — Parameter Discovery | paramspider, arjun, x8 | Hidden GET/POST parameters (IDOR/SSRF/LFI/XSS surface) |
+| 4 — XSS Hunting | xsstrike, dalfox | AI-powered WAF bypass XSS + DOM verification |
+| 5 — Vuln Scan | gf, nuclei | Pattern filtering + full template coverage (all severities) |
+| 6 — Network Vulns | nmap | `--script vuln,exploit,auth,ssl-heartbleed,smb-vuln*` |
 
-**Context chaining:**
-- Phase 1 URLs → fed into dalfox (XSS) and nuclei (vuln scan)
-- Phase 2 crawled URLs → merged with recon live URLs for deeper coverage
-- Recon WAF status → dalfox adds delay, nuclei excludes aggressive templates
-- Recon open ports → nmap scans only known ports (much faster)
-
-**AI output:** Confirmed vulnerabilities with PoCs, XSS payloads, hidden parameter analysis, CVSS scores, and a ready-to-submit bug bounty report template.
+After hunt completes, CyberMind prompts: **"Start ABHIMANYU MODE? [y/N]"**
 
 ---
 
-## reconftw Integration
+## Abhimanyu Mode — `/abhimanyu` ⚔️ 🐧 Kali Linux Only
+
+Full 6-phase exploit engine. Named after Abhimanyu from Mahabharata — enters the Chakravyuh, fights every layer. Auto-chains from hunt results or runs standalone.
+
+**Linux only.** Does not run on Windows or macOS.
+
+```bash
+cybermind /abhimanyu example.com           # full exploit (all phases)
+cybermind /abhimanyu example.com sqli      # SQLi only
+cybermind /abhimanyu example.com rce       # RCE/CMDi only
+cybermind /abhimanyu example.com auth      # Auth brute force
+cybermind /abhimanyu example.com postexploit  # Post-exploitation
+cybermind /abhimanyu example.com lateral   # Lateral movement
+cybermind /abhimanyu example.com exfil     # Exfiltration
+```
+
+**Pipeline:**
+
+| Phase | Tools | What it does |
+|-------|-------|--------------|
+| 1 — Web Exploitation | sqlmap, commix, wpscan, nikto | SQLi dump, RCE/CMDi, WordPress enum, web vulns |
+| 2 — Auth Attacks | hydra, john, hashcat | Brute force SSH/FTP/SMB/RDP, crack hashes (NTLM, MD5) |
+| 3 — CVE/Exploit Search | searchsploit, msfconsole | Known exploits for detected services, Metasploit db_nmap |
+| 4 — Post-Exploitation | linpeas, pspy, bloodhound-python | PrivEsc enum, process monitoring, AD graph collection |
+| 5 — Lateral Movement | crackmapexec, evil-winrm, impacket-secretsdump | SMB shares, WinRM access, NTLM hash dump |
+| 6 — Persistence + Exfil | curl, iodine | Exfil channel test, DNS tunneling |
+
+**Session persistence:** Results saved to `/tmp/cybermind_abhimanyu_<target>/session.json`. Next run automatically loads previous findings and continues from where it left off.
+
+**Persistence mechanisms generated:**
+- crontab reverse shell
+- systemd service backdoor
+- rc.local persistence
+- SSH authorized_keys injection
+
+**Reverse shells generated:**
+- bash, python3, php, nc_mkfifo, socat, powershell
+- msfvenom payloads (linux/windows/php)
+
+**Auto-chain:** `/recon` → `/hunt` → `/abhimanyu` — fully autonomous pipeline.
+
+---
 
 CyberMind integrates [reconftw](https://github.com/six2dez/reconftw) as a Phase 2 meta-tool. reconftw runs its own full subdomain pipeline internally — passive OSINT, active brute-force, permutations, certificate transparency, analytics, DNS records — catching everything that subfinder and amass might miss.
 
@@ -168,12 +186,12 @@ sudo ln -sf /opt/reconftw/reconftw.sh /usr/local/bin/reconftw
 ## Tool Management
 
 ```bash
-cybermind /doctor          # check all 21 tools, auto-install missing ones
+cybermind /doctor          # check all 44 tools (recon+hunt+abhimanyu), auto-install missing
 cybermind /install-tools   # install all recon + hunt tools (including reconftw)
 cybermind /tools           # quick tool status check
 ```
 
-`/doctor` is the recommended first step — it shows exactly which tools are installed and automatically installs any that are missing. It also runs automatically after `cybermind update`.
+`/doctor` checks all 44 tools across 3 modes and auto-installs any that are missing. It also runs automatically after `cybermind update`.
 
 ---
 
