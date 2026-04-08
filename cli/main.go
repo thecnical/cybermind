@@ -857,28 +857,57 @@ func saveAPIKey(key string) error {
 }
 
 // autoExecuteAICommands extracts and runs commands from AI analysis output.
+// Asks user confirmation before executing each command.
 func autoExecuteAICommands(clean string) {
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  Auto-executing exploit commands from AI analysis..."))
 	exploitTools := []string{
 		"sqlmap", "commix", "msfconsole", "hydra", "nikto", "wpscan",
 		"searchsploit", "curl", "nmap", "crackmapexec", "evil-winrm",
 		"impacket-secretsdump", "linpeas", "pspy", "bloodhound-python",
 	}
+	var cmdsFound []string
 	for _, line := range strings.Split(clean, "\n") {
 		line = strings.TrimSpace(line)
 		for _, tool := range exploitTools {
 			if strings.HasPrefix(line, tool+" ") {
-				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ Executing: " + line))
-				parts := strings.Fields(line)
-				if len(parts) > 0 {
-					cmd := exec.Command(parts[0], parts[1:]...)
-					cmd.Stdout = os.Stdout
-					cmd.Stderr = os.Stderr
-					cmd.Run()
-				}
+				cmdsFound = append(cmdsFound, line)
 				break
 			}
+		}
+	}
+	if len(cmdsFound) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+		fmt.Sprintf("  ⚔️  %d exploit commands found. Execute them? [y/N]", len(cmdsFound))))
+	for i, cmd := range cmdsFound {
+		if i >= 5 {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  ... and %d more", len(cmdsFound)-5)))
+			break
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ " + cmd))
+	}
+	fmt.Print(lipgloss.NewStyle().Foreground(red).Render("  [y/N] → "))
+
+	var answer string
+	fmt.Scanln(&answer)
+	if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Skipped. Copy commands above to run manually."))
+		return
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  Executing..."))
+	for _, line := range cmdsFound {
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ " + line))
+		parts := strings.Fields(line)
+		if len(parts) > 0 {
+			cmd := exec.Command(parts[0], parts[1:]...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Run()
 		}
 	}
 }
