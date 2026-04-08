@@ -122,6 +122,7 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /doctor") + d.Render("              → check all tools, auto-install missing"))
 		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → quick tool status check"))
 		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("       → install all recon + hunt tools"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target>") + d.Render("  → ⚔️  exploit mode (auto-exploit all vulns)"))
 		fmt.Println()
 	}
 
@@ -553,6 +554,64 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	clean := utils.StripMarkdown(analysis)
 	printResult("Hunt Analysis → "+target, clean)
 	_ = storage.AddEntry("/hunt "+target, clean)
+
+	// ── Auto-trigger Abhimanyu Mode if critical vulns found ──────────────
+	if len(result.Context.VulnsFound) > 0 || len(result.Context.XSSFound) > 0 {
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+			"  ⚔️  ABHIMANYU MODE — Critical vulnerabilities found. Auto-exploiting..."))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+			"  Entering the Chakravyuh. No retreat."))
+		fmt.Println()
+
+		abhimanyuPayload := map[string]interface{}{
+			"target_type":   ctx.TargetType,
+			"open_ports":    openPorts,
+			"live_urls":     payload.XSSFound, // reuse available slice
+			"xss_found":     xssFound,
+			"vulns_found":   vulnsFound,
+			"params_found":  paramsFound,
+			"waf_detected":  ctx.WAFDetected,
+			"waf_vendor":    ctx.WAFVendor,
+			"hunt_findings": findings,
+		}
+
+		exploit, exploitErr := api.SendAbhimanyu(target, "all", abhimanyuPayload)
+		if exploitErr == nil {
+			cleanExploit := utils.StripMarkdown(exploit)
+			printResult("⚔️  ABHIMANYU — Exploit Report → "+target, cleanExploit)
+			_ = storage.AddEntry("/abhimanyu "+target, cleanExploit)
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				"  ⚡ Abhimanyu mode failed: " + exploitErr.Error()))
+		}
+	}
+}
+
+// runAbhimanyu runs standalone Abhimanyu exploit mode
+func runAbhimanyu(target, vulnType string) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  ABHIMANYU MODE — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("  Entering the Chakravyuh. Fighting every layer. No retreat."))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	payload := map[string]interface{}{
+		"target":      target,
+		"vuln_type":   vulnType,
+		"target_type": "domain",
+	}
+
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to Abhimanyu exploit engine..."))
+	analysis, err := api.SendAbhimanyu(target, vulnType, payload)
+	if err != nil {
+		printError("Abhimanyu mode failed: " + err.Error())
+		return
+	}
+
+	clean := utils.StripMarkdown(analysis)
+	printResult("⚔️  ABHIMANYU Exploit Report → "+target, clean)
+	_ = storage.AddEntry("/abhimanyu "+target, clean)
 }
 
 // installPythonPipTool installs a Python tool via pip3.
@@ -1455,6 +1514,33 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  Run: cybermind /doctor  to retry failed tools"))
 		}
 		fmt.Println()
+
+	case "/abhimanyu":
+		// Abhimanyu Mode — standalone exploit engine
+		if runtime.GOOS != "linux" {
+			printError("Abhimanyu Mode is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /abhimanyu <target> [vuln-type]")
+			printError("Example: cybermind /abhimanyu example.com all")
+			printError("Example: cybermind /abhimanyu example.com sqli")
+			printError("Vuln types: all, xss, sqli, ssrf, lfi, rce, cmdi, auth, network")
+			os.Exit(1)
+		}
+		abhimanyuTarget := args[1]
+		abhimanyuVuln := "all"
+		if len(args) >= 3 {
+			abhimanyuVuln = args[2]
+		}
+		if err := recon.ValidateTarget(abhimanyuTarget); err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		runAbhimanyu(abhimanyuTarget, abhimanyuVuln)
 
 	case "update":
 		// Self-update: git pull + rebuild + reinstall

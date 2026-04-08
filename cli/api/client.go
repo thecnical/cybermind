@@ -177,6 +177,13 @@ func SendPayload(os_, arch, lhost, lport, format string) (string, error) {
 	})
 }
 
+// SendAbhimanyu sends findings to Abhimanyu exploit engine
+func SendAbhimanyu(target, vulnType string, payload map[string]interface{}) (string, error) {
+	payload["target"] = target
+	payload["vuln_type"] = vulnType
+	return post("/abhimanyu", payload)
+}
+
 // SendToolHelp — tool usage guide
 func SendToolHelp(tool, task string) (string, error) {
 	return post("/tools/help", map[string]string{"tool": tool, "task": task})
