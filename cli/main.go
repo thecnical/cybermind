@@ -32,18 +32,28 @@ var (
 	yellow  = lipgloss.Color("#FFD700")
 )
 
-// getLocalIP returns the local network IP
+// getLocalIP returns the local network IP, skipping link-local (APIPA) addresses
 func getLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "unknown"
 	}
+	var fallback string
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
+				ip := ipnet.IP.String()
+				// Skip APIPA link-local addresses (169.254.x.x)
+				if strings.HasPrefix(ip, "169.254.") {
+					fallback = ip // keep as fallback only
+					continue
+				}
+				return ip
 			}
 		}
+	}
+	if fallback != "" {
+		return fallback
 	}
 	return "unknown"
 }

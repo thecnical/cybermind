@@ -116,7 +116,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wakeMsg:
 		if !msg.ok {
-			m.errMsg = "Cannot reach backend — check internet connection"
+			// Soft warning — don't block the user. Backend may still respond to actual requests.
+			// Render cold starts can take 30-90s; the first real request will wake it.
+			m.errMsg = "Backend waking up — send a message to connect"
 		}
 		m.state = stateInput
 		m.input.Focus()
@@ -175,8 +177,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case apiResponseMsg:
 		if msg.err != nil {
 			m.state = stateInput
-			m.errMsg = msg.err.Error()
-			m.input.Focus() // BUG FIX: ensure focus restored on error
+			errStr := msg.err.Error()
+			// Make connection errors more helpful
+			if strings.Contains(errStr, "cannot reach") || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no such host") {
+				m.errMsg = "Backend offline or waking up — wait 30s and try again (Render free tier cold start)"
+			} else {
+				m.errMsg = errStr
+			}
+			m.input.Focus()
 			return m, textinput.Blink
 		}
 		m.fullResponse = msg.response

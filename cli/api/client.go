@@ -42,15 +42,21 @@ type promptResponse struct {
 	Error    string `json:"error"`
 }
 
-// WakeUp pings /health to wake Render from sleep
+// WakeUp pings /health to wake Render from sleep.
+// Tries up to 3 times with increasing timeouts to handle cold starts.
 func WakeUp() bool {
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Get(getBaseURL() + "/health")
-	if err != nil {
-		return false
+	timeouts := []time.Duration{15 * time.Second, 30 * time.Second, 60 * time.Second}
+	for _, timeout := range timeouts {
+		client := &http.Client{Timeout: timeout}
+		resp, err := client.Get(getBaseURL() + "/health")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return true
+			}
+		}
 	}
-	defer resp.Body.Close()
-	return resp.StatusCode == 200
+	return false
 }
 
 // GetPublicIP fetches the public IP of the machine
