@@ -82,7 +82,7 @@ func post(endpoint string, body interface{}) (string, error) {
 
 	resp, err := httpClient.Post(getBaseURL()+endpoint, "application/json", bytes.NewBuffer(payload))
 	if err != nil {
-		return "", fmt.Errorf("cannot reach CyberMind backend — check your internet connection")
+		return "", fmt.Errorf("backend offline — wait 30s and retry (Render cold start)")
 	}
 	defer resp.Body.Close()
 
@@ -91,14 +91,29 @@ func post(endpoint string, body interface{}) (string, error) {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
+	// Handle non-JSON responses (Render error pages, 502/503 HTML, etc.)
+	if len(raw) == 0 {
+		return "", fmt.Errorf("empty response from backend (status %d) — retry in 30s", resp.StatusCode)
+	}
+	if raw[0] != '{' && raw[0] != '[' {
+		// Not JSON — backend returned HTML error page or plain text
+		preview := string(raw)
+		if len(preview) > 120 {
+			preview = preview[:120]
+		}
+		return "", fmt.Errorf("backend returned non-JSON (status %d) — server may be starting up, retry in 30s", resp.StatusCode)
+	}
+
 	var result promptResponse
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", fmt.Errorf("unexpected response from backend: %w", err)
+		return "", fmt.Errorf("malformed response from backend (status %d) — retry in 30s", resp.StatusCode)
 	}
 	if !result.Success {
+		if result.Error == "" {
+			return "", fmt.Errorf("backend error (status %d) — retry in 30s", resp.StatusCode)
+		}
 		return "", fmt.Errorf("%s", result.Error)
 	}
-	// Return analysis if present, otherwise response
 	if result.Analysis != "" {
 		return result.Analysis, nil
 	}
