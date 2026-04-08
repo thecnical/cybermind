@@ -19,7 +19,11 @@ func getBaseURL() string {
 	return defaultBackendURL
 }
 
-var httpClient = &http.Client{Timeout: 200 * time.Second} // 200s — backend AI timeout is 180s
+// httpClient for actual AI requests — long timeout because AI can take 60-180s
+var httpClient = &http.Client{Timeout: 200 * time.Second}
+
+// fastClient for health/ping checks — short timeout
+var fastClient = &http.Client{Timeout: 8 * time.Second}
 
 // Message for conversation history
 type Message struct {
@@ -42,21 +46,116 @@ type promptResponse struct {
 	Error    string `json:"error"`
 }
 
-// WakeUp pings /health to wake Render from sleep.
-// Tries up to 3 times with increasing timeouts to handle cold starts.
+// WakeUp pings /ping to check if backend is alive.
+// Returns true immediately if alive, false if unreachable after quick check.
+// Does NOT block — the UI shows a soft warning and lets user type anyway.
 func WakeUp() bool {
-	timeouts := []time.Duration{15 * time.Second, 30 * time.Second, 60 * time.Second}
-	for _, timeout := range timeouts {
-		client := &http.Client{Timeout: timeout}
-		resp, err := client.Get(getBaseURL() + "/health")
+	resp, err := fastClient.Get(getBaseURL() + "/ping")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
+}
+
+// waitForBackend blocks until the backend responds or maxWait is exceeded.
+// Used internally before sending actual requests.
+// Returns nil if backend is up, error if it never came up.
+func waitForBackend(maxWait time.Duration) error {
+	deadline := time.Now().Add(maxWait)
+	// Try every 3 seconds
+	for time.Now().Before(deadline) {
+		resp, err := fastClient.Get(getBaseURL() + "/ping")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
-				return true
+				return nil
 			}
 		}
+		time.Sleep(3 * time.Second)
 	}
-	return false
+	return fmt.Errorf("backend did not respond within %s", maxWait)
+}
+
+// post sends a JSON request and returns the AI response string.
+// If the backend is sleeping (521/502/non-JSON), it waits up to 90s for it to wake,
+// then retries automatically — transparent to the user.
+func post(endpoint string, body interface{}) (string, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	// Try up to 3 times with wake-wait between attempts
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		result, err := doPost(endpoint, payload)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		// If it's a backend-down error, wait for it to wake then retry
+		if isBackendDown(err) && attempt < 3 {
+			// Wait up to 90s for backend to come up
+			if waitErr := waitForBackend(90 * time.Second); waitErr != nil {
+				// Backend didn't wake — return clear message
+				return "", fmt.Errorf("backend is starting up (Render cold start). Please wait 30-60s and try again")
+			}
+			// Backend is up now — retry immediately
+			continue
+		}
+		// Non-recoverable error — return immediately
+		break
+	}
+	return "", lastErr
+}
+
+// doPost performs a single HTTP POST and parses the JSON response.
+func doPost(endpoint string, payload []byte) (string, error) {
+	resp, err := httpClient.Post(
+		getBaseURL()+endpoint,
+		"application/json",
+		bytes.NewBuffer(payload),
+	)
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: cannot connect — %s", err.Error())
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Non-JSON response = backend is starting up or Cloudflare error page
+	if len(raw) == 0 || raw[0] != '{' {
+		return "", fmt.Errorf("_backend_down: status %d — server starting up", resp.StatusCode)
+	}
+
+	var result promptResponse
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("_backend_down: malformed response (status %d)", resp.StatusCode)
+	}
+	if !result.Success {
+		if result.Error == "" {
+			return "", fmt.Errorf("backend error (status %d)", resp.StatusCode)
+		}
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	if result.Analysis != "" {
+		return result.Analysis, nil
+	}
+	return result.Response, nil
+}
+
+// isBackendDown returns true if the error indicates the backend is down/starting
+func isBackendDown(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return len(msg) > 13 && msg[:13] == "_backend_down"
 }
 
 // GetPublicIP fetches the public IP of the machine
@@ -72,52 +171,6 @@ func GetPublicIP() string {
 		return "unknown"
 	}
 	return string(body)
-}
-
-func post(endpoint string, body interface{}) (string, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return "", fmt.Errorf("failed to encode request: %w", err)
-	}
-
-	resp, err := httpClient.Post(getBaseURL()+endpoint, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		return "", fmt.Errorf("backend offline — wait 30s and retry (Render cold start)")
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Handle non-JSON responses (Render error pages, 502/503 HTML, etc.)
-	if len(raw) == 0 {
-		return "", fmt.Errorf("empty response from backend (status %d) — retry in 30s", resp.StatusCode)
-	}
-	if raw[0] != '{' && raw[0] != '[' {
-		// Not JSON — backend returned HTML error page or plain text
-		preview := string(raw)
-		if len(preview) > 120 {
-			preview = preview[:120]
-		}
-		return "", fmt.Errorf("backend returned non-JSON (status %d) — server may be starting up, retry in 30s", resp.StatusCode)
-	}
-
-	var result promptResponse
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", fmt.Errorf("malformed response from backend (status %d) — retry in 30s", resp.StatusCode)
-	}
-	if !result.Success {
-		if result.Error == "" {
-			return "", fmt.Errorf("backend error (status %d) — retry in 30s", resp.StatusCode)
-		}
-		return "", fmt.Errorf("%s", result.Error)
-	}
-	if result.Analysis != "" {
-		return result.Analysis, nil
-	}
-	return result.Response, nil
 }
 
 // SendChat sends prompt with conversation history

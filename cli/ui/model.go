@@ -116,9 +116,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wakeMsg:
 		if !msg.ok {
-			// Soft warning — don't block the user. Backend may still respond to actual requests.
-			// Render cold starts can take 30-90s; the first real request will wake it.
-			m.errMsg = "Backend waking up — send a message to connect"
+			// Backend is sleeping (Render cold start) — don't show error.
+			// The keepalive on the backend prevents this after first deploy,
+			// but on first cold start it can take 30-60s.
+			// User can still type — post() will auto-wait and retry.
+			m.errMsg = "⟳ Backend waking up — your message will send automatically once connected"
 		}
 		m.state = stateInput
 		m.input.Focus()
@@ -178,9 +180,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.state = stateInput
 			errStr := msg.err.Error()
-			// Make connection errors more helpful
-			if strings.Contains(errStr, "cannot reach") || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no such host") {
-				m.errMsg = "Backend offline or waking up — wait 30s and try again (Render free tier cold start)"
+			// Backend cold start — clear message
+			if strings.Contains(errStr, "starting up") || strings.Contains(errStr, "cold start") {
+				m.errMsg = "⟳ Backend is starting up (30-60s). Your message was sent — please resend once connected"
+			} else if strings.Contains(errStr, "cannot connect") || strings.Contains(errStr, "backend_down") {
+				m.errMsg = "⟳ Connecting to backend... please resend your message"
 			} else {
 				m.errMsg = errStr
 			}
