@@ -158,6 +158,9 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind --key <key>") + d.Render("           → save API key"))
 	fmt.Println(g.Render("  cybermind whoami") + d.Render("                → show current key + plan"))
 	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  SYSTEM:"))
+	fmt.Println(g.Render("  cybermind uninstall") + d.Render("             → remove CyberMind from this system"))
+	fmt.Println()
 }
 
 func printResult(label, result string) {
@@ -839,6 +842,78 @@ func printAbhimanyuSummary(results []abhimanyu.ExploitResult, ctx *abhimanyu.Abh
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
 			"  🐚 Shell obtained: " + ctx.ShellType))
 	}
+	fmt.Println()
+}
+
+// runUninstall removes CyberMind CLI from the system — works on Linux, macOS, Windows.
+func runUninstall() {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚠  Uninstall CyberMind CLI"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  This will remove the binary and your local config/history."))
+	fmt.Print(lipgloss.NewStyle().Foreground(red).Render("  Are you sure? [y/N] → "))
+
+	var answer string
+	fmt.Scanln(&answer)
+	if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Cancelled."))
+		return
+	}
+
+	homedir, _ := os.UserHomeDir()
+	configDir := homedir + "/.cybermind"
+
+	// 1. Remove config + history
+	if err := os.RemoveAll(configDir); err == nil {
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed ~/.cybermind (config + history)"))
+	}
+
+	// 2. Remove binary based on OS
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		locations := []string{"/usr/local/bin/cybermind", "/usr/bin/cybermind"}
+		removed := false
+		for _, loc := range locations {
+			cmd := exec.Command("sudo", "rm", "-f", loc)
+			if err := cmd.Run(); err == nil {
+				if _, statErr := os.Stat(loc); os.IsNotExist(statErr) {
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + loc))
+					removed = true
+					break
+				}
+			}
+		}
+		if !removed {
+			// Try without sudo (user install)
+			for _, loc := range locations {
+				os.Remove(loc)
+			}
+		}
+		// Also remove from current dir if exists
+		if exe, err := os.Executable(); err == nil {
+			os.Remove(exe)
+		}
+
+	case "windows":
+		// Remove from System32 and common locations
+		winLocations := []string{
+			`C:\Windows\System32\cybermind.exe`,
+			`C:\Windows\cybermind.exe`,
+		}
+		for _, loc := range winLocations {
+			if err := os.Remove(loc); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + loc))
+			}
+		}
+		// Remove config from USERPROFILE
+		winConfig := os.Getenv("USERPROFILE") + `\.cybermind`
+		if err := os.RemoveAll(winConfig); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + winConfig))
+		}
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ✓ CyberMind CLI uninstalled."))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  To reinstall: curl -sL https://cybermind.thecnical.dev/install.sh | bash"))
 	fmt.Println()
 }
 
@@ -2175,6 +2250,9 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Chat history cleared."))
+
+	case "uninstall", "/uninstall":
+		runUninstall()
 
 	case "scan":
 		if len(args) < 2 {
