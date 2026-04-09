@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,6 +68,22 @@ func getDeviceOS() string {
 	default:
 		return "unknown"
 	}
+}
+
+// getDeviceID returns a stable, privacy-preserving device fingerprint.
+// Computed as SHA-256(user_id + platform + hostname) — no PII.
+// Sent as X-Device-ID header so the backend can track device limits.
+func getDeviceID() string {
+	hostname, _ := os.Hostname()
+	key := getAPIKey()
+	// Use first 16 chars of key as user identifier (not the full key)
+	keyPrefix := ""
+	if len(key) > 16 {
+		keyPrefix = key[:16]
+	}
+	raw := fmt.Sprintf("%s:%s:%s:%s", keyPrefix, runtime.GOOS, runtime.GOARCH, hostname)
+	h := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(h[:16]) // 32-char hex = 128-bit fingerprint
 }
 
 // isValidKey checks if a key has the correct prefix (both old and new format)
@@ -196,6 +214,8 @@ func doPost(endpoint string, payload []byte) (string, error) {
 	}
 	// Send device OS info so AI can personalize responses
 	req.Header.Set("X-Device-OS", getDeviceOS())
+	// Send device fingerprint for device limit tracking
+	req.Header.Set("X-Device-ID", getDeviceID())
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

@@ -698,8 +698,10 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 		printResult("⚔️  ABHIMANYU Exploit Report → "+target, cleanExploit)
 		_ = storage.AddEntry("/abhimanyu "+target, cleanExploit)
 
-		// Auto-execute AI-suggested commands
-		autoExecuteAICommands(cleanExploit)
+		// FIX: autoExecuteAICommands REMOVED — AI-controlled shell execution is an RCE vector
+		// Commands are displayed for manual review only
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+			"  Copy any commands above and run them manually in your terminal."))
 	} else {
 		printError("Abhimanyu AI failed: " + exploitErr.Error())
 		// Print raw findings anyway
@@ -805,8 +807,10 @@ func runAbhimanyu(target, vulnType string) {
 	printResult("⚔️  ABHIMANYU Exploit Report → "+target, clean)
 	_ = storage.AddEntry("/abhimanyu "+target, clean)
 
-	// Auto-execute AI-suggested commands
-	autoExecuteAICommands(clean)
+	// FIX: autoExecuteAICommands REMOVED — AI-controlled shell execution is an RCE vector
+	// Commands are displayed for manual review only
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		"  Copy any commands above and run them manually in your terminal."))
 
 	// Show session info for next run
 	fmt.Println()
@@ -931,62 +935,6 @@ func saveAPIKey(key string) error {
 	data := fmt.Sprintf(`{"key":"%s"}`, key)
 	// 0600 — only owner can read/write the config file
 	return os.WriteFile(dir+"/config.json", []byte(data), 0600)
-}
-
-// autoExecuteAICommands extracts and runs commands from AI analysis output.
-// Asks user confirmation before executing each command.
-func autoExecuteAICommands(clean string) {
-	exploitTools := []string{
-		"sqlmap", "commix", "msfconsole", "hydra", "nikto", "wpscan",
-		"searchsploit", "curl", "nmap", "crackmapexec", "evil-winrm",
-		"impacket-secretsdump", "linpeas", "pspy", "bloodhound-python",
-	}
-	var cmdsFound []string
-	for _, line := range strings.Split(clean, "\n") {
-		line = strings.TrimSpace(line)
-		for _, tool := range exploitTools {
-			if strings.HasPrefix(line, tool+" ") {
-				cmdsFound = append(cmdsFound, line)
-				break
-			}
-		}
-	}
-	if len(cmdsFound) == 0 {
-		return
-	}
-
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
-		fmt.Sprintf("  ⚔️  %d exploit commands found. Execute them? [y/N]", len(cmdsFound))))
-	for i, cmd := range cmdsFound {
-		if i >= 5 {
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				fmt.Sprintf("  ... and %d more", len(cmdsFound)-5)))
-			break
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ " + cmd))
-	}
-	fmt.Print(lipgloss.NewStyle().Foreground(red).Render("  [y/N] → "))
-
-	var answer string
-	fmt.Scanln(&answer)
-	if strings.ToLower(strings.TrimSpace(answer)) != "y" {
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Skipped. Copy commands above to run manually."))
-		return
-	}
-
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  Executing..."))
-	for _, line := range cmdsFound {
-		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ " + line))
-		parts := strings.Fields(line)
-		if len(parts) > 0 {
-			cmd := exec.Command(parts[0], parts[1:]...)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Run()
-		}
-	}
 }
 
 // installPythonPipTool installs a Python tool via pipx (Kali 2024.4+) with pip3 fallback.
