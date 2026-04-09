@@ -79,11 +79,19 @@ func NewModel(localIP string) Model {
 
 	contextMsgs := loadHistoryAsContext(5)
 
+	// Start in key prompt mode if no key is set — skip waking backend
+	initialState := stateWaking
+	if api.GetAPIKey() == "" {
+		initialState = stateKeyPrompt
+		ti.Blur()
+		ki.Focus()
+	}
+
 	return Model{
 		input:           ti,
 		keyInput:        ki,
 		spinner:         sp,
-		state:           stateWaking,
+		state:           initialState,
 		width:           80,
 		height:          24,
 		contextMessages: contextMsgs,
@@ -110,6 +118,10 @@ func loadHistoryAsContext(n int) []api.Message {
 }
 
 func (m Model) Init() tea.Cmd {
+	// If no key set, start in key prompt — don't wake backend yet
+	if m.state == stateKeyPrompt {
+		return textinput.Blink
+	}
 	return tea.Batch(m.spinner.Tick, wakeBackend())
 }
 
@@ -145,12 +157,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 
 	case keySavedMsg:
-		m.infoMsg = "✓ API key saved: " + msg.key[:min(12, len(msg.key))] + strings.Repeat("•", max(0, len(msg.key)-12))
+		m.infoMsg = "✓ Key saved! Connecting to CyberMind..."
 		m.errMsg = ""
-		m.state = stateInput
+		m.state = stateWaking
+		m.keyInput.SetValue("")
 		m.input.SetValue("")
-		m.input.Focus()
-		return m, textinput.Blink
+		// Now wake the backend
+		return m, tea.Batch(m.spinner.Tick, wakeBackend())
 
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {

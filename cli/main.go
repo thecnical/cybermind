@@ -1363,34 +1363,26 @@ func main() {
 	args := os.Args[1:]
 
 	if len(args) == 0 {
-		// BUG FIX: Load storage BEFORE NewModel so history context works
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning: could not load history:", err)
 		}
 		printBanner()
-		// Show API key status — prompt user interactively if no key set
-		if key := api.GetAPIKey(); key == "" {
-			promptForAPIKey()
-		} else if strings.HasPrefix(key, "sk_live_cm_") {
-			// Legacy key — show migration warning
+
+		// Legacy key warning — shown before TUI launches
+		if key := api.GetAPIKey(); strings.HasPrefix(key, "sk_live_cm_") {
 			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
-				"  ⚠  Your API key is outdated (old format)."))
-			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
-				"  CyberMind has been upgraded. Please get a new key:"))
+				"  ⚠  Your API key is outdated. Please get a new one:"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-				"  1. Visit: https://cybermindcli1.vercel.app"))
+				"  1. Visit: https://cybermindcli1.vercel.app/dashboard"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-				"  2. Sign up / log in → Dashboard → Copy new key"))
+				"  2. Sign up / log in → New key → copy it"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
 				"  3. Run: cybermind --key cp_live_xxxxx"))
 			fmt.Println()
-		} else {
-			masked := key[:min(15, len(key))] + strings.Repeat("•", max(0, len(key)-15))
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
-				"  ✓ API key: " + masked))
-			fmt.Println()
 		}
-		p := tea.NewProgram(ui.NewModel(getLocalIP()))
+
+		// TUI handles key prompt automatically if no key is set
+		p := tea.NewProgram(ui.NewModel(getLocalIP()), tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)

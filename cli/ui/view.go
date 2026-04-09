@@ -63,21 +63,27 @@ func (m Model) View() string {
 		b.WriteString(renderChatArea(lines, chatAreaHeight, m.scrollOffset))
 
 	case stateKeyPrompt:
-		// Fill chat area then show key prompt
-		for i := 0; i < chatAreaHeight-5; i++ {
+		// Full-screen key setup on first launch
+		for i := 0; i < chatAreaHeight-7; i++ {
 			b.WriteString("\n")
 		}
 		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).
-			Render("  ⚠  API key required to use CyberMind CLI"))
+			Render("  ⚡ Welcome to CyberMind CLI"))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).
+			Render("  An API key is required to use CyberMind."))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
+			Render("  1. Visit  → https://cybermindcli1.vercel.app/dashboard"))
 		b.WriteString("\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
-			Render("  1. Visit: https://cybermindcli1.vercel.app/dashboard"))
+			Render("  2. Sign up / log in → click \"New key\" → copy it"))
 		b.WriteString("\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
-			Render("  2. Sign up / log in → New key → copy it"))
-		b.WriteString("\n")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
-			Render("  3. Paste below and press Enter  |  Esc to cancel"))
+			Render("  3. Paste your key below and press Enter"))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).
+			Render("  Free plan: 20 req/day  |  Pro: 200/day  |  Elite: unlimited"))
 		b.WriteString("\n")
 
 	case stateTyping, stateInput:
