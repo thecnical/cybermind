@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -849,11 +850,14 @@ func printAbhimanyuSummary(results []abhimanyu.ExploitResult, ctx *abhimanyu.Abh
 	fmt.Println()
 }
 
-// runUninstall removes CyberMind CLI from the system — works on Linux, macOS, Windows.
+// runUninstall removes CyberMind CLI fully from the system — Linux, macOS, Windows.
 func runUninstall() {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚠  Uninstall CyberMind CLI"))
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  This will remove the binary and your local config/history."))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  This will remove:"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • The cybermind binary from your system"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • ~/.cybermind/ (config, API key, chat history)"))
+	fmt.Println()
 	fmt.Print(lipgloss.NewStyle().Foreground(red).Render("  Are you sure? [y/N] → "))
 
 	var answer string
@@ -863,61 +867,130 @@ func runUninstall() {
 		return
 	}
 
-	homedir, _ := os.UserHomeDir()
-	configDir := homedir + "/.cybermind"
+	removed := 0
+	failed := 0
 
-	// 1. Remove config + history
-	if err := os.RemoveAll(configDir); err == nil {
-		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed ~/.cybermind (config + history)"))
+	tryRemove := func(path, label string) {
+		if err := os.RemoveAll(path); err == nil {
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + label))
+				removed++
+			}
+		}
 	}
 
-	// 2. Remove binary based on OS
+	tryRemoveWithSudo := func(path, label string) {
+		// Try without sudo first
+		if err := os.Remove(path); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + label))
+			removed++
+			return
+		}
+		// Try with sudo
+		if cmd := exec.Command("sudo", "rm", "-f", path); cmd.Run() == nil {
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + label + " (sudo)"))
+				removed++
+				return
+			}
+		}
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚡ Could not remove " + label + " — try: sudo rm -f " + path))
+			failed++
+		}
+	}
+
+	homedir, _ := os.UserHomeDir()
+
+	// ── 1. Remove config directory (API key + history) ────────────────────
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Removing config and history..."))
+
+	switch runtime.GOOS {
+	case "windows":
+		// Windows: config in both USERPROFILE and APPDATA
+		winPaths := []string{
+			homedir + `\.cybermind`,
+			os.Getenv("APPDATA") + `\cybermind`,
+			os.Getenv("LOCALAPPDATA") + `\cybermind`,
+		}
+		for _, p := range winPaths {
+			if p != `\.cybermind` && p != `\cybermind` {
+				tryRemove(p, p)
+			}
+		}
+	default:
+		tryRemove(homedir+"/.cybermind", "~/.cybermind")
+	}
+
+	// ── 2. Remove binary ──────────────────────────────────────────────────
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Removing binary..."))
+
 	switch runtime.GOOS {
 	case "linux", "darwin":
-		locations := []string{"/usr/local/bin/cybermind", "/usr/bin/cybermind"}
-		removed := false
-		for _, loc := range locations {
-			cmd := exec.Command("sudo", "rm", "-f", loc)
-			if err := cmd.Run(); err == nil {
-				if _, statErr := os.Stat(loc); os.IsNotExist(statErr) {
-					fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + loc))
-					removed = true
-					break
-				}
+		binLocations := []string{
+			"/usr/local/bin/cybermind",
+			"/usr/bin/cybermind",
+			homedir + "/bin/cybermind",
+			homedir + "/.local/bin/cybermind",
+			homedir + "/go/bin/cybermind",
+		}
+		for _, loc := range binLocations {
+			if _, err := os.Stat(loc); err == nil {
+				tryRemoveWithSudo(loc, loc)
 			}
 		}
-		if !removed {
-			// Try without sudo (user install)
-			for _, loc := range locations {
-				os.Remove(loc)
-			}
-		}
-		// Also remove from current dir if exists
+		// Remove the currently running binary too
 		if exe, err := os.Executable(); err == nil {
-			os.Remove(exe)
+			if exe != "" && exe != "/usr/local/bin/cybermind" && exe != "/usr/bin/cybermind" {
+				tryRemoveWithSudo(exe, exe)
+			}
 		}
 
 	case "windows":
-		// Remove from System32 and common locations
-		winLocations := []string{
+		// Windows: check PATH locations + common install dirs
+		winBinLocations := []string{
 			`C:\Windows\System32\cybermind.exe`,
 			`C:\Windows\cybermind.exe`,
+			homedir + `\AppData\Local\Microsoft\WindowsApps\cybermind.exe`,
+			homedir + `\AppData\Local\Programs\cybermind\cybermind.exe`,
+			`C:\Program Files\cybermind\cybermind.exe`,
+			`C:\Program Files (x86)\cybermind\cybermind.exe`,
 		}
-		for _, loc := range winLocations {
-			if err := os.Remove(loc); err == nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + loc))
+		// Also check where the current exe is
+		if exe, err := os.Executable(); err == nil && exe != "" {
+			winBinLocations = append(winBinLocations, exe)
+		}
+		for _, loc := range winBinLocations {
+			if _, err := os.Stat(loc); err == nil {
+				tryRemove(loc, loc)
+				// Also remove parent dir if it's a dedicated install dir
+				if strings.Contains(loc, `Programs\cybermind`) || strings.Contains(loc, `Program Files\cybermind`) {
+					tryRemove(filepath.Dir(loc), filepath.Dir(loc))
+				}
 			}
 		}
-		// Remove config from USERPROFILE
-		winConfig := os.Getenv("USERPROFILE") + `\.cybermind`
-		if err := os.RemoveAll(winConfig); err == nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed " + winConfig))
+		// Remove from PATH via PowerShell
+		psCmd := exec.Command("powershell", "-NoProfile", "-Command",
+			`$p = [Environment]::GetEnvironmentVariable('PATH','User'); `+
+				`$p = ($p -split ';' | Where-Object { $_ -notmatch 'cybermind' }) -join ';'; `+
+				`[Environment]::SetEnvironmentVariable('PATH', $p, 'User')`)
+		if psCmd.Run() == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed cybermind from user PATH"))
 		}
 	}
 
+	// ── 3. Summary ────────────────────────────────────────────────────────
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ✓ CyberMind CLI uninstalled."))
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  To reinstall: curl -sL https://cybermind.thecnical.dev/install.sh | bash"))
+	if failed == 0 {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
+			fmt.Sprintf("  ✓ CyberMind CLI fully uninstalled (%d items removed).", removed)))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
+			fmt.Sprintf("  ⚡ Uninstall complete (%d removed, %d need manual removal — see above).", removed, failed)))
+	}
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		"  To reinstall: curl -sL https://cybermindcli1.vercel.app/install.sh | bash"))
 	fmt.Println()
 }
 
@@ -1233,7 +1306,7 @@ func promptForAPIKey() string {
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(
 		"  To use CyberMind CLI you need a free API key."))
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-		"  1. Visit:  https://cybermind.thecnical.dev/dashboard"))
+		"  1. Visit:  https://cybermindcli1.vercel.app/dashboard"))
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
 		"  2. Sign up / log in → click \"New key\" → copy the key"))
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
@@ -1258,7 +1331,7 @@ func promptForAPIKey() string {
 		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
 			"  ✗ Invalid key format. Key must start with cp_live_"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-			"  Get your key at: https://cybermind.thecnical.dev/dashboard"))
+			"  Get your key at: https://cybermindcli1.vercel.app/dashboard"))
 		fmt.Println()
 		return ""
 	}
@@ -1305,7 +1378,7 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
 				"  CyberMind has been upgraded. Please get a new key:"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-				"  1. Visit: https://cybermind.thecnical.dev"))
+				"  1. Visit: https://cybermindcli1.vercel.app"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
 				"  2. Sign up / log in → Dashboard → Copy new key"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
@@ -1368,7 +1441,7 @@ func main() {
 		// Validate key format before saving
 		if !strings.HasPrefix(key, "cp_live_") && !strings.HasPrefix(key, "sk_live_cm_") {
 			printError("Invalid key format. Key must start with cp_live_")
-			printError("Get your key at: https://cybermind.thecnical.dev/dashboard")
+			printError("Get your key at: https://cybermindcli1.vercel.app/dashboard")
 			os.Exit(1)
 		}
 		if len(key) < 16 {
@@ -1387,7 +1460,7 @@ func main() {
 		// Show current key and plan
 		key := api.GetAPIKey()
 		if key == "" {
-			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  No API key set. Get yours at https://cybermind.thecnical.dev/dashboard"))
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  No API key set. Get yours at https://cybermindcli1.vercel.app/dashboard"))
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Set key: cybermind --key cp_live_xxxxx"))
 		} else {
 			masked := key[:min(12, len(key))] + strings.Repeat("•", max(0, len(key)-12))
