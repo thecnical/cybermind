@@ -16,17 +16,18 @@ func getStoragePath() (string, error) {
 	return filepath.Join(dir, "history.json"), nil
 }
 
-// CreateDirectoryIfNotExists ensures ~/.cybermind/ exists
+// CreateDirectoryIfNotExists ensures ~/.cybermind/ exists with secure permissions
 func CreateDirectoryIfNotExists() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 	dir := filepath.Join(home, ".cybermind")
-	return os.MkdirAll(dir, 0755)
+	// 0700 — only owner can access the directory
+	return os.MkdirAll(dir, 0700)
 }
 
-// SaveToFile writes entries to the JSON history file
+// SaveToFile writes entries to the JSON history file with secure permissions
 func SaveToFile(entries []Entry) error {
 	if err := CreateDirectoryIfNotExists(); err != nil {
 		return err
@@ -39,7 +40,8 @@ func SaveToFile(entries []Entry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	// 0600 — only owner can read/write history (contains sensitive chat data)
+	return os.WriteFile(path, data, 0600)
 }
 
 // ReadFromFile loads entries from the JSON history file

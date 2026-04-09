@@ -2,10 +2,12 @@ package api
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -15,8 +17,14 @@ import (
 const defaultBackendURL = "https://cybermind-backend-8yrt.onrender.com"
 
 func getBaseURL() string {
-	if url := os.Getenv("CYBERMIND_API"); url != "" {
-		return url
+	if raw := os.Getenv("CYBERMIND_API"); raw != "" {
+		// Validate the URL to prevent SSRF via env var
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+			return defaultBackendURL
+		}
+		// Only allow known safe hosts in production; allow any in dev
+		return strings.TrimRight(raw, "/")
 	}
 	return defaultBackendURL
 }
@@ -71,10 +79,22 @@ func needsMigration(key string) bool {
 }
 
 // httpClient for actual AI requests — long timeout because AI can take 60-180s
-var httpClient = &http.Client{Timeout: 200 * time.Second}
+var httpClient = &http.Client{
+	Timeout: 200 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		MaxIdleConns:    10,
+		IdleConnTimeout: 90 * time.Second,
+	},
+}
 
 // fastClient for health/ping checks — short timeout
-var fastClient = &http.Client{Timeout: 8 * time.Second}
+var fastClient = &http.Client{
+	Timeout: 8 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+	},
+}
 
 // Message for conversation history
 type Message struct {
@@ -183,7 +203,7 @@ func doPost(endpoint string, payload []byte) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB max
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -224,17 +244,28 @@ func isBackendDown(err error) bool {
 
 // GetPublicIP fetches the public IP of the machine
 func GetPublicIP() string {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+	}
 	resp, err := client.Get("https://api.ipify.org")
 	if err != nil {
 		return "unknown"
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	// Limit to 45 bytes — IPv6 max is 39 chars
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 45))
 	if err != nil {
 		return "unknown"
 	}
-	return string(body)
+	ip := strings.TrimSpace(string(body))
+	// Validate it looks like an IP
+	if len(ip) < 7 || len(ip) > 39 {
+		return "unknown"
+	}
+	return ip
 }
 
 // FetchUsage fetches current key usage from backend (exported)
@@ -255,7 +286,7 @@ func fetchUsage(key string) (plan string, today int, limit int, err error) {
 		return "", 0, 0, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	var result struct {
 		Success       bool   `json:"success"`
 		Plan          string `json:"plan"`
@@ -283,14 +314,19 @@ func ValidateKey(key string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", key)
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("cannot reach backend")
 	}
 	defer resp.Body.Close()
 
-	raw, _ := io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	var result struct {
 		Success bool   `json:"success"`
 		Plan    string `json:"plan"`

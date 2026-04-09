@@ -842,17 +842,19 @@ func printAbhimanyuSummary(results []abhimanyu.ExploitResult, ctx *abhimanyu.Abh
 	fmt.Println()
 }
 
-// saveAPIKey saves the API key to ~/.cybermind/config.json
+// SaveAPIKey saves the API key to ~/.cybermind/config.json with secure permissions
 func saveAPIKey(key string) error {
 	homedir, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 	dir := homedir + "/.cybermind"
+	// 0700 — only owner can read/write/execute the directory
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 	data := fmt.Sprintf(`{"key":"%s"}`, key)
+	// 0600 — only owner can read/write the config file
 	return os.WriteFile(dir+"/config.json", []byte(data), 0600)
 }
 
@@ -1273,12 +1275,23 @@ func main() {
 			printError("Usage: cybermind --key cp_live_xxxxx")
 			os.Exit(1)
 		}
-		key := args[1]
+		key := strings.TrimSpace(args[1])
+		// Validate key format before saving
+		if !strings.HasPrefix(key, "cp_live_") && !strings.HasPrefix(key, "sk_live_cm_") {
+			printError("Invalid key format. Key must start with cp_live_")
+			printError("Get your key at: https://cybermind.thecnical.dev/dashboard")
+			os.Exit(1)
+		}
+		if len(key) < 16 {
+			printError("Key too short — looks invalid. Check your dashboard.")
+			os.Exit(1)
+		}
 		if err := saveAPIKey(key); err != nil {
 			printError("Failed to save key: " + err.Error())
 			os.Exit(1)
 		}
-		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ API key saved to ~/.cybermind/config.json"))
+		masked := key[:min(12, len(key))] + strings.Repeat("•", max(0, len(key)-12))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ API key saved: " + masked))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Key will be used automatically for all requests"))
 
 	case "whoami":
@@ -1288,7 +1301,7 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  No API key set. Get yours at https://cybermind.thecnical.dev/dashboard"))
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Set key: cybermind --key cp_live_xxxxx"))
 		} else {
-			masked := key[:15] + strings.Repeat("•", len(key)-15)
+			masked := key[:min(12, len(key))] + strings.Repeat("•", max(0, len(key)-12))
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ API key: " + masked))
 			// Validate key with backend
 			plan, err := api.ValidateKey(key)

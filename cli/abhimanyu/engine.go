@@ -223,9 +223,9 @@ func RunExploitTool(spec ToolSpec, ctx *AbhimanyuContext, progress func(Abhimany
 // Pre-installs all missing tools, then runs phase by phase.
 // Saves session to disk for continuous research.
 func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []ExploitResult {
-	// Setup session directory
+	// Setup session directory — 0700 so only owner can read exploit findings
 	ctx.SessionDir = fmt.Sprintf("/tmp/cybermind_abhimanyu_%s", sanitizeTarget(ctx.Target))
-	os.MkdirAll(ctx.SessionDir, 0755)
+	os.MkdirAll(ctx.SessionDir, 0700)
 	ctx.StartedAt = time.Now()
 	ctx.SessionID = fmt.Sprintf("%d", ctx.StartedAt.Unix())
 
@@ -363,7 +363,8 @@ func saveSession(ctx *AbhimanyuContext, findings map[string]string) {
 	if err != nil {
 		return
 	}
-	os.WriteFile(ctx.SessionDir+"/session.json", data, 0644)
+	// 0600 — session contains exploit findings, credentials, shell info
+	os.WriteFile(ctx.SessionDir+"/session.json", data, 0600)
 }
 
 // sanitizeTarget makes a target string safe for use as a directory name

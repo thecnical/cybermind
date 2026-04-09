@@ -173,6 +173,7 @@ func run(timeoutSec int, name string, args ...string) (string, error) {
 }
 
 // writeTempList writes items to a temp file, returns path or "".
+// Uses 0600 permissions — temp files may contain sensitive target data.
 func writeTempList(items []string) string {
 	if len(items) == 0 {
 		return ""
@@ -181,6 +182,8 @@ func writeTempList(items []string) string {
 	if err != nil {
 		return ""
 	}
+	// Secure permissions before writing
+	f.Chmod(0600)
 	defer f.Close()
 	for _, item := range items {
 		f.WriteString(item + "\n")

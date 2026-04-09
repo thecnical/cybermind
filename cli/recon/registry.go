@@ -713,6 +713,7 @@ func ToolNames() []string {
 }
 
 // writeTempList writes a slice of strings to a temp file and returns the path.
+// Uses 0600 permissions — temp files may contain sensitive target data.
 func writeTempList(items []string) string {
 	if len(items) == 0 {
 		return ""
@@ -721,6 +722,8 @@ func writeTempList(items []string) string {
 	if err != nil {
 		return ""
 	}
+	// Secure permissions before writing
+	f.Chmod(0600)
 	defer f.Close()
 	for _, item := range items {
 		f.WriteString(item + "\n")

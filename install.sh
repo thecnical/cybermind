@@ -28,10 +28,22 @@ echo ""
 echo -e "${YELLOW}[*] Checking Go...${NC}"
 if ! command -v go &> /dev/null; then
     echo -e "${YELLOW}[!] Go not found. Installing Go 1.22...${NC}"
-    wget -q https://go.dev/dl/go1.22.0.linux-amd64.tar.gz -O /tmp/go.tar.gz
+    GO_VERSION="1.22.0"
+    GO_TARBALL="go${GO_VERSION}.linux-amd64.tar.gz"
+    GO_URL="https://go.dev/dl/${GO_TARBALL}"
+    # SHA256 checksum from https://go.dev/dl/
+    GO_SHA256="f6c8a87aa03b92c4b0bf3d558e28ea03006eb29db78917daec5cfb6ec1046265"
+    wget -q "$GO_URL" -O "/tmp/${GO_TARBALL}"
+    # Verify checksum before installing
+    ACTUAL=$(sha256sum "/tmp/${GO_TARBALL}" | awk '{print $1}')
+    if [ "$ACTUAL" != "$GO_SHA256" ]; then
+        echo -e "${RED}[!] Go checksum mismatch — aborting for security.${NC}"
+        rm -f "/tmp/${GO_TARBALL}"
+        exit 1
+    fi
     sudo rm -rf /usr/local/go
-    sudo tar -C /usr/local -xzf /tmp/go.tar.gz
-    rm /tmp/go.tar.gz
+    sudo tar -C /usr/local -xzf "/tmp/${GO_TARBALL}"
+    rm "/tmp/${GO_TARBALL}"
     export PATH=$PATH:/usr/local/go/bin
     # Add to all shell profiles
     for profile in /root/.bashrc /root/.zshrc /home/*/.bashrc /home/*/.zshrc; do
@@ -182,6 +194,12 @@ echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}⚡ CyberMind CLI installed successfully!${NC}"
 echo ""
+
+# Secure the config directory if it exists
+if [ -d "$HOME/.cybermind" ]; then
+    chmod 700 "$HOME/.cybermind"
+    [ -f "$HOME/.cybermind/config.json" ] && chmod 600 "$HOME/.cybermind/config.json"
+fi
 echo -e "  ${CYAN}Verify:${NC}    cybermind --version"
 echo -e "  ${CYAN}AI Chat:${NC}   cybermind"
 echo -e "  ${CYAN}Recon:${NC}     cybermind /recon example.com"
