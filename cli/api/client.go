@@ -324,6 +324,20 @@ func GetAPIKey() string {
 	return getAPIKey()
 }
 
+// SaveKey saves an API key to ~/.cybermind/config.json (exported for ui package)
+func SaveKey(key string) error {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dir := homedir + "/.cybermind"
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	data := fmt.Sprintf(`{"key":"%s"}`, key)
+	return os.WriteFile(dir+"/config.json", []byte(data), 0600)
+}
+
 // ValidateKey validates an API key with the backend and returns the plan
 func ValidateKey(key string) (string, error) {
 	payload, _ := json.Marshal(map[string]string{"key": key})

@@ -15,10 +15,11 @@ import (
 type state int
 
 const (
-	stateWaking  state = iota
-	stateInput   state = iota
-	stateLoading state = iota
-	stateTyping  state = iota
+	stateWaking    state = iota
+	stateInput     state = iota
+	stateLoading   state = iota
+	stateTyping    state = iota
+	stateKeyPrompt state = iota // inline API key entry
 )
 
 // maxContextMessages — keep last 20 messages (10 exchanges) in context
@@ -31,6 +32,7 @@ type apiResponseMsg struct {
 
 type typeTickMsg struct{}
 type wakeMsg struct{ ok bool }
+type keySavedMsg struct{ key string }
 
 type ChatEntry struct {
 	Prompt   string
@@ -39,20 +41,22 @@ type ChatEntry struct {
 
 type Model struct {
 	input           textinput.Model
+	keyInput        textinput.Model // separate input for API key entry
 	spinner         spinner.Model
 	state           state
 	fullResponse    string
 	displayed       string
 	typingIndex     int
 	errMsg          string
+	infoMsg         string // green info message (e.g. key saved)
 	lastPrompt      string
 	history         []ChatEntry
 	contextMessages []api.Message
 	scrollOffset    int
 	width           int
 	height          int
-	localIP         string // passed in from main
-	lastUsage       string // "plan:free  today:3/20"
+	localIP         string
+	lastUsage       string
 }
 
 func NewModel(localIP string) Model {
@@ -62,16 +66,22 @@ func NewModel(localIP string) Model {
 	ti.Width = 60
 	ti.Focus()
 
+	ki := textinput.New()
+	ki.Placeholder = "Paste your API key (cp_live_xxxxx)..."
+	ki.CharLimit = 128
+	ki.Width = 60
+	ki.EchoMode = textinput.EchoPassword // mask the key while typing
+	ki.EchoCharacter = '•'
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = LabelStyle
 
-	// BUG FIX: storage.Load() must be called BEFORE NewModel in main.go
-	// Load last 5 exchanges as initial context
 	contextMsgs := loadHistoryAsContext(5)
 
 	return Model{
 		input:           ti,
+		keyInput:        ki,
 		spinner:         sp,
 		state:           stateWaking,
 		width:           80,
@@ -103,6 +113,15 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, wakeBackend())
 }
 
+func isAPIKeyError(errStr string) bool {
+	return strings.Contains(errStr, "API key required") ||
+		strings.Contains(errStr, "api key required") ||
+		strings.Contains(errStr, "Authorization required") ||
+		strings.Contains(errStr, "Invalid API key") ||
+		strings.Contains(errStr, "invalid api key") ||
+		strings.Contains(errStr, "key is required")
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
@@ -114,17 +133,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w = 30
 		}
 		m.input.Width = w
+		m.keyInput.Width = w
 		return m, nil
 
 	case wakeMsg:
 		if !msg.ok {
-			// Backend is sleeping (Render cold start) — don't show error.
-			// The keepalive on the backend prevents this after first deploy,
-			// but on first cold start it can take 30-60s.
-			// User can still type — post() will auto-wait and retry.
 			m.errMsg = "⟳ Backend waking up — your message will send automatically once connected"
 		}
 		m.state = stateInput
+		m.input.Focus()
+		return m, textinput.Blink
+
+	case keySavedMsg:
+		m.infoMsg = "✓ API key saved: " + msg.key[:min(12, len(msg.key))] + strings.Repeat("•", max(0, len(msg.key)-12))
+		m.errMsg = ""
+		m.state = stateInput
+		m.input.SetValue("")
 		m.input.Focus()
 		return m, textinput.Blink
 
@@ -133,12 +157,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		// ── Key prompt mode ───────────────────────────────────────────────
+		if m.state == stateKeyPrompt {
+			switch msg.Type {
+			case tea.KeyEscape:
+				// Cancel key entry — go back to input
+				m.state = stateInput
+				m.keyInput.SetValue("")
+				m.errMsg = "Key entry cancelled. Type: cybermind --key cp_live_xxxxx to set your key."
+				m.input.Focus()
+				return m, textinput.Blink
+
+			case tea.KeyEnter:
+				key := strings.TrimSpace(m.keyInput.Value())
+				if key == "" {
+					m.errMsg = "No key entered. Press Esc to cancel."
+					return m, nil
+				}
+				if !strings.HasPrefix(key, "cp_live_") && !strings.HasPrefix(key, "sk_live_cm_") {
+					m.errMsg = "Invalid key format — must start with cp_live_"
+					m.keyInput.SetValue("")
+					return m, textinput.Blink
+				}
+				if len(key) < 16 {
+					m.errMsg = "Key too short — check your dashboard."
+					m.keyInput.SetValue("")
+					return m, textinput.Blink
+				}
+				// Save key and return to chat
+				return m, saveKeyCmd(key)
+
+			default:
+				var cmd tea.Cmd
+				m.keyInput, cmd = m.keyInput.Update(msg)
+				return m, cmd
+			}
+		}
+
 		// Ctrl+L — clear chat screen
 		if msg.Type == tea.KeyCtrlL {
 			m.history = []ChatEntry{}
 			m.displayed = ""
 			m.fullResponse = ""
 			m.errMsg = ""
+			m.infoMsg = ""
 			m.scrollOffset = 0
 			return m, nil
 		}
@@ -166,6 +228,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.state = stateLoading
 				m.errMsg = ""
+				m.infoMsg = ""
 				m.displayed = ""
 				m.fullResponse = ""
 				m.lastPrompt = prompt
@@ -182,36 +245,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.state = stateInput
 			errStr := msg.err.Error()
-			// Upgrade required — legacy user without API key
+
 			if strings.HasPrefix(errStr, "UPGRADE_REQUIRED:") {
 				parts := strings.SplitN(strings.TrimPrefix(errStr, "UPGRADE_REQUIRED:"), "|", 2)
 				m.errMsg = "⚠  " + parts[0]
 				if len(parts) > 1 {
-					m.errMsg += "\n  " + parts[1]
+					m.errMsg += " | " + parts[1]
 				}
-				m.errMsg += "\n  Get your free key: https://cybermind.thecnical.dev"
-			} else if strings.Contains(errStr, "API key required") ||
-				strings.Contains(errStr, "api key required") ||
-				strings.Contains(errStr, "Authorization required") {
-				m.errMsg = "No API key set. Run: cybermind --key cp_live_xxxxx\n  Get yours free at: https://cybermind.thecnical.dev/dashboard"
-			} else if strings.Contains(errStr, "Invalid API key") ||
-				strings.Contains(errStr, "invalid api key") {
-				m.errMsg = "Invalid API key. Run: cybermind --key cp_live_xxxxx\n  Get a new key at: https://cybermind.thecnical.dev/dashboard"
+				m.errMsg += " → https://cybermindcli1.vercel.app/plans"
+			} else if isAPIKeyError(errStr) {
+				// Switch to inline key prompt mode
+				m.state = stateKeyPrompt
+				m.errMsg = ""
+				m.infoMsg = ""
+				m.keyInput.SetValue("")
+				m.keyInput.Focus()
+				return m, textinput.Blink
 			} else if strings.Contains(errStr, "starting up") || strings.Contains(errStr, "cold start") {
-				m.errMsg = "⟳ Backend is starting up (30-60s). Please resend once connected"
+				m.errMsg = "⟳ Backend starting up (30-60s) — please resend your message"
 			} else if strings.Contains(errStr, "cannot connect") || strings.Contains(errStr, "backend_down") {
-				m.errMsg = "⟳ Connecting to backend... please resend your message"
+				m.errMsg = "⟳ Connecting to backend — please resend your message"
 			} else {
 				m.errMsg = errStr
 			}
 			m.input.Focus()
 			return m, textinput.Blink
 		}
+
 		m.fullResponse = msg.response
 		m.typingIndex = 0
 		m.displayed = ""
 		m.state = stateTyping
-		m.scrollOffset = 0 // BUG FIX: reset scroll on new response
+		m.scrollOffset = 0
 		return m, typeTickCmd()
 
 	case typeTickMsg:
@@ -240,7 +305,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Response: m.fullResponse,
 		})
 
-		// Fetch and update usage in background
 		go func() {
 			if key := api.GetAPIKey(); key != "" {
 				plan, today, limit, err := api.FetchUsage(key)
@@ -255,13 +319,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}()
 
-		// BUG FIX: proper context trimming — circular buffer
 		m.contextMessages = append(m.contextMessages,
 			api.Message{Role: "user", Content: m.lastPrompt},
 			api.Message{Role: "assistant", Content: m.fullResponse},
 		)
 		if len(m.contextMessages) > maxContextMessages {
-			// Keep only the last maxContextMessages
 			m.contextMessages = m.contextMessages[len(m.contextMessages)-maxContextMessages:]
 		}
 
@@ -282,6 +344,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func wakeBackend() tea.Cmd {
 	return func() tea.Msg {
 		ok := api.WakeUp()
@@ -293,6 +369,15 @@ func fetchWithContext(prompt string, history []api.Message) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := api.SendChat(prompt, history)
 		return apiResponseMsg{response: resp, err: err}
+	}
+}
+
+func saveKeyCmd(key string) tea.Cmd {
+	return func() tea.Msg {
+		if err := api.SaveKey(key); err != nil {
+			return apiResponseMsg{err: fmt.Errorf("failed to save key: %v", err)}
+		}
+		return keySavedMsg{key: key}
 	}
 }
 

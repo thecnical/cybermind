@@ -47,7 +47,6 @@ func (m Model) View() string {
 	switch m.state {
 
 	case stateWaking:
-		// Fill chat area with empty lines then show connecting
 		for i := 0; i < chatAreaHeight-1; i++ {
 			b.WriteString("\n")
 		}
@@ -63,12 +62,37 @@ func (m Model) View() string {
 			Render(fmt.Sprintf("  %s  Thinking...", m.spinner.View())))
 		b.WriteString(renderChatArea(lines, chatAreaHeight, m.scrollOffset))
 
+	case stateKeyPrompt:
+		// Fill chat area then show key prompt
+		for i := 0; i < chatAreaHeight-5; i++ {
+			b.WriteString("\n")
+		}
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).
+			Render("  ⚠  API key required to use CyberMind CLI"))
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
+			Render("  1. Visit: https://cybermindcli1.vercel.app/dashboard"))
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
+			Render("  2. Sign up / log in → New key → copy it"))
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
+			Render("  3. Paste below and press Enter  |  Esc to cancel"))
+		b.WriteString("\n")
+
 	case stateTyping, stateInput:
 		lines := buildChatLines(m, rw)
 		b.WriteString(renderChatArea(lines, chatAreaHeight, m.scrollOffset))
 	}
 
-	// ── ERROR ────────────────────────────────────────────────
+	// ── ERROR / INFO ─────────────────────────────────────────
+	if m.infoMsg != "" {
+		b.WriteString(lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#00FF88")).
+			Render("  ✓ " + m.infoMsg))
+		b.WriteString("\n")
+	}
 	if m.errMsg != "" {
 		msg := m.errMsg
 		if len([]rune(msg)) > w-6 {
@@ -87,22 +111,34 @@ func (m Model) View() string {
 		Render("  " + strings.Repeat("─", w-4)))
 	b.WriteString("\n")
 
-	b.WriteString(lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#8A2BE2")).
-		Render("  ›"))
-	b.WriteString(" ")
-	b.WriteString(m.input.View())
-	b.WriteString("\n")
-
-	b.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#333333")).
-		Render("  Enter=send  Ctrl+C=exit  PgUp/PgDn=scroll"))
-	if m.lastUsage != "" {
-		b.WriteString("  ")
+	if m.state == stateKeyPrompt {
 		b.WriteString(lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#444444")).
-			Render("│  " + m.lastUsage))
+			Bold(true).
+			Foreground(lipgloss.Color("#FFD700")).
+			Render("  🔑"))
+		b.WriteString(" ")
+		b.WriteString(m.keyInput.View())
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#333333")).
+			Render("  Enter=save key  Esc=cancel  Key is masked while typing"))
+	} else {
+		b.WriteString(lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#8A2BE2")).
+			Render("  ›"))
+		b.WriteString(" ")
+		b.WriteString(m.input.View())
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#333333")).
+			Render("  Enter=send  Ctrl+C=exit  PgUp/PgDn=scroll"))
+		if m.lastUsage != "" {
+			b.WriteString("  ")
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#444444")).
+				Render("│  " + m.lastUsage))
+		}
 	}
 	b.WriteString("\n")
 
