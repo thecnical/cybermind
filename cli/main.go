@@ -1214,6 +1214,78 @@ func updateAllTools() {
 	fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Tools updated"))
 }
 
+// requireAPIKey checks if an API key is set; if not, prompts the user interactively.
+// Returns false if no key was set and user skipped — caller should exit.
+func requireAPIKey() bool {
+	if api.GetAPIKey() != "" {
+		return true
+	}
+	key := promptForAPIKey()
+	return key != ""
+}
+
+// promptForAPIKey interactively asks the user to paste their API key.
+// Returns the key they entered, or "" if they skipped.
+func promptForAPIKey() string {
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
+		"  ⚠  No API key found."))
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(
+		"  To use CyberMind CLI you need a free API key."))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+		"  1. Visit:  https://cybermind.thecnical.dev/dashboard"))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+		"  2. Sign up / log in → click \"New key\" → copy the key"))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+		"  3. Paste it below and press Enter"))
+	fmt.Println()
+	fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+		"  Paste your API key (or press Enter to skip): "))
+
+	var input string
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+
+	if input == "" {
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+			"  Skipped. You can set it later: cybermind --key cp_live_xxxxx"))
+		fmt.Println()
+		return ""
+	}
+
+	// Validate format
+	if !strings.HasPrefix(input, "cp_live_") && !strings.HasPrefix(input, "sk_live_cm_") {
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+			"  ✗ Invalid key format. Key must start with cp_live_"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+			"  Get your key at: https://cybermind.thecnical.dev/dashboard"))
+		fmt.Println()
+		return ""
+	}
+	if len(input) < 16 {
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+			"  ✗ Key too short — looks invalid. Check your dashboard."))
+		fmt.Println()
+		return ""
+	}
+
+	// Save it
+	if err := saveAPIKey(input); err != nil {
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+			"  ✗ Could not save key: " + err.Error()))
+		fmt.Println()
+		return ""
+	}
+
+	masked := input[:min(12, len(input))] + strings.Repeat("•", max(0, len(input)-12))
+	fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+		"  ✓ Key saved: " + masked))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		"  Key will be used automatically for all requests."))
+	fmt.Println()
+	return input
+}
+
 func main() {
 	args := os.Args[1:]
 
@@ -1223,15 +1295,9 @@ func main() {
 			fmt.Println("Warning: could not load history:", err)
 		}
 		printBanner()
-		// Show API key status — prompt user if no key set
+		// Show API key status — prompt user interactively if no key set
 		if key := api.GetAPIKey(); key == "" {
-			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
-				"  ⚠  No API key set. Running in anonymous mode (20 req/day limit)."))
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				"  Get your free key: https://cybermind.thecnical.dev/dashboard"))
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				"  Set key: cybermind --key cp_live_xxxxx"))
-			fmt.Println()
+			promptForAPIKey()
 		} else if strings.HasPrefix(key, "sk_live_cm_") {
 			// Legacy key — show migration warning
 			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
@@ -1361,6 +1427,9 @@ func main() {
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
 		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
 		// Auto-update all tools before running recon — ensures latest versions
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ⟳ Updating tools before recon..."))
 		updateAllTools()
@@ -1433,6 +1502,9 @@ func main() {
 		// Security: validate target
 		if err := recon.ValidateTarget(huntTarget); err != nil {
 			printError(err.Error())
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
 			os.Exit(1)
 		}
 		// Auto-update all tools before running hunt — ensures latest versions
@@ -2207,6 +2279,9 @@ func main() {
 			printError("Usage: cybermind scan <target> [type]")
 			os.Exit(1)
 		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
 		target := args[1]
 		scanType := "quick"
 		if len(args) >= 3 {
@@ -2225,6 +2300,9 @@ func main() {
 			printError("Usage: cybermind recon <target> [type]")
 			os.Exit(1)
 		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
 		target := args[1]
 		reconType := "passive"
 		if len(args) >= 3 {
@@ -2241,6 +2319,9 @@ func main() {
 	case "exploit":
 		if len(args) < 2 {
 			printError("Usage: cybermind exploit <vulnerability> [target]")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
 			os.Exit(1)
 		}
 		vuln := args[1]

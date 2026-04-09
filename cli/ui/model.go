@@ -190,6 +190,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg += "\n  " + parts[1]
 				}
 				m.errMsg += "\n  Get your free key: https://cybermind.thecnical.dev"
+			} else if strings.Contains(errStr, "API key required") ||
+				strings.Contains(errStr, "api key required") ||
+				strings.Contains(errStr, "Authorization required") {
+				m.errMsg = "No API key set. Run: cybermind --key cp_live_xxxxx\n  Get yours free at: https://cybermind.thecnical.dev/dashboard"
+			} else if strings.Contains(errStr, "Invalid API key") ||
+				strings.Contains(errStr, "invalid api key") {
+				m.errMsg = "Invalid API key. Run: cybermind --key cp_live_xxxxx\n  Get a new key at: https://cybermind.thecnical.dev/dashboard"
 			} else if strings.Contains(errStr, "starting up") || strings.Contains(errStr, "cold start") {
 				m.errMsg = "⟳ Backend is starting up (30-60s). Please resend once connected"
 			} else if strings.Contains(errStr, "cannot connect") || strings.Contains(errStr, "backend_down") {
