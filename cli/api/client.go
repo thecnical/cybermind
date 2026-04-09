@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -43,6 +44,20 @@ func getAPIKey() string {
 		return ""
 	}
 	return cfg.Key
+}
+
+// getDeviceOS returns the current OS for AI personalization
+func getDeviceOS() string {
+	switch runtime.GOOS {
+	case "linux":
+		return "linux"
+	case "windows":
+		return "windows"
+	case "darwin":
+		return "mac"
+	default:
+		return "unknown"
+	}
 }
 
 // isValidKey checks if a key has the correct prefix (both old and new format)
@@ -159,6 +174,8 @@ func doPost(endpoint string, payload []byte) (string, error) {
 	if key := getAPIKey(); key != "" {
 		req.Header.Set("X-API-Key", key)
 	}
+	// Send device OS info so AI can personalize responses
+	req.Header.Set("X-Device-OS", getDeviceOS())
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
