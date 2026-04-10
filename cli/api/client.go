@@ -631,6 +631,104 @@ func SendPayloadGen(os_, arch, lhost, lport, format, technique string) (string, 
 	})
 }
 
+// PlanRequest is the payload sent to /plan for OMEGA planning mode
+type PlanRequest struct {
+	Target      string            `json:"target"`
+	DNSIPs      []string          `json:"dns_ips,omitempty"`
+	Shodan      map[string]string `json:"shodan,omitempty"`
+	HTTPHeaders map[string]string `json:"http_headers,omitempty"`
+	TechStack   []string          `json:"tech_stack,omitempty"`
+	OpenPorts   []int             `json:"open_ports,omitempty"`
+	WAFDetected bool              `json:"waf_detected,omitempty"`
+	WAFVendor   string            `json:"waf_vendor,omitempty"`
+	MXRecords   []string          `json:"mx_records,omitempty"`
+	TXTRecords  []string          `json:"txt_records,omitempty"`
+	NSRecords   []string          `json:"ns_records,omitempty"`
+	RDNS        string            `json:"rdns,omitempty"`
+	OSHint      string            `json:"os_hint,omitempty"`
+}
+
+// PlanPhase represents one phase of the OMEGA attack plan
+type PlanPhase struct {
+	Phase            int               `json:"phase"`
+	Name             string            `json:"name"`
+	Goal             string            `json:"goal"`
+	EstimatedMinutes int               `json:"estimated_minutes"`
+	ToolsRun         []string          `json:"tools_run"`
+	ToolsSkip        []string          `json:"tools_skip"`
+	ToolsFocus       map[string]string `json:"tools_focus"`
+	Why              string            `json:"why"`
+	ExpectedFindings string            `json:"expected_findings"`
+}
+
+// OmegaPlan is the structured attack plan returned by /plan
+type OmegaPlan struct {
+	TargetType           string      `json:"target_type"`
+	TargetSubtype        string      `json:"target_subtype"`
+	RiskLevel            string      `json:"risk_level"`
+	WAFStrategy          string      `json:"waf_strategy"`
+	EstimatedTotalMinutes int        `json:"estimated_total_minutes"`
+	AttackVectors        []string    `json:"attack_vectors"`
+	CVEsPredetected      []string    `json:"cves_predetected"`
+	Phases               []PlanPhase `json:"phases"`
+	PriorityOrder        []int       `json:"priority_order"`
+	CustomWordlists      []string    `json:"custom_wordlists"`
+	StealthMode          bool        `json:"stealth_mode"`
+	Notes                string      `json:"notes"`
+}
+
+// SendPlan sends passive recon data to backend and gets OMEGA attack plan
+func SendPlan(req PlanRequest) (*OmegaPlan, string, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/plan", bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, "", fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, "", fmt.Errorf("_backend_down: cannot connect — %s", err.Error())
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil, "", fmt.Errorf("_backend_down: status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success    bool       `json:"success"`
+		Plan       *OmegaPlan `json:"plan"`
+		Raw        string     `json:"raw"`
+		Error      string     `json:"error"`
+		ParseError string     `json:"parse_error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, "", fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return nil, "", fmt.Errorf("%s", result.Error)
+	}
+	if result.Plan == nil {
+		// AI returned raw text instead of JSON
+		return nil, result.Raw, nil
+	}
+	return result.Plan, "", nil
+}
+
 // PostLocal sends a prompt to a local Ollama instance directly.
 // model: ollama model name (e.g. "llama3", "mistral", "codellama")
 func PostLocal(model, prompt string) (string, error) {

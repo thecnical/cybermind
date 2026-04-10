@@ -108,6 +108,7 @@ func printBanner() {
 
 	// Linux-only recon notice
 	if runtime.GOOS == "linux" {
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ OMEGA Plan Mode available    →  cybermind /plan <target>"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Auto Recon Mode available  →  cybermind /recon <target>"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Abhimanyu Mode available   →  cybermind /abhimanyu <target>"))
 	} else if runtime.GOOS == "darwin" {
@@ -136,6 +137,7 @@ func printHelp() {
 
 	if runtime.GOOS == "linux" {
 		fmt.Println(y.Render("  🐧 LINUX ONLY — AUTO RECON + HUNT:"))
+		fmt.Println(g.Render("  cybermind /plan <target>") + d.Render("         → ⚡ OMEGA planning mode (auto-doctor + deep plan + execute)"))
 		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("       → full auto recon + AI analysis"))
 		fmt.Println(g.Render("  cybermind /recon <target> --tools nmap,httpx") + d.Render(" → run specific tools only"))
 		fmt.Println(g.Render("  cybermind /hunt <target>") + d.Render("        → vulnerability hunt (XSS, params, CVEs)"))
@@ -2539,6 +2541,32 @@ func main() {
 			os.Exit(1)
 		}
 		printResult("Tool Guide → "+tool, result)
+
+	case "/plan":
+		// OMEGA Planning Mode — Linux only (requires full tool suite)
+		if runtime.GOOS != "linux" {
+			printError("OMEGA Planning Mode is only available on Linux/Kali.")
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use Kali Linux for full OMEGA pipeline"))
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /plan <target>")
+			printError("Example: cybermind /plan example.com")
+			printError("Example: cybermind /plan 192.168.1.1")
+			os.Exit(1)
+		}
+		planTarget := args[1]
+		if err := recon.ValidateTarget(planTarget); err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		runOmegaPlan(planTarget, localMode)
 
 	case "/scan":
 		// Native network scan — works on Windows, macOS, Linux
