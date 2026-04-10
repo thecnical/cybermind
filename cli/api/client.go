@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
@@ -138,9 +139,12 @@ func needsMigration(key string) bool {
 var httpClient = &http.Client{
 	Timeout: 200 * time.Second,
 	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-		MaxIdleConns:    10,
-		IdleConnTimeout: 90 * time.Second,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		MaxIdleConns:        50,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  false, // accept gzip from server
+		ForceAttemptHTTP2:   true,  // use HTTP/2 when available
 	},
 }
 
@@ -148,7 +152,10 @@ var httpClient = &http.Client{
 var fastClient = &http.Client{
 	Timeout: 8 * time.Second,
 	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		MaxIdleConns:        5,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     30 * time.Second,
 	},
 }
 
@@ -423,6 +430,85 @@ func ValidateKey(key string) (string, error) {
 // SendChat sends prompt with conversation history
 func SendChat(prompt string, history []Message) (string, error) {
 	return post("/chat", chatRequest{Prompt: prompt, Messages: history})
+}
+
+// SendChatStream sends prompt and streams tokens via SSE.
+// onToken is called for each received token. Returns full response when done.
+// Falls back to regular /chat if streaming fails.
+func SendChatStream(prompt string, history []Message, onToken func(string)) (string, error) {
+	payload, err := json.Marshal(chatRequest{Prompt: prompt, Messages: history})
+	if err != nil {
+		return SendChat(prompt, history) // fallback
+	}
+
+	req, err := http.NewRequest("POST", getBaseURL()+"/chat/stream", bytes.NewBuffer(payload))
+	if err != nil {
+		return SendChat(prompt, history)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if key := getAPIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+	req.Header.Set("X-Device-OS", getDeviceOS())
+	req.Header.Set("X-Device-ID", getDeviceID())
+
+	// Use a streaming-specific client with no timeout (stream can be long)
+	streamClient := &http.Client{
+		Transport: httpClient.Transport,
+		// No timeout — stream ends when server sends done event
+	}
+
+	resp, err := streamClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return SendChat(prompt, history) // fallback to regular
+	}
+	defer resp.Body.Close()
+
+	var fullText strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 64*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+
+		var event struct {
+			Token string `json:"token"`
+			Done  bool   `json:"done"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+		if event.Error != "" {
+			return "", fmt.Errorf("%s", event.Error)
+		}
+		if event.Done {
+			break
+		}
+		if event.Token != "" {
+			fullText.WriteString(event.Token)
+			if onToken != nil {
+				onToken(event.Token)
+			}
+		}
+	}
+
+	result := fullText.String()
+	if result == "" {
+		return SendChat(prompt, history) // fallback if stream was empty
+	}
+	return result, nil
 }
 
 // SendPrompt — simple chat without history

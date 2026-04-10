@@ -424,7 +424,215 @@ func runAutoRecon(target string, requested []string) {
 	}
 }
 
-// printHuntSummary prints a per-tool status table after hunt completes.
+// ─── OMEGA Silent Runners (plan-aware, no interactive prompts) ───────────────
+// These are used by runOmegaPlan to chain phases with context passing.
+// Unlike runAutoRecon/runHunt, they do NOT ask "start hunt?" / "start abhimanyu?"
+// They return the raw result so the caller can feed context to the next phase.
+
+// runAutoReconSilent runs the full recon pipeline without interactive prompts.
+// Returns ReconResult so the caller can extract context for hunt phase.
+func runAutoReconSilent(target string, requested []string) recon.ReconResult {
+	result := recon.RunAutoRecon(target, requested, func(status recon.ToolStatus) {
+		switch status.Kind {
+		case recon.StatusRunning:
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
+				fmt.Sprintf("  ⟳ %-16s running...", status.Tool)))
+		case recon.StatusDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				fmt.Sprintf("  ✓ %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case recon.StatusPartial:
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				fmt.Sprintf("  ⚡ %-16s partial output kept", status.Tool)))
+		case recon.StatusFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-16s failed — %s", status.Tool, status.Reason)))
+		case recon.StatusSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)))
+		case recon.StatusRetry:
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				fmt.Sprintf("  ↻ %-16s %s", status.Tool, status.Reason)))
+		}
+	})
+
+	printReconSummary(result)
+
+	if len(result.Tools) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ No recon tools produced output."))
+		return result
+	}
+
+	// Build structured payload and send to AI
+	findings := make(map[string]string)
+	for _, tr := range result.Results {
+		if tr.Tool != "combined" && tr.Output != "" {
+			findings[tr.Tool] = tr.Output
+		}
+	}
+	failedNames := make([]string, 0, len(result.Failed))
+	for _, tr := range result.Failed {
+		failedNames = append(failedNames, tr.Tool)
+	}
+	skippedNames := make([]string, 0, len(result.Skipped))
+	for _, s := range result.Skipped {
+		skippedNames = append(skippedNames, s.Tool)
+	}
+
+	var ctx recon.ReconContext
+	if result.Context != nil {
+		ctx = *result.Context
+	}
+	openPorts := ctx.OpenPorts
+	if openPorts == nil {
+		openPorts = []int{}
+	}
+	liveURLs := ctx.LiveURLs
+	if liveURLs == nil {
+		liveURLs = []string{}
+	}
+	technologies := ctx.Technologies
+	if technologies == nil {
+		technologies = []string{}
+	}
+
+	payload := api.ReconPayload{
+		Target:          target,
+		TargetType:      ctx.TargetType,
+		ToolsRun:        result.Tools,
+		ToolsFailed:     failedNames,
+		ToolsSkipped:    skippedNames,
+		Findings:        findings,
+		SubdomainsFound: len(ctx.Subdomains),
+		LiveHostsFound:  len(ctx.LiveHosts),
+		OpenPorts:       openPorts,
+		WAFDetected:     ctx.WAFDetected,
+		WAFVendor:       ctx.WAFVendor,
+		LiveURLs:        liveURLs,
+		Technologies:    technologies,
+		RawCombined:     recon.GetCombinedOutput(result),
+	}
+
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending recon to AI for analysis..."))
+	analysis, err := api.SendAnalysis(payload)
+	if err != nil {
+		printError("AI analysis failed: " + err.Error())
+	} else {
+		clean := utils.StripMarkdown(analysis)
+		printResult("Recon Analysis → "+target, clean)
+		_ = storage.AddEntry("/recon "+target, clean)
+	}
+
+	return result
+}
+
+// runHuntSilent runs the full hunt pipeline without interactive prompts.
+// reconCtx carries intelligence from the prior recon phase.
+// Returns HuntResult so the caller can extract context for abhimanyu phase.
+func runHuntSilent(target string, reconCtx *hunt.HuntContext, requested []string) hunt.HuntResult {
+	if reconCtx != nil {
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+			fmt.Sprintf("  ℹ  Using recon context: %d live URLs, %d open ports, WAF=%v",
+				len(reconCtx.LiveURLs), len(reconCtx.OpenPorts), reconCtx.WAFDetected)))
+		fmt.Println()
+	}
+
+	result := hunt.RunHunt(target, reconCtx, requested, func(status hunt.HuntStatus) {
+		switch status.Kind {
+		case hunt.HuntRunning:
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
+				fmt.Sprintf("  ⟳ %-16s running...", status.Tool)))
+		case hunt.HuntDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				fmt.Sprintf("  ✓ %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case hunt.HuntPartial:
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				fmt.Sprintf("  ⚡ %-16s partial output kept", status.Tool)))
+		case hunt.HuntFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+				fmt.Sprintf("  ✗ %-16s failed — %s", status.Tool, status.Reason)))
+		case hunt.HuntKindSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)))
+		case hunt.HuntRetry:
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+				fmt.Sprintf("  ↻ %-16s %s", status.Tool, status.Reason)))
+		}
+	})
+
+	printHuntSummary(result)
+
+	if len(result.Tools) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ No hunt tools produced output."))
+		return result
+	}
+
+	// Build structured payload and send to AI
+	findings := make(map[string]string)
+	for _, tr := range result.Results {
+		if tr.Output != "" {
+			findings[tr.Tool] = tr.Output
+		}
+	}
+	failedNames := make([]string, 0, len(result.Failed))
+	for _, tr := range result.Failed {
+		failedNames = append(failedNames, tr.Tool)
+	}
+	skippedNames := make([]string, 0, len(result.Skipped))
+	for _, s := range result.Skipped {
+		skippedNames = append(skippedNames, s.Tool)
+	}
+
+	var ctx hunt.HuntContext
+	if result.Context != nil {
+		ctx = *result.Context
+	}
+	xssFound := ctx.XSSFound
+	if xssFound == nil {
+		xssFound = []string{}
+	}
+	paramsFound := ctx.ParamsFound
+	if paramsFound == nil {
+		paramsFound = []string{}
+	}
+	vulnsFound := ctx.VulnsFound
+	if vulnsFound == nil {
+		vulnsFound = []string{}
+	}
+	openPorts := ctx.OpenPorts
+	if openPorts == nil {
+		openPorts = []int{}
+	}
+
+	payload := api.HuntPayload{
+		Target:         target,
+		TargetType:     ctx.TargetType,
+		ToolsRun:       result.Tools,
+		ToolsFailed:    failedNames,
+		ToolsSkipped:   skippedNames,
+		Findings:       findings,
+		XSSFound:       xssFound,
+		ParamsFound:    paramsFound,
+		VulnsFound:     vulnsFound,
+		HistoricalURLs: len(ctx.HistoricalURLs),
+		WAFDetected:    ctx.WAFDetected,
+		WAFVendor:      ctx.WAFVendor,
+		OpenPorts:      openPorts,
+		RawCombined:    hunt.GetHuntCombinedOutput(result),
+	}
+
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending hunt results to AI for analysis..."))
+	analysis, err := api.SendHunt(payload)
+	if err != nil {
+		printError("AI analysis failed: " + err.Error())
+	} else {
+		clean := utils.StripMarkdown(analysis)
+		printResult("Hunt Analysis → "+target, clean)
+		_ = storage.AddEntry("/hunt "+target, clean)
+	}
+
+	return result
+}
+
 func printHuntSummary(result hunt.HuntResult) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  🎯 Hunt Summary"))

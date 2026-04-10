@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cybermind-cli/api"
+	"cybermind-cli/hunt"
 	"cybermind-cli/omega"
 	"cybermind-cli/storage"
 	"cybermind-cli/utils"
@@ -733,6 +734,27 @@ func sanitizeTarget(t string) string {
 	return sb.String()
 }
 
+// buildRequestedTools returns a tool list excluding skipped tools.
+// mode: "recon" | "hunt" | "exploit" — filters by mode from omega tool list.
+// Returns nil if no skip set (run all tools).
+func buildRequestedTools(skipTools map[string]bool, mode string) []string {
+	if len(skipTools) == 0 {
+		return nil // nil = run all tools
+	}
+	// Get all tool names for this mode from omega tool list
+	allTools := omega.GetOmegaToolList()
+	var requested []string
+	for _, t := range allTools {
+		if t.Mode == mode && !skipTools[t.Name] {
+			requested = append(requested, t.Name)
+		}
+	}
+	if len(requested) == 0 {
+		return nil // fallback: run all if filter produces empty list
+	}
+	return requested
+}
+
 // Suppress unused import warnings for packages used only in some build targets
 var _ = base64.StdEncoding
 var _ = filepath.Join
@@ -743,203 +765,351 @@ var _ = runtime.GOOS
 
 // runOmegaPlan is the main entry point for /plan command
 func runOmegaPlan(target string, localMode bool) {
-fmt.Println()
-fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  ⚡ OMEGA PLANNING MODE — " + target))
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
-fmt.Println()
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  ⚡ OMEGA PLANNING MODE — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
 
-// ── STEP 1: System resource check ────────────────────────────────────
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ Checking system resources..."))
-sysRes := omega.CheckSystemResources()
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-fmt.Sprintf("  CPU: %d cores | RAM free: %dMB | Disk free: %dMB",
-sysRes.CPUCores, sysRes.RAMFreeMB, sysRes.DiskFreeMB)))
+	// ── STEP 1: System resource check ────────────────────────────────────
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ Checking system resources..."))
+	sysRes := omega.CheckSystemResources()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  CPU: %d cores | RAM free: %dMB | Disk free: %dMB",
+			sysRes.CPUCores, sysRes.RAMFreeMB, sysRes.DiskFreeMB)))
 
-if len(sysRes.Warnings) > 0 {
-for _, w := range sysRes.Warnings {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  ⚠  " + w))
-}
-fmt.Println()
-fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Continue anyway? [Y/n] → "))
-var ans string
-fmt.Scanln(&ans)
-if strings.ToLower(strings.TrimSpace(ans)) == "n" {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Cancelled."))
-return
-}
-} else {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ System resources OK"))
-}
-fmt.Println()
+	if len(sysRes.Warnings) > 0 {
+		for _, w := range sysRes.Warnings {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  ⚠  " + w))
+		}
+		fmt.Println()
+		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Continue anyway? [Y/n] → "))
+		var ans string
+		fmt.Scanln(&ans)
+		if strings.ToLower(strings.TrimSpace(ans)) == "n" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Cancelled."))
+			return
+		}
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ System resources OK"))
+	}
+	fmt.Println()
 
-// ── STEP 2: Auto-doctor — check and install all tools ────────────────
-fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🩺 OMEGA DOCTOR — Checking all tools..."))
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
-fmt.Println()
+	// ── STEP 2: Auto-doctor — check and install all tools ────────────────
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🩺 OMEGA DOCTOR — Checking all tools..."))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
 
-doctorResult := omega.RunOmegaDoctor(func(tool, status, msg string) {
-switch status {
-case "ok":
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  ✓ %-22s installed", tool)))
-case "installing":
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(fmt.Sprintf("  ⟳ %-22s installing...", tool)))
-case "installed", "installed_alt":
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  ✓ %-22s installed ✓", tool)))
-case "failed":
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(fmt.Sprintf("  ✗ %-22s failed — %s", tool, msg)))
-}
-})
+	doctorResult := omega.RunOmegaDoctor(func(tool, status, msg string) {
+		switch status {
+		case "ok":
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  ✓ %-22s installed", tool)))
+		case "installing":
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(fmt.Sprintf("  ⟳ %-22s installing...", tool)))
+		case "installed", "installed_alt":
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  ✓ %-22s installed ✓", tool)))
+		case "failed":
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(fmt.Sprintf("  ✗ %-22s failed — %s", tool, msg)))
+		}
+	})
 
-fmt.Println()
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-fmt.Sprintf("  ✓ Installed: %d/%d tools", doctorResult.InstalledOK, doctorResult.TotalTools)))
-if len(doctorResult.Missing) > 0 {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
-fmt.Sprintf("  ✗ Missing:   %s", strings.Join(doctorResult.Missing, ", "))))
-}
-fmt.Println()
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+		fmt.Sprintf("  ✓ Installed: %d/%d tools", doctorResult.InstalledOK, doctorResult.TotalTools)))
+	if len(doctorResult.Missing) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+			fmt.Sprintf("  ✗ Missing:   %s", strings.Join(doctorResult.Missing, ", "))))
+	}
+	fmt.Println()
 
-// ── STEP 3: Ask permission to start planning ──────────────────────────
-fmt.Print(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
-"  Start OMEGA planning for " + target + "? [Y/n] → "))
-var startAns string
-fmt.Scanln(&startAns)
-if strings.ToLower(strings.TrimSpace(startAns)) == "n" {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Cancelled."))
-return
-}
-fmt.Println()
+	// ── STEP 3: Ask permission to start planning ──────────────────────────
+	fmt.Print(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+		"  Start OMEGA planning for " + target + "? [Y/n] → "))
+	var startAns string
+	fmt.Scanln(&startAns)
+	if strings.ToLower(strings.TrimSpace(startAns)) == "n" {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Cancelled."))
+		return
+	}
+	fmt.Println()
 
-// ── STEP 4: Deep passive target intelligence ──────────────────────────
-fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🧠 DEEP TARGET INTELLIGENCE"))
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
-fmt.Println()
+	// ── STEP 4: Deep passive target intelligence ──────────────────────────
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🧠 DEEP TARGET INTELLIGENCE"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
 
-intel := omega.GatherTargetIntel(target, func(step, result string) {
-if result != "" {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-fmt.Sprintf("  ✓ %-18s %s", step+":", result)))
-} else {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
-fmt.Sprintf("  ⟳ %s...", step)))
-}
-})
+	intel := omega.GatherTargetIntel(target, func(step, result string) {
+		if result != "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  ✓ %-18s %s", step+":", result)))
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				fmt.Sprintf("  ⟳ %s...", step)))
+		}
+	})
 
-fmt.Println()
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
-if intel.WAFDetected {
-fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-"  ⚠  WAF DETECTED: " + intel.WAFVendor + " — stealth mode will be applied"))
-}
-if len(intel.TechStack) > 0 {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-"  Tech: " + strings.Join(intel.TechStack[:min(8, len(intel.TechStack))], ", ")))
-}
-fmt.Println()
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	if intel.WAFDetected {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+			"  ⚠  WAF DETECTED: " + intel.WAFVendor + " — stealth mode will be applied"))
+	}
+	if len(intel.TechStack) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Tech: " + strings.Join(intel.TechStack[:min(8, len(intel.TechStack))], ", ")))
+	}
+	fmt.Println()
 
-// ── STEP 5: AI generates OMEGA attack plan ────────────────────────────
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AI generating OMEGA attack plan..."))
+	// ── STEP 5: AI generates OMEGA attack plan ────────────────────────────
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AI generating OMEGA attack plan..."))
 
-// Build Shodan map
-shodanMap := make(map[string]string)
-for k, v := range intel.ShodanData {
-shodanMap[k] = v
-}
+	// Build Shodan map
+	shodanMap := make(map[string]string)
+	for k, v := range intel.ShodanData {
+		shodanMap[k] = v
+	}
 
-planReq := api.PlanRequest{
-Target:      target,
-DNSIPs:      intel.DNSIPs,
-Shodan:      shodanMap,
-HTTPHeaders: intel.HTTPHeaders,
-TechStack:   intel.TechStack,
-OpenPorts:   intel.OpenPorts,
-WAFDetected: intel.WAFDetected,
-WAFVendor:   intel.WAFVendor,
-MXRecords:   intel.MXRecords,
-TXTRecords:  intel.TXTRecords[:min(5, len(intel.TXTRecords))],
-NSRecords:   intel.NSRecords,
-RDNS:        intel.RDNS,
-OSHint:      intel.OSHint,
-}
+	planReq := api.PlanRequest{
+		Target:      target,
+		DNSIPs:      intel.DNSIPs,
+		Shodan:      shodanMap,
+		HTTPHeaders: intel.HTTPHeaders,
+		TechStack:   intel.TechStack,
+		OpenPorts:   intel.OpenPorts,
+		WAFDetected: intel.WAFDetected,
+		WAFVendor:   intel.WAFVendor,
+		MXRecords:   intel.MXRecords,
+		TXTRecords:  intel.TXTRecords[:min(5, len(intel.TXTRecords))],
+		NSRecords:   intel.NSRecords,
+		RDNS:        intel.RDNS,
+		OSHint:      intel.OSHint,
+	}
 
-var plan *api.OmegaPlan
-var rawPlan string
-var planErr error
+	var plan *api.OmegaPlan
+	var rawPlan string
+	var planErr error
 
-if localMode {
-// Local mode: generate a basic plan without AI
-rawPlan = fmt.Sprintf("OMEGA Plan for %s\n\nTarget Intel:\n- IPs: %s\n- Tech: %s\n- WAF: %v (%s)\n- Ports: %v\n\nRecommended: Run /recon then /hunt then /abhimanyu",
-target, strings.Join(intel.DNSIPs, ", "), strings.Join(intel.TechStack, ", "),
-intel.WAFDetected, intel.WAFVendor, intel.OpenPorts)
-} else {
-plan, rawPlan, planErr = api.SendPlan(planReq)
-if planErr != nil {
-printError("Plan generation failed: " + planErr.Error())
-return
-}
-}
+	if localMode {
+		// Local mode: generate a basic plan without AI
+		rawPlan = fmt.Sprintf("OMEGA Plan for %s\n\nTarget Intel:\n- IPs: %s\n- Tech: %s\n- WAF: %v (%s)\n- Ports: %v\n\nRecommended: Run /recon then /hunt then /abhimanyu",
+			target, strings.Join(intel.DNSIPs, ", "), strings.Join(intel.TechStack, ", "),
+			intel.WAFDetected, intel.WAFVendor, intel.OpenPorts)
+	} else {
+		plan, rawPlan, planErr = api.SendPlan(planReq)
+		if planErr != nil {
+			printError("Plan generation failed: " + planErr.Error())
+			return
+		}
+	}
 
-// ── STEP 6: Display plan ──────────────────────────────────────────────
-if plan != nil {
-omega.DisplayPlan(plan, target)
-} else {
-omega.DisplayPlanRaw(rawPlan)
-}
+	// ── STEP 6: Display plan ──────────────────────────────────────────────
+	if plan != nil {
+		omega.DisplayPlan(plan, target)
+	} else {
+		omega.DisplayPlanRaw(rawPlan)
+	}
 
-// ── STEP 7: Save plan to file ─────────────────────────────────────────
-if plan != nil {
-filename, err := omega.SavePlanToFile(plan, target)
-if err == nil {
-fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
-"  ✓ Plan saved: " + filename))
-}
-}
+	// ── STEP 7: Save plan to file ─────────────────────────────────────────
+	if plan != nil {
+		filename, err := omega.SavePlanToFile(plan, target)
+		if err == nil {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
+				"  ✓ Plan saved: " + filename))
+		}
+	}
 
-// ── STEP 8: Ask to execute ────────────────────────────────────────────
-fmt.Println()
-fmt.Print(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
-"  Execute this plan? [Y/n] → "))
-var execAns string
-fmt.Scanln(&execAns)
-if strings.ToLower(strings.TrimSpace(execAns)) == "n" {
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-"  Plan saved. Run /recon to start manually."))
-return
-}
+	// ── STEP 8: Ask to execute ────────────────────────────────────────────
+	fmt.Println()
+	fmt.Print(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+		"  Execute this plan? [Y/n] → "))
+	var execAns string
+	fmt.Scanln(&execAns)
+	if strings.ToLower(strings.TrimSpace(execAns)) == "n" {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Plan saved. Run /recon to start manually."))
+		return
+	}
 
-// ── STEP 9: Execute — chain recon → hunt → abhimanyu ─────────────────
-fmt.Println()
-fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
-"  🚀 EXECUTING OMEGA PLAN — " + target))
-fmt.Println()
+		// ── STEP 9: Execute — full plan-aware chained execution ─────────────
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
+		"  🚀 EXECUTING OMEGA PLAN — " + target))
+	fmt.Println()
 
-// Launch floating terminal if tmux available
-launchFloatingTerminal(target)
+	// Launch floating terminal if tmux available
+	launchFloatingTerminal(target)
 
-// Run recon with plan context
-runAutoRecon(target, nil)
+	// Build skip set from plan phases
+	skipTools := make(map[string]bool)
+	// Also build per-phase focus args from plan — passed via env for tools to use
+	planFocusArgs := make(map[string]string)
+	if plan != nil {
+		for _, phase := range plan.Phases {
+			for _, skip := range phase.ToolsSkip {
+				skipTools[skip] = true
+			}
+			for tool, args := range phase.ToolsFocus {
+				planFocusArgs[tool] = args
+			}
+		}
+		if plan.WAFStrategy != "" && plan.WAFStrategy != "none" {
+			os.Setenv("CYBERMIND_WAF_STRATEGY", plan.WAFStrategy)
+		}
+		if plan.StealthMode {
+			os.Setenv("CYBERMIND_STEALTH", "true")
+		}
+		// Encode focus args as JSON env var so recon/hunt engines can read them
+		if len(planFocusArgs) > 0 {
+			if focusJSON, err := json.Marshal(planFocusArgs); err == nil {
+				os.Setenv("CYBERMIND_FOCUS_ARGS", string(focusJSON))
+			}
+		}
+	}
+
+	// ── PHASE 1: RECON (plan-aware) ──────────────────────────────────────
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+		"  ═══ PHASE 1: RECON ═══"))
+	if plan != nil && len(skipTools) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			fmt.Sprintf("  ℹ  Plan-aware: skipping %d tools, focusing on AI-recommended tools", len(skipTools))))
+	}
+	fmt.Println()
+
+	// Run recon silently (no interactive prompts) and capture result for context chaining
+	reconResult := runAutoReconSilent(target, buildRequestedTools(skipTools, "recon"))
+
+	// ── PHASE 2: HUNT (plan-aware, recon context fed in) ─────────────────
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
+		"  ═══ PHASE 2: HUNT ═══"))
+
+	// Build hunt context from recon results — this is the key fix
+	// Hunt now knows: live URLs, open ports, WAF, subdomains from recon
+	var huntCtxFromRecon *hunt.HuntContext
+	if reconResult.Context != nil {
+		rc := reconResult.Context
+		liveURLs := rc.LiveURLs
+		if liveURLs == nil {
+			liveURLs = []string{}
+		}
+		openPorts := rc.OpenPorts
+		if openPorts == nil {
+			openPorts = []int{}
+		}
+		huntCtxFromRecon = &hunt.HuntContext{
+			Target:      target,
+			TargetType:  rc.TargetType,
+			LiveURLs:    liveURLs,
+			CrawledURLs: rc.CrawledURLs,
+			OpenPorts:   openPorts,
+			WAFDetected: rc.WAFDetected,
+			WAFVendor:   rc.WAFVendor,
+			Subdomains:  rc.Subdomains,
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			fmt.Sprintf("  ℹ  Recon context: %d live URLs, %d open ports, WAF=%v (%s)",
+				len(liveURLs), len(openPorts), rc.WAFDetected, rc.WAFVendor)))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  ℹ  No recon context — hunt running in standalone mode"))
+	}
+	fmt.Println()
+
+	// Run hunt silently with recon context and plan-aware tool filter
+	huntResult := runHuntSilent(target, huntCtxFromRecon, buildRequestedTools(skipTools, "hunt"))
+
+	// ── PHASE 3: ABHIMANYU (plan-aware, hunt context fed in) ─────────────
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+		"  ═══ PHASE 3: ABHIMANYU ═══"))
+
+	// Build abhimanyu context from hunt results — full context chain
+	var huntCtx hunt.HuntContext
+	if huntResult.Context != nil {
+		huntCtx = *huntResult.Context
+	}
+
+	xssFound := huntCtx.XSSFound
+	if xssFound == nil {
+		xssFound = []string{}
+	}
+	vulnsFound := huntCtx.VulnsFound
+	if vulnsFound == nil {
+		vulnsFound = []string{}
+	}
+	paramsFound := huntCtx.ParamsFound
+	if paramsFound == nil {
+		paramsFound = []string{}
+	}
+	openPortsForAbhi := huntCtx.OpenPorts
+	if openPortsForAbhi == nil && reconResult.Context != nil {
+		openPortsForAbhi = reconResult.Context.OpenPorts
+	}
+	if openPortsForAbhi == nil {
+		openPortsForAbhi = []int{}
+	}
+	// Ensure huntCtx.LiveURLs is populated — fall back to recon live URLs if hunt didn't find any
+	if len(huntCtx.LiveURLs) == 0 && reconResult.Context != nil && len(reconResult.Context.LiveURLs) > 0 {
+		huntCtx.LiveURLs = reconResult.Context.LiveURLs
+	}
+
+	vulnCount := len(xssFound) + len(vulnsFound)
+	if vulnCount > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+			fmt.Sprintf("  ℹ  Hunt found %d vulnerabilities — feeding into Abhimanyu", vulnCount)))
+	}
+	fmt.Println()
+
+	// Build hunt findings map for abhimanyu
+	huntFindings := make(map[string]string)
+	for _, tr := range huntResult.Results {
+		if tr.Output != "" {
+			huntFindings[tr.Tool] = tr.Output
+		}
+	}
+	// Also add recon findings
+	for _, tr := range reconResult.Results {
+		if tr.Output != "" && tr.Tool != "combined" {
+			huntFindings["recon_"+tr.Tool] = tr.Output
+		}
+	}
+
+	// Run abhimanyu with full context from recon+hunt chain
+	runAbhimanyuFromHunt(target, huntCtx, xssFound, vulnsFound, paramsFound, openPortsForAbhi, huntFindings)
+
+	// ── PHASE 4: REPORT ──────────────────────────────────────────────────
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).Render(
+		"  ═══ PHASE 4: REPORT ═══"))
+	fmt.Println()
+	runReport("markdown", localMode)
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
+		"  ✓ OMEGA PLAN EXECUTION COMPLETE — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  Recon: %d tools ran | Hunt: %d tools ran | Vulns: %d found",
+			len(reconResult.Tools), len(huntResult.Tools), vulnCount)))
 }
 
 // launchFloatingTerminal launches a tmux floating window for live monitoring
 func launchFloatingTerminal(target string) {
-if _, err := exec.LookPath("tmux"); err != nil {
-return // tmux not available, skip
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return // tmux not available, skip
+	}
+	// Check if we're inside tmux
+	if os.Getenv("TMUX") == "" {
+		return // not in tmux session, skip
+	}
+	// Create a floating popup window showing live tool execution
+	sessionName := "cybermind_omega_" + strings.ReplaceAll(target, ".", "_")
+	cmd := exec.Command("tmux", "popup",
+		"-d", "~",
+		"-w", "80%",
+		"-h", "40%",
+		"-E",
+		fmt.Sprintf("watch -n 1 'echo \"CyberMind OMEGA — %s\" && echo \"\" && ls -lt /tmp/cybermind_* 2>/dev/null | head -20'", target),
+	)
+	cmd.Run() // non-blocking, ignore error
+	_ = sessionName
 }
-// Check if we're inside tmux
-if os.Getenv("TMUX") == "" {
-return // not in tmux session, skip
-}
-// Create a floating popup window showing live tool execution
-sessionName := "cybermind_omega_" + strings.ReplaceAll(target, ".", "_")
-cmd := exec.Command("tmux", "popup",
-"-d", "~",
-"-w", "80%",
-"-h", "40%",
-"-E",
-fmt.Sprintf("watch -n 1 'echo \"CyberMind OMEGA — %s\" && echo \"\" && ls -lt /tmp/cybermind_* 2>/dev/null | head -20'", target),
-)
-cmd.Run() // non-blocking, ignore error
-_ = sessionName
-}
-

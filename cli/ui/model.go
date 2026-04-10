@@ -30,6 +30,13 @@ type apiResponseMsg struct {
 	err      error
 }
 
+// streamTokenMsg carries a single streamed token from the AI
+type streamTokenMsg struct {
+	token string
+	done  bool
+	err   error
+}
+
 type typeTickMsg struct{}
 type wakeMsg struct{ ok bool }
 type keySavedMsg struct{ key string }
@@ -388,8 +395,20 @@ func wakeBackend() tea.Cmd {
 
 func fetchWithContext(prompt string, history []api.Message) tea.Cmd {
 	return func() tea.Msg {
-		resp, err := api.SendChat(prompt, history)
-		return apiResponseMsg{response: resp, err: err}
+		// Try streaming first — falls back to regular if streaming fails
+		var fullText strings.Builder
+		resp, err := api.SendChatStream(prompt, history, func(token string) {
+			fullText.WriteString(token)
+		})
+		if err != nil {
+			return apiResponseMsg{err: err}
+		}
+		// Use streamed text if available, otherwise use returned value
+		result := fullText.String()
+		if result == "" {
+			result = resp
+		}
+		return apiResponseMsg{response: result, err: nil}
 	}
 }
 
