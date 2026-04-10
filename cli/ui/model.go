@@ -134,6 +134,12 @@ func isAPIKeyError(errStr string) bool {
 		strings.Contains(errStr, "key is required")
 }
 
+func isOSMismatchError(errStr string) bool {
+	return strings.Contains(errStr, "OS_MISMATCH") ||
+		strings.Contains(errStr, "was created for") ||
+		strings.Contains(errStr, "cross-platform")
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
@@ -274,6 +280,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.keyInput.SetValue("")
 				m.keyInput.Focus()
 				return m, textinput.Blink
+			} else if isOSMismatchError(errStr) {
+				m.errMsg = errStr + "\n  Get a new key at: https://cybermindcli1.vercel.app/dashboard"
 			} else if strings.Contains(errStr, "starting up") || strings.Contains(errStr, "cold start") {
 				m.errMsg = "⟳ Backend starting up (30-60s) — please resend your message"
 			} else if strings.Contains(errStr, "cannot connect") || strings.Contains(errStr, "backend_down") {
