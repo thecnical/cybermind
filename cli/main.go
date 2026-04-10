@@ -1392,6 +1392,12 @@ func main() {
 
 	cmd := strings.ToLower(args[0])
 
+	// Handle uninstall before any other checks — no API key needed, works on all OS
+	if cmd == "uninstall" || cmd == "/uninstall" {
+		runUninstall()
+		return
+	}
+
 	// All /slash commands are Linux-only — catch them early on Windows
 	// PowerShell may pass /command differently, so check both with and without leading slash
 	if runtime.GOOS != "linux" {
