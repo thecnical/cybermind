@@ -1297,6 +1297,35 @@ func requireAPIKey() bool {
 	return key != ""
 }
 
+// requirePlan checks if the current API key has the required plan.
+// Validates against the backend — returns true if allowed, false if blocked.
+func requirePlan(minPlan string) bool {
+	key := api.GetAPIKey()
+	if key == "" {
+		return false
+	}
+	plan, err := api.ValidateKey(key)
+	if err != nil {
+		// Can't reach backend — allow locally, backend will enforce
+		return true
+	}
+	planOrder := map[string]int{"free": 0, "starter": 1, "pro": 2, "elite": 3}
+	userLevel := planOrder[plan]
+	minLevel  := planOrder[minPlan]
+	if userLevel < minLevel {
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+			fmt.Sprintf("  ✗ This command requires %s plan or higher.", strings.ToUpper(minPlan))))
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+			fmt.Sprintf("  Your current plan: %s", strings.ToUpper(plan))))
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+			"  Upgrade at: https://cybermindcli1.vercel.app/plans"))
+		fmt.Println()
+		return false
+	}
+	return true
+}
+
 // promptForAPIKey interactively asks the user to paste their API key.
 // Returns the key they entered, or "" if they skipped.
 func promptForAPIKey() string {
@@ -1382,7 +1411,7 @@ func main() {
 		}
 
 		// TUI handles key prompt automatically if no key is set
-		p := tea.NewProgram(ui.NewModel(getLocalIP()), tea.WithAltScreen())
+		p := tea.NewProgram(ui.NewModel(getLocalIP()))
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -1501,6 +1530,10 @@ func main() {
 		if !requireAPIKey() {
 			os.Exit(1)
 		}
+		// Plan check: recon requires starter or higher
+		if !requirePlan("starter") {
+			os.Exit(1)
+		}
 		// Auto-update all tools before running recon — ensures latest versions
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ⟳ Updating tools before recon..."))
 		updateAllTools()
@@ -1576,6 +1609,10 @@ func main() {
 			os.Exit(1)
 		}
 		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		// Plan check: hunt requires starter or higher
+		if !requirePlan("starter") {
 			os.Exit(1)
 		}
 		// Auto-update all tools before running hunt — ensures latest versions
@@ -2235,6 +2272,13 @@ func main() {
 		}
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
+		}
+		// Plan check: abhimanyu requires elite plan
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		if !requirePlan("elite") {
+			os.Exit(1)
 		}
 		runAbhimanyu(abhimanyuTarget, abhimanyuVuln)
 
