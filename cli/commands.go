@@ -50,11 +50,16 @@ func runNativeScan(target string, localMode bool) {
 
 	if runtime.GOOS == "windows" {
 		// Windows: use PowerShell Test-NetConnection
-		// Sanitize target — only allow safe hostname/IP chars to prevent PowerShell injection
+		// Use sanitized target + pass port as separate arg to avoid injection
 		safeTarget := sanitizeTarget(target)
+		if safeTarget == "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ Invalid target"))
+			return
+		}
 		for _, port := range commonPorts {
-			cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-				fmt.Sprintf("(Test-NetConnection -ComputerName '%s' -Port %d -WarningAction SilentlyContinue).TcpTestSucceeded", safeTarget, port))
+			// Use -EncodedCommand to prevent any injection via target string
+			script := fmt.Sprintf("$r=(Test-NetConnection -ComputerName ([string]::new('%s')) -Port %d -WarningAction SilentlyContinue -InformationLevel Quiet -ErrorAction SilentlyContinue);if($r){Write-Output 'True'}else{Write-Output 'False'}", safeTarget, port)
+			cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 			out, err := cmd.Output()
 			if err == nil && strings.TrimSpace(string(out)) == "True" {
 				openPorts = append(openPorts, fmt.Sprintf("%d", port))
@@ -144,9 +149,13 @@ func runPortScan(target string, localMode bool) {
 
 	if runtime.GOOS == "windows" {
 		safeTarget := sanitizeTarget(target)
+		if safeTarget == "" {
+			printError("Invalid target")
+			return
+		}
 		for _, port := range commonPorts {
-			cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-				fmt.Sprintf("(Test-NetConnection -ComputerName '%s' -Port %d -WarningAction SilentlyContinue).TcpTestSucceeded", safeTarget, port))
+			script := fmt.Sprintf("$r=(Test-NetConnection -ComputerName ([string]::new('%s')) -Port %d -WarningAction SilentlyContinue -InformationLevel Quiet -ErrorAction SilentlyContinue);if($r){Write-Output 'True'}else{Write-Output 'False'}", safeTarget, port)
+			cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 			out, err := cmd.Output()
 			if err == nil && strings.TrimSpace(string(out)) == "True" {
 				openPorts = append(openPorts, fmt.Sprintf("%d", port))

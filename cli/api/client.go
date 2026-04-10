@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,17 +19,54 @@ import (
 
 const defaultBackendURL = "https://cybermind-backend-8yrt.onrender.com"
 
+// SSRF protection — reject private/loopback IPs in CYBERMIND_API env var
 func getBaseURL() string {
 	if raw := os.Getenv("CYBERMIND_API"); raw != "" {
-		// Validate the URL to prevent SSRF via env var
 		u, err := url.Parse(raw)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 			return defaultBackendURL
 		}
-		// Only allow known safe hosts in production; allow any in dev
+		// Block SSRF: reject private/loopback/link-local hostnames
+		host := u.Hostname()
+		if isSSRFHost(host) {
+			return defaultBackendURL
+		}
 		return strings.TrimRight(raw, "/")
 	}
 	return defaultBackendURL
+}
+
+// isSSRFHost returns true if the host is a private/loopback/metadata IP or hostname.
+func isSSRFHost(host string) bool {
+	// Block common SSRF targets
+	blocked := []string{
+		"localhost", "127.0.0.1", "::1", "0.0.0.0",
+		"169.254.169.254", // AWS metadata
+		"metadata.google.internal",
+		"169.254.170.2", // ECS metadata
+	}
+	lh := strings.ToLower(host)
+	for _, b := range blocked {
+		if lh == b {
+			return true
+		}
+	}
+	// Block private IP ranges
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	privateRanges := []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7",
+	}
+	for _, cidr := range privateRanges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err == nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // getAPIKey returns the API key from env, config file, or empty string
