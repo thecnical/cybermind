@@ -362,15 +362,22 @@ func ValidateKey(key string) (string, error) {
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	var result struct {
-		Success bool   `json:"success"`
-		Plan    string `json:"plan"`
-		Error   string `json:"error"`
+		Success      bool   `json:"success"`
+		Plan         string `json:"plan"`
+		Error        string `json:"error"`
+		PromoActive  bool   `json:"promo_active"`
+		PromoMessage string `json:"promo_message"`
+		PromoEnds    string `json:"promo_ends"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return "", fmt.Errorf("invalid response")
 	}
 	if !result.Success {
 		return "", fmt.Errorf("%s", result.Error)
+	}
+	// Return plan + promo info as combined string if promo active
+	if result.PromoActive && result.PromoMessage != "" {
+		return result.Plan + "|PROMO|" + result.PromoMessage, nil
 	}
 	return result.Plan, nil
 }
@@ -463,4 +470,277 @@ func SendAbhimanyu(target, vulnType string, payload map[string]interface{}) (str
 // SendToolHelp — tool usage guide
 func SendToolHelp(tool, task string) (string, error) {
 	return post("/tools/help", map[string]string{"tool": tool, "task": task})
+}
+
+// SendCVE — CVE intelligence lookup
+func SendCVE(cveID string) (string, error) {
+	return postGET("/cve/" + url.PathEscape(cveID))
+}
+
+// SendCVELatest — latest critical CVEs
+func SendCVELatest() (string, error) {
+	return postGET("/cve?latest=true")
+}
+
+// SendCVEKeyword — keyword CVE search
+func SendCVEKeyword(keyword string) (string, error) {
+	return postGET("/cve?keyword=" + url.QueryEscape(keyword))
+}
+
+// SendReport — generate pentest report from history
+func SendReport(history interface{}, target string) (string, error) {
+	type reportReq struct {
+		History interface{} `json:"history"`
+		Target  string      `json:"target,omitempty"`
+	}
+	body := reportReq{History: history, Target: target}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode request: %w", err)
+	}
+	// Report route returns {report: "..."} not {response: "..."}
+	// so we need a custom parser
+	req, err := http.NewRequest("POST", getBaseURL()+"/report", bytes.NewBuffer(payload))
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: request build failed")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+	req.Header.Set("X-Device-OS", getDeviceOS())
+	req.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: cannot connect — %s", err.Error())
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return "", fmt.Errorf("_backend_down: status %d", resp.StatusCode)
+	}
+	var result struct {
+		Success bool   `json:"success"`
+		Report  string `json:"report"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	return result.Report, nil
+}
+
+// SendWordlist — generate custom wordlist
+func SendWordlist(target string, wordlistType string, count int) (string, error) {
+	payload, err := json.Marshal(map[string]interface{}{
+		"target": target,
+		"type":   wordlistType,
+		"count":  count,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to encode request: %w", err)
+	}
+	// Wordlist route returns {wordlist: [...]} not {response: "..."}
+	req, err := http.NewRequest("POST", getBaseURL()+"/wordlist", bytes.NewBuffer(payload))
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: request build failed")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+	req.Header.Set("X-Device-OS", getDeviceOS())
+	req.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: cannot connect — %s", err.Error())
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return "", fmt.Errorf("_backend_down: status %d", resp.StatusCode)
+	}
+	var result struct {
+		Success  bool     `json:"success"`
+		Wordlist []string `json:"wordlist"`
+		Error    string   `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	return strings.Join(result.Wordlist, "\n"), nil
+}
+
+// SendPayloadGen — AI payload generator (no msfvenom needed)
+func SendPayloadGen(os_, arch, lhost, lport, format, technique string) (string, error) {
+	return post("/exploit/payload", map[string]string{
+		"os": os_, "arch": arch, "lhost": lhost, "lport": lport,
+		"format": format, "technique": technique,
+	})
+}
+
+// PostLocal sends a prompt to a local Ollama instance directly.
+// model: ollama model name (e.g. "llama3", "mistral", "codellama")
+func PostLocal(model, prompt string) (string, error) {
+	ollamaURL := os.Getenv("OLLAMA_URL")
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+
+	type ollamaMsg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	type ollamaReq struct {
+		Model    string      `json:"model"`
+		Messages []ollamaMsg `json:"messages"`
+		Stream   bool        `json:"stream"`
+	}
+
+	reqBody := ollamaReq{
+		Model: model,
+		Messages: []ollamaMsg{
+			{Role: "system", Content: "You are CyberMind, an elite offensive security AI. Answer all cybersecurity questions with full technical detail, exact commands, CVE references, and MITRE ATT&CK mappings."},
+			{Role: "user", Content: prompt},
+		},
+		Stream: false,
+	}
+
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Post(ollamaURL+"/api/chat", "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return "", fmt.Errorf("Ollama not running. Start: ollama serve | Pull model: ollama pull %s | Install: https://ollama.ai", model)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read Ollama response: %w", err)
+	}
+
+	var result struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("invalid Ollama response: %w", err)
+	}
+	if result.Error != "" {
+		return "", fmt.Errorf("Ollama error: %s", result.Error)
+	}
+	if result.Message.Content == "" {
+		return "", fmt.Errorf("empty response from Ollama (model: %s)", model)
+	}
+	return result.Message.Content, nil
+}
+
+// postGET performs a GET request and returns parsed CVE data as readable text.
+func postGET(endpoint string) (string, error) {
+	req, err := http.NewRequest("GET", getBaseURL()+endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("request build failed: %w", err)
+	}
+	if key := getAPIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+	req.Header.Set("X-Device-OS", getDeviceOS())
+	req.Header.Set("X-Device-ID", getDeviceID())
+
+	// Use a dedicated client with 30s timeout for CVE lookups (NVD can be slow)
+	cveClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+	}
+	resp, err := cveClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: cannot connect — %s", err.Error())
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return "", fmt.Errorf("_backend_down: status %d", resp.StatusCode)
+	}
+
+	var cveResp struct {
+		Success  bool       `json:"success"`
+		Total    int        `json:"total"`
+		CVEs     []cveEntry `json:"cves"`
+		Analysis string     `json:"analysis"`
+		Error    string     `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &cveResp); err != nil {
+		return "", fmt.Errorf("malformed response")
+	}
+	if !cveResp.Success {
+		return "", fmt.Errorf("%s", cveResp.Error)
+	}
+
+	var sb strings.Builder
+	if len(cveResp.CVEs) > 0 {
+		sb.WriteString(fmt.Sprintf("Found %d CVE(s):\n\n", cveResp.Total))
+		for _, c := range cveResp.CVEs {
+			score := "N/A"
+			if c.CVSSScore > 0 {
+				score = fmt.Sprintf("%.1f", c.CVSSScore)
+			}
+			// Safe Published date — guard against short/empty strings
+			published := c.Published
+			if len(published) >= 10 {
+				published = published[:10]
+			}
+			sb.WriteString(fmt.Sprintf("%-20s  CVSS: %-5s  Severity: %s\n", c.ID, score, c.Severity))
+			if published != "" {
+				sb.WriteString(fmt.Sprintf("  Published: %s\n", published))
+			}
+			sb.WriteString(fmt.Sprintf("  %s\n\n", truncate(c.Description, 200)))
+		}
+	}
+	if cveResp.Analysis != "" {
+		sb.WriteString("\n─── AI Analysis ───\n\n")
+		sb.WriteString(cveResp.Analysis)
+	}
+	return sb.String(), nil
+}
+
+type cveEntry struct {
+	ID          string  `json:"id"`
+	Published   string  `json:"published"`
+	Description string  `json:"description"`
+	CVSSScore   float64 `json:"cvss_score"`
+	Severity    string  `json:"severity"`
+	Vector      string  `json:"vector"`
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

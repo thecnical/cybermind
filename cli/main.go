@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -100,15 +101,20 @@ func printBanner() {
 	// System info — compact, no extra blank lines
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Local IP:  %s", localIP)))
 
+	// 🎉 Free Month Promo Banner
+	promoEnd := "May 10, 2026"
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+		"  🎉 FREE MONTH ACTIVE — All features unlimited until " + promoEnd + "!"))
+
 	// Linux-only recon notice
 	if runtime.GOOS == "linux" {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Auto Recon Mode available  →  cybermind /recon <target>"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Abhimanyu Mode available   →  cybermind /abhimanyu <target>"))
 	} else if runtime.GOOS == "darwin" {
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  macOS: AI chat mode available"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  macOS: AI chat + /scan /portscan /osint /payload /cve /wordlist report"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
 	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Windows: AI chat mode available"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Windows: AI chat + /scan /portscan /osint /payload /cve /wordlist report"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
 	}
 	fmt.Println()
@@ -152,6 +158,17 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind exploit <vuln>") + d.Render("        → exploitation guide"))
 	fmt.Println(g.Render("  cybermind payload <os> [arch]") + d.Render("   → msfvenom payload"))
 	fmt.Println(g.Render("  cybermind tool <name> [task]") + d.Render("    → tool usage guide"))
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  CROSS-PLATFORM (Windows/macOS/Linux):"))
+	fmt.Println(g.Render("  cybermind /scan <target>") + d.Render("        → native network scan (no tools needed)"))
+	fmt.Println(g.Render("  cybermind /portscan <target>") + d.Render("    → port scan + netstat analysis"))
+	fmt.Println(g.Render("  cybermind /osint <domain>") + d.Render("       → DNS + Shodan OSINT (free, no key)"))
+	fmt.Println(g.Render("  cybermind /payload <os> <arch>") + d.Render("  → AI payload generator (no msfvenom)"))
+	fmt.Println(g.Render("  cybermind /cve <CVE-ID>") + d.Render("         → CVE intelligence from NVD"))
+	fmt.Println(g.Render("  cybermind /cve --latest") + d.Render("         → latest critical CVEs (7 days)"))
+	fmt.Println(g.Render("  cybermind /wordlist <target>") + d.Render("    → custom wordlist generator"))
+	fmt.Println(g.Render("  cybermind report") + d.Render("                → generate pentest report from history"))
+	fmt.Println(g.Render("  cybermind --local") + d.Render("               → use local Ollama AI (CYBERMIND_LOCAL=true)"))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  HISTORY:"))
 	fmt.Println(g.Render("  cybermind history") + d.Render("               → view chat history"))
@@ -1427,8 +1444,23 @@ func main() {
 		return
 	}
 
-	// All /slash commands are Linux-only — catch them early on Windows
-	// PowerShell may pass /command differently, so check both with and without leading slash
+	// Local mode detection — must happen before API key loading
+	localMode := false
+	for i, a := range args {
+		if a == "--local" {
+			localMode = true
+			args = append(args[:i], args[i+1:]...)
+			break
+		}
+	}
+	if os.Getenv("CYBERMIND_LOCAL") == "true" {
+		localMode = true
+	}
+	// Re-derive cmd after stripping --local flag
+	if len(args) > 0 {
+		cmd = strings.ToLower(args[0])
+	}
+	// New commands (/scan, /portscan, /osint, /payload, /cve, /wordlist, report) work on all OS
 	if runtime.GOOS != "linux" {
 		normalized := strings.TrimPrefix(cmd, "/")
 		linuxOnlyCmds := map[string]bool{
@@ -1436,17 +1468,24 @@ func main() {
 			"install-tools": true, "install-hunt": true, "doctor": true,
 			"abhimanyu": true,
 		}
-		if linuxOnlyCmds[normalized] || strings.HasPrefix(cmd, "/") {
+		// New cross-platform slash commands — allowed on all OS
+		crossPlatformSlashCmds := map[string]bool{
+			"scan": true, "portscan": true, "osint": true,
+			"payload": true, "cve": true, "wordlist": true,
+		}
+		if linuxOnlyCmds[normalized] || (strings.HasPrefix(cmd, "/") && !crossPlatformSlashCmds[normalized]) {
 			printError("This command is only available on Linux/Kali.")
 			if runtime.GOOS == "darwin" {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  macOS supports AI chat only: cybermind"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  macOS supports AI chat, /scan, /portscan, /osint, /payload, /cve, /wordlist, report"))
 			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows supports AI chat only: cybermind"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows supports AI chat, /scan, /portscan, /osint, /payload, /cve, /wordlist, report"))
 			}
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use Kali Linux for full recon/hunt/abhimanyu pipeline"))
 			os.Exit(1)
 		}
 	}
+
+	_ = localMode // used in command handlers below
 
 	switch cmd {
 
@@ -1493,11 +1532,17 @@ func main() {
 			masked := key[:min(12, len(key))] + strings.Repeat("•", max(0, len(key)-12))
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ API key: " + masked))
 			// Validate key with backend
-			plan, err := api.ValidateKey(key)
+			planRaw, err := api.ValidateKey(key)
 			if err != nil {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ Key validation failed: " + err.Error()))
 			} else {
+				// Check for promo info in response
+				parts := strings.SplitN(planRaw, "|PROMO|", 2)
+				plan := parts[0]
 				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Plan: " + strings.ToUpper(plan)))
+				if len(parts) > 1 {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  " + parts[1]))
+				}
 			}
 		}
 
@@ -2495,18 +2540,216 @@ func main() {
 		}
 		printResult("Tool Guide → "+tool, result)
 
+	case "/scan":
+		// Native network scan — works on Windows, macOS, Linux
+		if len(args) < 2 {
+			printError("Usage: cybermind /scan <subnet>")
+			printError("Example: cybermind /scan 192.168.1.0/24")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		runNativeScan(args[1], localMode)
+
+	case "/portscan":
+		// Port scan — works on Windows, macOS, Linux
+		if len(args) < 2 {
+			printError("Usage: cybermind /portscan <ip>")
+			printError("Example: cybermind /portscan 192.168.1.1")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		runPortScan(args[1], localMode)
+
+	case "/osint":
+		// OSINT — DNS + Shodan InternetDB — works on all OS
+		if len(args) < 2 {
+			printError("Usage: cybermind /osint <domain>")
+			printError("Example: cybermind /osint example.com")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		runOSINT(args[1], localMode)
+
+	case "/payload":
+		// Payload generator — works on all OS
+		if len(args) < 3 {
+			printError("Usage: cybermind /payload <os> <arch> [type]")
+			printError("  os:   windows, linux, macos, android")
+			printError("  arch: x86, x64, arm, arm64")
+			printError("  type: reverse_shell (default), bind_shell, meterpreter")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		payloadType := "reverse_shell"
+		if len(args) >= 4 {
+			payloadType = args[3]
+		}
+		runPayload(args[1], args[2], payloadType, localMode)
+
+	case "/cve":
+		// CVE intelligence — works on all OS
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		// Check for --latest flag
+		latest := false
+		severity := ""
+		cveID := ""
+		for i := 1; i < len(args); i++ {
+			switch args[i] {
+			case "--latest":
+				latest = true
+			case "--severity":
+				if i+1 < len(args) {
+					severity = args[i+1]
+					i++
+				}
+			default:
+				if !strings.HasPrefix(args[i], "--") {
+					cveID = args[i]
+				}
+			}
+		}
+		if latest {
+			runCVELatest(severity, localMode)
+		} else if cveID != "" {
+			runCVE(cveID, localMode)
+		} else {
+			printError("Usage: cybermind /cve <CVE-ID>")
+			printError("       cybermind /cve --latest [--severity critical|high|medium|low]")
+			os.Exit(1)
+		}
+
+	case "/wordlist":
+		// Wordlist generator — works on all OS
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		target := ""
+		wordlistType := "passwords"
+		for i := 1; i < len(args); i++ {
+			switch args[i] {
+			case "--target":
+				if i+1 < len(args) {
+					target = args[i+1]
+					i++
+				}
+			case "--type":
+				if i+1 < len(args) {
+					wordlistType = args[i+1]
+					i++
+				}
+			}
+		}
+		if target == "" {
+			printError("Usage: cybermind /wordlist --target <domain> [--type passwords|usernames|subdomains]")
+			os.Exit(1)
+		}
+		runWordlist(target, wordlistType, localMode)
+
+	case "report":
+		// Report writer — works on all OS
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		format := "markdown"
+		for i := 1; i < len(args); i++ {
+			if args[i] == "--format" && i+1 < len(args) {
+				format = args[i+1]
+				i++
+			}
+		}
+		runReport(format, localMode)
+
 	default:
 		// BUG FIX: load storage so history save works
 		_ = storage.Load()
 		prompt := strings.Join(args, " ")
-		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Asking CyberMind AI..."))
-		result, err := api.SendPrompt(prompt)
-		if err != nil {
-			printError(err.Error())
-			os.Exit(1)
+
+		if localMode {
+			localModel := getLocalModel()
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Asking local AI (" + localModel + ")..."))
+			result, err := api.PostLocal(localModel, prompt)
+			if err != nil {
+				printError(err.Error())
+				os.Exit(1)
+			}
+			printResult("[LOCAL] Response", result)
+			_ = storage.AddEntry(prompt, result)
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Asking CyberMind AI..."))
+			result, err := api.SendPrompt(prompt)
+			if err != nil {
+				printError(err.Error())
+				os.Exit(1)
+			}
+			printResult("Response", result)
+			// Save to history
+			_ = storage.AddEntry(prompt, result)
 		}
-		printResult("Response", result)
-		// Save to history
-		_ = storage.AddEntry(prompt, result)
 	}
+}
+
+// containsSecurityKeywords checks if a prompt contains security-related keywords (case-insensitive).
+func containsSecurityKeywords(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	keywords := []string{"exploit", "cve", "payload", "shell", "bypass", "injection", "privilege", "lateral"}
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// getLocalModel reads local_model from ~/.cybermind/config.json, defaults to "llama3".
+func getLocalModel() string {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return "llama3"
+	}
+	data, err := os.ReadFile(homedir + "/.cybermind/config.json")
+	if err != nil {
+		return "llama3"
+	}
+	var cfg struct {
+		Key        string `json:"key"`
+		LocalModel string `json:"local_model"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "llama3"
+	}
+	if cfg.LocalModel == "" {
+		return "llama3"
+	}
+	return cfg.LocalModel
 }
