@@ -349,6 +349,38 @@ var toolRegistry = []ToolSpec{
 		},
 	},
 
+	// ── NEW: ZMap — Internet-wide host discovery (45 min for full IPv4) ──────
+	// Runs independently alongside masscan — different approach (single-packet)
+	// Best for: wide-scope bug bounty programs, CIDR range scanning
+	{
+		Name:        "zmap",
+		Phase:       3,
+		Timeout:     300,
+		InstallHint: "sudo apt install zmap -y",
+		// Power command: scan common web ports, output live IPs for httpx
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-p", "80,443,8080,8443,8888,3000,5000,9000",
+				"--output-filter", "success = 1",
+				"-o", "/tmp/cybermind_zmap.csv",
+				"-f", "saddr,sport,daddr",
+				"--rate", "10000", // 10k pps — safe for most networks
+				"--cooldown-time", "3",
+				target,
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{
+					"-p", "80,443",
+					"-o", "/tmp/cybermind_zmap.csv",
+					"--rate", "1000",
+					target,
+				}
+			},
+		},
+	},
+
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 4 — HTTP FINGERPRINTING
 	// Goal: live URL discovery, tech stack, TLS certs, CSP, vhosts, screenshots

@@ -711,6 +711,29 @@ var exploitRegistry = []ToolSpec{
 		},
 	},
 
+	// ── NEW 2025: evilginx2 — MITM phishing + 2FA bypass ────────────────────
+	// Proxies real website → captures credentials + session cookies
+	// Bypasses 2FA (TOTP, SMS, push) — captures live session tokens
+	// Phishlets available for: Gmail, Microsoft, GitHub, LinkedIn, Facebook, etc.
+	{
+		Name: "evilginx2", Phase: 6, Timeout: 120,
+		VulnTypes:   []string{"all", "phishing", "exfil", "lateral"},
+		InstallHint: "go install github.com/kgretzky/evilginx2@latest",
+		InstallCmd:  "go install github.com/kgretzky/evilginx2@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"-p", "/usr/share/evilginx/phishlets/",
+				"-c", "/tmp/cybermind_evilginx/",
+				"-developer",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"-developer"}
+			},
+		},
+	},
+
 	// ── NEW 2025: ligolo-ng — advanced tunneling for red teams ──
 	{
 		Name: "ligolo-ng", Phase: 6, Timeout: 120,

