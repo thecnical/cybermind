@@ -110,19 +110,60 @@ func getDeviceOS() string {
 }
 
 // getDeviceID returns a stable, privacy-preserving device fingerprint.
-// Computed as SHA-256(user_id + platform + hostname) — no PII.
-// Sent as X-Device-ID header so the backend can track device limits.
 func getDeviceID() string {
 	hostname, _ := os.Hostname()
 	key := getAPIKey()
-	// Use first 16 chars of key as user identifier (not the full key)
 	keyPrefix := ""
 	if len(key) > 16 {
 		keyPrefix = key[:16]
 	}
 	raw := fmt.Sprintf("%s:%s:%s:%s", keyPrefix, runtime.GOOS, runtime.GOARCH, hostname)
 	h := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(h[:16]) // 32-char hex = 128-bit fingerprint
+	return hex.EncodeToString(h[:16])
+}
+
+// getUserName reads the cached user name from config file.
+// Set when key is validated — used for personalized welcome message.
+func getUserName() string {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(homedir + "/.cybermind/config.json")
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Key  string `json:"key"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Name
+}
+
+// saveUserName saves the user name to config alongside the key.
+func saveUserName(name string) {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	configPath := homedir + "/.cybermind/config.json"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return
+	}
+	cfg["name"] = name
+	updated, err := json.Marshal(cfg)
+	if err != nil {
+		return
+	}
+	os.WriteFile(configPath, updated, 0600)
 }
 
 // isValidKey checks if a key has the correct prefix (both old and new format)
@@ -305,14 +346,15 @@ func doPost(endpoint string, payload []byte) (string, error) {
 		return "", fmt.Errorf("_backend_down: request build failed")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Attach API key if available
 	if key := getAPIKey(); key != "" {
 		req.Header.Set("X-API-Key", key)
 	}
-	// Send device OS info so AI can personalize responses
 	req.Header.Set("X-Device-OS", getDeviceOS())
-	// Send device fingerprint for device limit tracking
 	req.Header.Set("X-Device-ID", getDeviceID())
+	// Send user name for personalized welcome message
+	if name := getUserName(); name != "" {
+		req.Header.Set("X-User-Name", name)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -465,6 +507,7 @@ func ValidateKey(key string) (string, error) {
 		PromoActive  bool   `json:"promo_active"`
 		PromoMessage string `json:"promo_message"`
 		PromoEnds    string `json:"promo_ends"`
+		UserName     string `json:"user_name"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return "", fmt.Errorf("invalid response")
@@ -472,11 +515,19 @@ func ValidateKey(key string) (string, error) {
 	if !result.Success {
 		return "", fmt.Errorf("%s", result.Error)
 	}
-	// Return plan + promo info as combined string if promo active
-	if result.PromoActive && result.PromoMessage != "" {
-		return result.Plan + "|PROMO|" + result.PromoMessage, nil
+	// Save user name for personalized welcome
+	if result.UserName != "" {
+		saveUserName(result.UserName)
 	}
-	return result.Plan, nil
+	// Return plan + promo + username info
+	planInfo := result.Plan
+	if result.UserName != "" {
+		planInfo = result.Plan + "|NAME|" + result.UserName
+	}
+	if result.PromoActive && result.PromoMessage != "" {
+		planInfo += "|PROMO|" + result.PromoMessage
+	}
+	return planInfo, nil
 }
 
 // SendChat sends prompt with conversation history

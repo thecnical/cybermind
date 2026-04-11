@@ -96,7 +96,7 @@ func printBanner() {
 	greeting := fmt.Sprintf("  ⚡ CyberMind CLI v%s  |  %s", Version,
 		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(osColor)).Render(osLabel))
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(greeting))
-	fmt.Println(lipgloss.NewStyle().Foreground(credit).Render("  created by github.com/thecnical (Chandan Pandey)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(credit).Render("  created by CyberMind Team under Sanjay Pandey"))
 
 	// System info — compact, no extra blank lines
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Local IP:  %s", localIP)))

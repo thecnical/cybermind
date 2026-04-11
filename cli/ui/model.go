@@ -163,17 +163,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wakeMsg:
 		// Backend check done — go to input regardless
-		// If backend was sleeping, post() will auto-wake when user sends message
 		m.state = stateInput
 		m.input.Focus()
 		if !msg.ok {
 			// Soft info — not an error, just a heads up
 			m.infoMsg = "Backend may be starting up — your first message will auto-wake it"
+		} else if len(m.history) == 0 && m.infoMsg == "" {
+			// First time connecting — show welcome if we have a key
+			if key := api.GetAPIKey(); key != "" {
+				go func() {
+					planInfo, err := api.ValidateKey(key)
+					if err == nil && planInfo != "" {
+						// Extract name if present
+						if idx := strings.Index(planInfo, "|NAME|"); idx >= 0 {
+							rest := planInfo[idx+6:]
+							name := rest
+							if endIdx := strings.Index(rest, "|"); endIdx >= 0 {
+								name = rest[:endIdx]
+							}
+							if name != "" {
+								m.infoMsg = fmt.Sprintf("Welcome back, %s! Ready to hack.", name)
+							}
+						}
+					}
+				}()
+			}
 		}
 		return m, textinput.Blink
 
 	case keySavedMsg:
-		m.infoMsg = "✓ Key saved! Connecting to CyberMind..."
+		// Parse user name from plan info if present
+		userName := ""
+		planStr := msg.key // reuse key field to pass plan info
+		if idx := strings.Index(planStr, "|NAME|"); idx >= 0 {
+			rest := planStr[idx+6:]
+			if endIdx := strings.Index(rest, "|"); endIdx >= 0 {
+				userName = rest[:endIdx]
+			} else {
+				userName = rest
+			}
+		}
+
+		if userName != "" {
+			m.infoMsg = fmt.Sprintf("✓ Welcome, %s! Connecting to CyberMind...", userName)
+		} else {
+			m.infoMsg = "✓ Key saved! Connecting to CyberMind..."
+		}
 		m.errMsg = ""
 		m.state = stateWaking
 		m.keyInput.SetValue("")
@@ -424,7 +459,9 @@ func saveKeyCmd(key string) tea.Cmd {
 		if err := api.SaveKey(key); err != nil {
 			return apiResponseMsg{err: fmt.Errorf("failed to save key: %v", err)}
 		}
-		return keySavedMsg{key: key}
+		// Validate key and get user name for welcome message
+		planInfo, _ := api.ValidateKey(key)
+		return keySavedMsg{key: planInfo} // pass planInfo (contains NAME if available)
 	}
 }
 
