@@ -11,9 +11,9 @@
  ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝
 ```
 
-### ⚡ AI-Powered Offensive Security CLI — Recon + Hunt + AI Analysis
+### ⚡ AI-Powered Offensive Security CLI — Plan + Recon + Hunt + Exploit
 
-[![Version](https://img.shields.io/badge/version-2.5.0-00FFFF?style=for-the-badge)](https://github.com/thecnical/cybermind)
+[![Version](https://img.shields.io/badge/version-2.5.2-00FFFF?style=for-the-badge)](https://github.com/thecnical/cybermind)
 [![License](https://img.shields.io/badge/license-MIT-8A2BE2?style=for-the-badge)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![Kali Linux](https://img.shields.io/badge/Kali%20Linux-268BEE?style=for-the-badge&logo=kalilinux&logoColor=white)](#kali-linux--ubuntu-installation)
@@ -24,9 +24,43 @@
 
 *Created by [Chandan Pandey](https://github.com/thecnical)*
 
-**CyberMind is an open-source AI-powered offensive security CLI built for Kali Linux — featuring a fully automated 20-tool recon pipeline (including reconftw), an 11-tool vulnerability hunt engine, and a full 6-phase Abhimanyu exploit mode with post-exploitation, lateral movement, and exfiltration. Built for penetration testers, bug bounty hunters, and red teamers.**
+**CyberMind is an open-source AI-powered offensive security CLI built for Kali Linux — featuring OMEGA Planning Mode (AI-first attack planning), a fully automated 20-tool recon pipeline, an 11-tool vulnerability hunt engine, and a full 6-phase Abhimanyu exploit mode. Built for penetration testers, bug bounty hunters, and red teamers.**
 
 </div>
+
+---
+
+## 🆕 What's New in v2.5.2
+
+### ⚡ OMEGA Planning Mode — AI builds your attack plan first
+
+```bash
+cybermind /plan target.com
+```
+
+The most intelligent entry point on Linux. Instead of running tools blindly, `/plan` collects passive intelligence first — DNS, Shodan, HTTP headers, tech stack — then sends everything to AI. The AI returns a deep **9-phase attack plan** with exact tool flags tailored to your target.
+
+**9 phases:**
+1. Passive OSINT (whois, theHarvester, dig)
+2. Subdomain Enumeration (reconftw, subfinder, amass, dnsx)
+3. Port Scanning (rustscan → nmap → naabu → masscan)
+4. HTTP Fingerprinting (httpx, whatweb, tlsx, wafw00f)
+5. Directory Discovery (ffuf, feroxbuster, gobuster)
+6. Vulnerability Scanning (nuclei 500 threads, nikto, katana)
+7. Hunt Mode (waymore, gau, gospider, x8, arjun, dalfox, kxss, ssrfmap, tplmap)
+8. Secret Hunting (trufflehog, secretfinder, subjs, mantra, cariddi)
+9. Exploitation (sqlmap, commix, wpscan, hydra, metasploit, jwt_tool, graphw00f)
+
+**WAF-aware:** Cloudflare, Akamai, Imperva bypass strategies built in automatically.
+**Target-specific:** WordPress gets wpscan, GraphQL gets graphw00f, JWT gets jwt_tool.
+
+### 🤖 New Free AI Providers
+- **GitHub Models:** GPT-4o, Llama 3.3 70B, DeepSeek R1, Phi-4 — 150 req/day free
+- **Cloudflare Workers AI:** Llama 70B, DeepSeek R1, Qwen 72B — 10,000 neurons/day free
+- Total: **11 providers, 50+ models** in the fallback chain
+
+### 🔄 Cold Start Auto-Wake
+CLI now automatically wakes the backend and retries — no more manual resend needed.
 
 ---
 
@@ -36,7 +70,35 @@ CyberMind is a single Go binary that combines two things: a powerful automated a
 
 **Key principle: Tool Exhaustion.** Each tool runs its most powerful command first. If it returns empty output, CyberMind automatically tries fallback commands. Only after ALL command variants are exhausted does it move to the next tool. No shortcuts. No skipping.
 
-**Auto-update before attack.** Every time you run `/recon` or `/hunt`, CyberMind automatically updates all tools to their latest versions first — ensuring you always attack with the newest capabilities.
+---
+
+## Complete Linux Workflow (Recommended Order)
+
+```bash
+# 1. Install
+curl -sL https://cybermindcli1.vercel.app/install.sh | bash
+
+# 2. Save API key
+cybermind --key cp_live_xxxxx
+
+# 3. Install all tools (one time)
+cybermind /install-tools
+
+# 4. OMEGA Planning Mode — AI builds your attack plan
+cybermind /plan target.com
+
+# 5. Deep recon (if manual control needed)
+cybermind /recon target.com
+
+# 6. Vulnerability hunt
+cybermind /hunt target.com
+
+# 7. Exploit confirmed vulnerabilities (Elite plan)
+cybermind /abhimanyu target.com
+
+# 8. Generate pentest report
+cybermind report
+```
 
 ---
 
