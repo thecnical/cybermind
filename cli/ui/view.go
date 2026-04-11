@@ -52,14 +52,14 @@ func (m Model) View() string {
 		}
 		b.WriteString(lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00FFFF")).
-			Render(fmt.Sprintf("  %s  Connecting to CyberMind...", m.spinner.View())))
+			Render(fmt.Sprintf("  %s  Connecting to CyberMind backend...", m.spinner.View())))
 		b.WriteString("\n")
 
 	case stateLoading:
 		lines := buildChatLines(m, rw)
 		lines = append(lines, lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8A2BE2")).
-			Render(fmt.Sprintf("  %s  Thinking...", m.spinner.View())))
+			Render(fmt.Sprintf("  %s  Thinking... (auto-wakes if sleeping)", m.spinner.View())))
 		b.WriteString(renderChatArea(lines, chatAreaHeight, m.scrollOffset))
 
 	case stateKeyPrompt:

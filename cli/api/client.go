@@ -182,8 +182,7 @@ type promptResponse struct {
 }
 
 // WakeUp pings /ping to check if backend is alive.
-// Returns true immediately if alive, false if unreachable after quick check.
-// Does NOT block — the UI shows a soft warning and lets user type anyway.
+// Returns true immediately if alive, false if unreachable.
 func WakeUp() bool {
 	resp, err := fastClient.Get(getBaseURL() + "/ping")
 	if err != nil {
@@ -193,12 +192,33 @@ func WakeUp() bool {
 	return resp.StatusCode == 200
 }
 
+// WakeUpWithProgress tries to wake the backend and shows a progress spinner.
+// Blocks until backend is up or timeout. Returns true if backend came up.
+// onProgress is called with a status string every 3 seconds.
+func WakeUpWithProgress(maxWait time.Duration, onProgress func(elapsed int, total int)) bool {
+	start := time.Now()
+	totalSec := int(maxWait.Seconds())
+
+	for time.Since(start) < maxWait {
+		resp, err := fastClient.Get(getBaseURL() + "/ping")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return true
+			}
+		}
+		elapsed := int(time.Since(start).Seconds())
+		if onProgress != nil {
+			onProgress(elapsed, totalSec)
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return false
+}
+
 // waitForBackend blocks until the backend responds or maxWait is exceeded.
-// Used internally before sending actual requests.
-// Returns nil if backend is up, error if it never came up.
 func waitForBackend(maxWait time.Duration) error {
 	deadline := time.Now().Add(maxWait)
-	// Try every 3 seconds
 	for time.Now().Before(deadline) {
 		resp, err := fastClient.Get(getBaseURL() + "/ping")
 		if err == nil {
@@ -213,37 +233,69 @@ func waitForBackend(maxWait time.Duration) error {
 }
 
 // post sends a JSON request and returns the AI response string.
-// If the backend is sleeping (521/502/non-JSON), it waits up to 90s for it to wake,
-// then retries automatically — transparent to the user.
+// Handles Render cold start transparently — shows progress, auto-retries.
 func post(endpoint string, body interface{}) (string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode request: %w", err)
 	}
 
-	// Try up to 3 times with wake-wait between attempts
-	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		result, err := doPost(endpoint, payload)
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-
-		// If it's a backend-down error, wait for it to wake then retry
-		if isBackendDown(err) && attempt < 3 {
-			// Wait up to 90s for backend to come up
-			if waitErr := waitForBackend(90 * time.Second); waitErr != nil {
-				// Backend didn't wake — return clear message
-				return "", fmt.Errorf("backend is starting up (Render cold start). Please wait 30-60s and try again")
-			}
-			// Backend is up now — retry immediately
-			continue
-		}
-		// Non-recoverable error — return immediately
-		break
+	// Attempt 1 — try immediately
+	result, err := doPost(endpoint, payload)
+	if err == nil {
+		return result, nil
 	}
-	return "", lastErr
+
+	// Not a backend-down error — return immediately (auth error, etc.)
+	if !isBackendDown(err) {
+		return "", err
+	}
+
+	// Backend is sleeping — wake it up with progress display
+	fmt.Print("\r  ⟳ Backend waking up ")
+	wakeStart := time.Now()
+	maxWake := 90 * time.Second
+
+	woke := false
+	for time.Since(wakeStart) < maxWake {
+		elapsed := int(time.Since(wakeStart).Seconds())
+		dots := strings.Repeat(".", (elapsed/3)%4)
+		spaces := strings.Repeat(" ", 3-(elapsed/3)%4)
+		fmt.Printf("\r  ⟳ Backend waking up%s%s (%ds)", dots, spaces, elapsed)
+
+		resp, pingErr := fastClient.Get(getBaseURL() + "/ping")
+		if pingErr == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				woke = true
+				break
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	if !woke {
+		fmt.Println()
+		return "", fmt.Errorf("backend took too long to start. Try again in 30 seconds")
+	}
+
+	// Backend is up — small buffer then retry
+	time.Sleep(1 * time.Second)
+	fmt.Printf("\r  ✓ Backend ready — sending request...%s\n", strings.Repeat(" ", 20))
+
+	// Attempt 2 — after wake
+	result, err = doPost(endpoint, payload)
+	if err == nil {
+		return result, nil
+	}
+
+	// Attempt 3 — final retry
+	if isBackendDown(err) {
+		time.Sleep(2 * time.Second)
+		result, err = doPost(endpoint, payload)
+	}
+
+	return result, err
 }
 
 // doPost performs a single HTTP POST and parses the JSON response.

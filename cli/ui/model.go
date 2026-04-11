@@ -162,11 +162,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case wakeMsg:
-		if !msg.ok {
-			m.errMsg = "⟳ Backend waking up — your message will send automatically once connected"
-		}
+		// Backend check done — go to input regardless
+		// If backend was sleeping, post() will auto-wake when user sends message
 		m.state = stateInput
 		m.input.Focus()
+		if !msg.ok {
+			// Soft info — not an error, just a heads up
+			m.infoMsg = "Backend may be starting up — your first message will auto-wake it"
+		}
 		return m, textinput.Blink
 
 	case keySavedMsg:
@@ -289,10 +292,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, textinput.Blink
 			} else if isOSMismatchError(errStr) {
 				m.errMsg = errStr + "\n  Get a new key at: https://cybermindcli1.vercel.app/dashboard"
-			} else if strings.Contains(errStr, "starting up") || strings.Contains(errStr, "cold start") {
-				m.errMsg = "⟳ Backend starting up (30-60s) — please resend your message"
-			} else if strings.Contains(errStr, "cannot connect") || strings.Contains(errStr, "backend_down") {
-				m.errMsg = "⟳ Connecting to backend — please resend your message"
+			} else if strings.Contains(errStr, "starting up") ||
+				strings.Contains(errStr, "cold start") ||
+				strings.Contains(errStr, "backend_down") ||
+				strings.Contains(errStr, "cannot connect") ||
+				strings.Contains(errStr, "took too long") {
+				// Backend was sleeping — it auto-woke and retried, but still failed
+				// Show friendly message with retry hint
+				m.errMsg = "⟳ Backend is starting up — please resend your message in 10 seconds"
 			} else {
 				m.errMsg = errStr
 			}
