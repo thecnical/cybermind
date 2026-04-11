@@ -209,6 +209,11 @@ return []OmegaToolEntry{
 {"ligolo-ng", "exploit", "go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest", true, false, false, false, "", "", ""},
 {"iodine", "exploit", "sudo apt install -y iodine", false, false, false, false, "", "", ""},
 {"donut", "exploit", "pip3 install donut-shellcode --break-system-packages", false, false, true, false, "", "", ""},
+{"evilginx2", "exploit", "go install github.com/kgretzky/evilginx2@latest", true, false, false, false, "", "", ""},
+// ── Recon Phase 3 — NEW: ZMap ────────────────────────────────────────
+{"zmap", "recon", "sudo apt install -y zmap", false, false, false, false, "", "", ""},
+// ── Hunt Phase 4 — NEW: BeEF ─────────────────────────────────────────
+{"beef-xss", "hunt", "sudo apt install -y beef-xss", false, false, false, false, "", "", ""},
 }
 }
 
