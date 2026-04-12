@@ -2928,7 +2928,8 @@ func main() {
 		}
 		runReport(format, localMode)
 
-	case "vibe", "neural":
+	case "vibe", "neural", "cbm-code", "cbmcode", "code":
+		// CBM Code (formerly Vibe Coder) — all aliases supported
 		runVibeCoder(args[1:])
 
 	default:
@@ -2995,7 +2996,7 @@ func getLocalModel() string {
 	return cfg.LocalModel
 }
 
-// runVibeCoder launches the Vibe Coder TUI (cybermind vibe / cybermind neural).
+// runVibeCoder launches CBM Code TUI (cybermind vibe / cybermind cbm-code / cybermind code).
 func runVibeCoder(args []string) {
 	// Parse flags
 	themeName := "cyber"
@@ -3103,7 +3104,7 @@ func runVibeCoder(args []string) {
 
 	if !hasKey {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00d4ff")).Render(
-			"  ⚡ CyberMind Vibe Coder"))
+			"  ⚡ CBM Code — AI Coding Assistant"))
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
 			"  No API key configured. Add one with:"))
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
@@ -3209,7 +3210,7 @@ func runVibeCoder(args []string) {
 	model.SetProgram(p)
 
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Vibe Coder error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "CBM Code error: %v\n", err)
 		os.Exit(1)
 	}
 }

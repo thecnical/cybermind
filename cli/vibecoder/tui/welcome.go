@@ -20,11 +20,12 @@ var mascotLines = []string{
 }
 
 var bannerLines = []string{
-	" ██████╗██╗   ██╗██████╗ ███████╗██████╗ ███╗   ███╗██╗███╗   ██╗██████╗ ",
-	"██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗",
-	"██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║██║  ██║",
-	"╚██████╗   ██║   ██████╔╝███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██████╔╝",
-	" ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝",
+	"  ██████╗██████╗ ███╗   ███╗     ██████╗ ██████╗ ██████╗ ███████╗",
+	" ██╔════╝██╔══██╗████╗ ████║    ██╔════╝██╔═══██╗██╔══██╗██╔════╝",
+	" ██║     ██████╔╝██╔████╔██║    ██║     ██║   ██║██║  ██║█████╗  ",
+	" ██║     ██╔══██╗██║╚██╔╝██║    ██║     ██║   ██║██║  ██║██╔══╝  ",
+	" ╚██████╗██████╔╝██║ ╚═╝ ██║    ╚██████╗╚██████╔╝██████╔╝███████╗",
+	"  ╚═════╝╚═════╝ ╚═╝     ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
 }
 
 // RenderWelcome renders the welcome dashboard based on terminal width.
@@ -118,7 +119,7 @@ func renderWelcomeNarrow(width int, theme Theme) string {
 	var sb strings.Builder
 
 	// Compact banner (just the title text)
-	sb.WriteString(theme.Cyan.Bold(true).Render("  ⚡ CyberMind Vibe Coder"))
+	sb.WriteString(theme.Cyan.Bold(true).Render("  ⚡ CBM Code — AI Coding Assistant"))
 	sb.WriteString("\n\n")
 
 	// Mascot
@@ -150,7 +151,7 @@ func renderWelcomeNarrow(width int, theme Theme) string {
 func renderWelcomeMinimal(width int, theme Theme) string {
 	var sb strings.Builder
 
-	sb.WriteString(theme.Cyan.Render("  CyberMind Vibe Coder"))
+	sb.WriteString(theme.Cyan.Render("  CBM Code — AI Coding Assistant"))
 	sb.WriteString("\n\n")
 	sb.WriteString(theme.Dim.Render("  TIER: Free"))
 	sb.WriteString("\n")
