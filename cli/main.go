@@ -1556,65 +1556,87 @@ func requirePlan(minPlan string) bool {
 }
 
 // promptForAPIKey interactively asks the user to paste their API key.
+// Shows a clear setup guide, validates the key format, saves it securely.
 // Returns the key they entered, or "" if they skipped.
 func promptForAPIKey() string {
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
-		"  ⚠  No API key found."))
+	cyan2  := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff"))
+	green2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88"))
+	yellow2 := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700"))
+	dim2   := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	red2   := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444"))
+	purple := lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2"))
+
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(
-		"  To use CyberMind CLI you need a free API key."))
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-		"  1. Visit:  https://cybermindcli1.vercel.app/dashboard"))
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-		"  2. Sign up / log in → click \"New key\" → copy the key"))
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-		"  3. Paste it below and press Enter"))
+	fmt.Println(yellow2.Render("  ┌─────────────────────────────────────────────────┐"))
+	fmt.Println(yellow2.Render("  │  🔑  API Key Required                           │"))
+	fmt.Println(yellow2.Render("  └─────────────────────────────────────────────────┘"))
 	fmt.Println()
-	fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
-		"  Paste your API key (or press Enter to skip): "))
-
-	var input string
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-
-	if input == "" {
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-			"  Skipped. You can set it later: cybermind --key cp_live_xxxxx"))
-		fmt.Println()
-		return ""
-	}
-
-	// Validate format
-	if !strings.HasPrefix(input, "cp_live_") && !strings.HasPrefix(input, "sk_live_cm_") {
-		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
-			"  ✗ Invalid key format. Key must start with cp_live_"))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-			"  Get your key at: https://cybermindcli1.vercel.app/dashboard"))
-		fmt.Println()
-		return ""
-	}
-	if len(input) < 16 {
-		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
-			"  ✗ Key too short — looks invalid. Check your dashboard."))
-		fmt.Println()
-		return ""
-	}
-
-	// Save it
-	if err := saveAPIKey(input); err != nil {
-		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
-			"  ✗ Could not save key: " + err.Error()))
-		fmt.Println()
-		return ""
-	}
-
-	masked := input[:min(12, len(input))] + strings.Repeat("•", max(0, len(input)-12))
-	fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
-		"  ✓ Key saved: " + masked))
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-		"  Key will be used automatically for all requests."))
+	fmt.Println(cyan2.Render("  CyberMind CLI needs a free API key to work."))
 	fmt.Println()
-	return input
+	fmt.Println(cyan2.Render("  Get your free key in 30 seconds:"))
+	fmt.Println(cyan2.Render("  ① Open:  https://cybermindcli1.vercel.app/dashboard"))
+	fmt.Println(cyan2.Render("  ② Sign up (free) → click \"New key\" → select your OS"))
+	fmt.Println(cyan2.Render("  ③ Copy the key (starts with cp_live_...)"))
+	fmt.Println(cyan2.Render("  ④ Paste it below"))
+	fmt.Println()
+	fmt.Println(dim2.Render("  🎉 Free Month active — all features unlimited until May 10, 2026"))
+	fmt.Println()
+
+	// Allow up to 3 attempts
+	for attempt := 1; attempt <= 3; attempt++ {
+		fmt.Print(purple.Render("  Paste your API key (or press Enter to skip): "))
+
+		var input string
+		fmt.Scanln(&input)
+		input = strings.TrimSpace(input)
+
+		// User skipped
+		if input == "" {
+			fmt.Println()
+			fmt.Println(dim2.Render("  Skipped. Set it later with: cybermind --key cp_live_xxxxx"))
+			fmt.Println()
+			return ""
+		}
+
+		// Validate format
+		if !strings.HasPrefix(input, "cp_live_") && !strings.HasPrefix(input, "sk_live_cm_") {
+			fmt.Println(red2.Render("  ✗ Invalid format. Key must start with cp_live_"))
+			if attempt < 3 {
+				fmt.Println(dim2.Render("  Try again or press Enter to skip."))
+				fmt.Println()
+				continue
+			}
+			fmt.Println(dim2.Render("  Get your key: https://cybermindcli1.vercel.app/dashboard"))
+			fmt.Println()
+			return ""
+		}
+		if len(input) < 20 {
+			fmt.Println(red2.Render("  ✗ Key too short — looks incomplete. Check your dashboard."))
+			if attempt < 3 {
+				fmt.Println(dim2.Render("  Try again or press Enter to skip."))
+				fmt.Println()
+				continue
+			}
+			return ""
+		}
+
+		// Save securely
+		if err := saveAPIKey(input); err != nil {
+			fmt.Println(red2.Render("  ✗ Could not save key: " + err.Error()))
+			fmt.Println()
+			return ""
+		}
+
+		masked := input[:min(12, len(input))] + strings.Repeat("•", max(0, len(input)-12))
+		fmt.Println()
+		fmt.Println(green2.Render("  ✓ Key saved: " + masked))
+		fmt.Println(green2.Render("  ✓ Key stored in ~/.cybermind/config.json (owner-only permissions)"))
+		fmt.Println(dim2.Render("  ✓ Used automatically for all future requests — no need to set again"))
+		fmt.Println()
+		return input
+	}
+
+	return ""
 }
 
 func main() {
@@ -1640,6 +1662,17 @@ func main() {
 		}
 
 		// TUI handles key prompt automatically if no key is set
+		// FIX: prompt for key BEFORE launching TUI — better UX
+		if api.GetAPIKey() == "" {
+			key := promptForAPIKey()
+			if key == "" {
+				// User skipped — still launch TUI in limited mode
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+					"  Launching in limited mode. Set key anytime: cybermind --key cp_live_xxxxx"))
+				fmt.Println()
+			}
+		}
+
 		p := tea.NewProgram(ui.NewModel(getLocalIP()))
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -3103,16 +3136,30 @@ func runVibeCoder(args []string) {
 	}
 
 	if !hasKey {
+		// FIX: interactive prompt instead of just printing a message
+		// User installed but didn't set key — ask them now, then start
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00d4ff")).Render(
 			"  ⚡ CBM Code — AI Coding Assistant"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  No API key configured. Add one with:"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			"    cybermind --key cp_live_xxxxx"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  Or set a provider key: cybermind vibe --key <key> --provider openrouter"))
 		fmt.Println()
-		// Don't exit — allow TUI to launch in chat-only mode
+
+		key := promptForAPIKey()
+		if key != "" {
+			// Key entered — import it and continue
+			_ = vibecoder.SetAPIKey("openrouter", key)
+			cfg.Providers["openrouter"] = vibecoder.ProviderConfig{
+				APIKey:       key,
+				DefaultModel: "mistralai/mistral-7b-instruct",
+			}
+			hasKey = true
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88")).Render(
+				"  ✓ Key saved. Launching CBM Code..."))
+			fmt.Println()
+		} else {
+			// User skipped — launch in limited mode (will show error on first AI call)
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Launching in limited mode. Set key anytime: cybermind --key cp_live_xxxxx"))
+			fmt.Println()
+		}
 	}
 
 	// Get working directory
