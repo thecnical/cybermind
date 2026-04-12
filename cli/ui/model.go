@@ -332,9 +332,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				strings.Contains(errStr, "backend_down") ||
 				strings.Contains(errStr, "cannot connect") ||
 				strings.Contains(errStr, "took too long") {
-				// Backend was sleeping — it auto-woke and retried, but still failed
-				// Show friendly message with retry hint
-				m.errMsg = "⟳ Backend is starting up — please resend your message in 10 seconds"
+				// Backend was sleeping (Render free tier cold start ~30-60s)
+				// Auto-retry automatically — user doesn't need to resend
+				m.infoMsg = "⟳ Backend waking up — auto-retrying your message..."
+				m.errMsg = ""
+				m.state = stateLoading
+				lastPrompt := m.lastPrompt
+				lastContext := m.contextMessages
+				return m, tea.Batch(
+					m.spinner.Tick,
+					retryAfterWake(lastPrompt, lastContext),
+				)
 			} else {
 				m.errMsg = errStr
 			}
@@ -432,6 +440,29 @@ func wakeBackend() tea.Cmd {
 	return func() tea.Msg {
 		ok := api.WakeUp()
 		return wakeMsg{ok: ok}
+	}
+}
+
+// retryAfterWake waits for the backend to wake up then retries the prompt.
+// Used when the first request fails due to Render cold start.
+func retryAfterWake(prompt string, history []api.Message) tea.Cmd {
+	return func() tea.Msg {
+		// Wait up to 90 seconds for backend to wake
+		api.WakeUpWithProgress(90*time.Second, nil)
+		// Small buffer after wake
+		time.Sleep(1 * time.Second)
+		// Retry with full context
+		var fullText strings.Builder
+		resp, err := api.SendChatStream(prompt, history, func(token string) {
+			fullText.WriteString(token)
+		})
+		if err != nil {
+			return apiResponseMsg{err: err}
+		}
+		if fullText.Len() > 0 {
+			return apiResponseMsg{response: fullText.String()}
+		}
+		return apiResponseMsg{response: resp}
 	}
 }
 

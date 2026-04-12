@@ -59,7 +59,7 @@ func (m Model) View() string {
 		lines := buildChatLines(m, rw)
 		lines = append(lines, lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8A2BE2")).
-			Render(fmt.Sprintf("  %s  Thinking... (auto-wakes if sleeping)", m.spinner.View())))
+			Render(fmt.Sprintf("  %s  Thinking... (backend auto-wakes if sleeping — ~30s first time)", m.spinner.View())))
 		b.WriteString(renderChatArea(lines, chatAreaHeight, m.scrollOffset))
 
 	case stateKeyPrompt:
