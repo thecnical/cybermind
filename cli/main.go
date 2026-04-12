@@ -18,6 +18,8 @@ import (
 	"cybermind-cli/storage"
 	"cybermind-cli/ui"
 	"cybermind-cli/utils"
+	"cybermind-cli/vibecoder"
+	vibetui "cybermind-cli/vibecoder/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -2926,6 +2928,9 @@ func main() {
 		}
 		runReport(format, localMode)
 
+	case "vibe", "neural":
+		runVibeCoder(args[1:])
+
 	default:
 		// BUG FIX: load storage so history save works
 		_ = storage.Load()
@@ -2988,4 +2993,223 @@ func getLocalModel() string {
 		return "llama3"
 	}
 	return cfg.LocalModel
+}
+
+// runVibeCoder launches the Vibe Coder TUI (cybermind vibe / cybermind neural).
+func runVibeCoder(args []string) {
+	// Parse flags
+	themeName := "cyber"
+	resume := false
+	noExec := false
+	debugMode := false
+	modelOverride := ""
+	providerOverride := ""
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--theme":
+			if i+1 < len(args) {
+				themeName = args[i+1]
+				i++
+			}
+		case "--resume":
+			resume = true
+		case "--no-exec":
+			noExec = true
+		case "--debug":
+			debugMode = true
+		case "--model":
+			if i+1 < len(args) {
+				modelOverride = args[i+1]
+				i++
+			}
+		case "--provider":
+			if i+1 < len(args) {
+				providerOverride = args[i+1]
+				i++
+			}
+		case "--key":
+			if i+1 < len(args) {
+				key := args[i+1]
+				provider := "openrouter"
+				if providerOverride != "" {
+					provider = providerOverride
+				}
+				if err := vibecoder.SetAPIKey(provider, key); err != nil {
+					printError("Failed to save key: " + err.Error())
+				} else {
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+						"  ✓ API key saved for " + provider))
+				}
+				i++
+			}
+		case "--whoami":
+			cfg, _ := vibecoder.LoadConfig()
+			info := vibecoder.GetWhoAmI(&cfg)
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff")).Render(
+				fmt.Sprintf("  Tier: %s | Provider: %s | Model: %s | Key: %s",
+					info.Tier, info.Provider, info.Model, info.MaskedKey)))
+			return
+		case "--providers":
+			cfg, _ := vibecoder.LoadConfig()
+			providers := vibecoder.ListProviders(&cfg)
+			for _, p := range providers {
+				status := "no key"
+				if p.HasKey {
+					status = "configured"
+				}
+				fmt.Printf("  %-16s %s  (default: %s)\n", p.Name, status, p.DefaultModel)
+			}
+			return
+		}
+	}
+
+	// Load vibecoder config
+	cfg, err := vibecoder.LoadConfig()
+	if err != nil {
+		printError("Failed to load vibecoder config: " + err.Error())
+	}
+
+	// Apply overrides
+	if providerOverride != "" {
+		cfg.DefaultProvider = providerOverride
+	}
+	if modelOverride != "" {
+		cfg.DefaultModel = modelOverride
+	}
+
+	// Check for API key — also check the main ~/.cybermind/config.json key
+	// and auto-import it into vibecoder config if vibecoder has no keys yet
+	hasKey := false
+	for _, pc := range cfg.Providers {
+		if pc.APIKey != "" {
+			hasKey = true
+			break
+		}
+	}
+	if !hasKey {
+		// Try to read the main CLI key from ~/.cybermind/config.json
+		if mainKey := api.GetAPIKey(); mainKey != "" {
+			// Auto-import: save the main key as the openrouter provider key
+			// so users don't need to configure separately
+			_ = vibecoder.SetAPIKey("openrouter", mainKey)
+			cfg.Providers["openrouter"] = vibecoder.ProviderConfig{
+				APIKey:       mainKey,
+				DefaultModel: "mistralai/mistral-7b-instruct",
+			}
+			hasKey = true
+		}
+	}
+
+	if !hasKey {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00d4ff")).Render(
+			"  ⚡ CyberMind Vibe Coder"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  No API key configured. Add one with:"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			"    cybermind --key cp_live_xxxxx"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Or set a provider key: cybermind vibe --key <key> --provider openrouter"))
+		fmt.Println()
+		// Don't exit — allow TUI to launch in chat-only mode
+	}
+
+	// Get working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+
+	// Create session using NewSession (proper UUID + defaults)
+	session := vibecoder.NewSession(cwd)
+	session.EditMode = cfg.EditMode
+	session.InteractMode = vibecoder.InteractModeAgent // default to agent mode for `vibe`
+	session.EffortLevel = cfg.EffortLevel
+	session.DebugMode = debugMode
+
+	// Handle --resume: load most recent checkpoint
+	if resume {
+		metas, err := vibecoder.ListRecentSessions()
+		if err == nil && len(metas) > 0 {
+			if restored, err := vibecoder.ResumeSession(metas[0].FilePath); err == nil {
+				session = restored
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff")).Render(
+					fmt.Sprintf("  ↩ Resumed session from %s", metas[0].Timestamp.Format("2006-01-02 15:04"))))
+			}
+		}
+	}
+
+	// noExec is enforced at the tool executor level — store in session context
+	// by setting it on the ToolEnv when the agent loop is created
+	_ = noExec
+
+	// Select theme
+	theme := vibetui.ThemeByName(themeName)
+
+	// Create and run TUI
+	model := vibetui.NewVibeModel(session, theme)
+
+	// ── Wire the full backend ──────────────────────────────────────────────
+	// Build provider chain (CyberMind backend → direct provider keys)
+	providerChain, providerErr := vibecoder.BuildProviderChain(cfg)
+	if providerErr != nil {
+		// No providers — TUI will show the warning, still launch
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+			"  ⚠ " + providerErr.Error()))
+	} else {
+		// Build tool engine
+		guard, guardErr := vibecoder.NewWorkspaceGuard(cwd)
+		if guardErr != nil {
+			guard, _ = vibecoder.NewWorkspaceGuard(".")
+		}
+		toolEnv := &vibecoder.ToolEnv{
+			Guard:         guard,
+			WorkspaceRoot: cwd,
+			NoExec:        noExec,
+			Timeout:       cfg.CommandTimeoutSecs,
+			SessionID:     session.ID,
+		}
+		registry := vibecoder.NewDefaultToolRegistry()
+		toolEngine := vibecoder.NewToolEngine(registry, toolEnv)
+
+		// Build checkpoint manager
+		checkpointMgr := vibecoder.NewCheckpointManager("", cfg.CheckpointIntervalTurns)
+
+		// Build agent loop
+		agentLoop := vibecoder.NewAgentLoop(session, providerChain, toolEngine, checkpointMgr, vibecoder.AgentLoopConfig{
+			MaxIterations:   50,
+			WarnAt:          0.8,
+			CircuitBreakerN: 3,
+			StuckHashCount:  3,
+		})
+
+		// Build memory
+		memory := vibecoder.NewCyberMindMemory(cwd)
+
+		// Wire backend into TUI
+		backend := &vibetui.Backend{
+			AgentLoop:   agentLoop,
+			FileIndexer: nil, // started below
+			Memory:      memory,
+		}
+		model.SetBackend(backend)
+
+		// Start file indexer in background
+		indexer := vibecoder.NewFileIndexer(cwd, "", nil)
+		indexer.LoadIgnorePatterns()
+		backend.FileIndexer = indexer
+		indexer.Start(nil) // background goroutine, no progress callback needed at startup
+	}
+
+	// Create the bubbletea program
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	// Give the model a reference to the program so agent loop callbacks
+	// can send messages back into the event loop via p.Send()
+	model.SetProgram(p)
+
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Vibe Coder error: %v\n", err)
+		os.Exit(1)
+	}
 }
