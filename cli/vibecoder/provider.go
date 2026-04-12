@@ -264,10 +264,16 @@ func (a *OpenAICompatAdapter) readSSE(ctx context.Context, r io.Reader, ch chan<
 
 func NewOpenRouterProvider(apiKey string) Provider {
 	return newAdapter("openrouter", "https://openrouter.ai/api/v1", apiKey, []ModelInfo{
-		{ID: "mistralai/mistral-7b-instruct", Name: "Mistral 7B Instruct", Provider: "openrouter", MaxTokens: 32768},
-		{ID: "meta-llama/llama-3-8b-instruct:free", Name: "Llama 3 8B Instruct (free)", Provider: "openrouter", MaxTokens: 8192},
-		{ID: "google/gemma-3-27b-it:free", Name: "Gemma 3 27B IT (free)", Provider: "openrouter", MaxTokens: 8192},
-		{ID: "deepseek/deepseek-r1:free", Name: "DeepSeek R1 (free)", Provider: "openrouter", MaxTokens: 65536},
+		// Coding-optimized models — best for CBM Code
+		{ID: "minimax/minimax-m2.5:free",                        Name: "MiniMax M2.5 (free)",        Provider: "openrouter", MaxTokens: 40960},
+		{ID: "qwen/qwen3-coder:free",                            Name: "Qwen3 Coder (free)",         Provider: "openrouter", MaxTokens: 32768},
+		{ID: "deepseek/deepseek-r1:free",                        Name: "DeepSeek R1 (free)",         Provider: "openrouter", MaxTokens: 65536},
+		{ID: "google/gemma-4-31b-it:free",                       Name: "Gemma 4 31B (free)",         Provider: "openrouter", MaxTokens: 32768},
+		{ID: "meta-llama/llama-3.3-70b-instruct:free",           Name: "Llama 3.3 70B (free)",       Provider: "openrouter", MaxTokens: 8192},
+		{ID: "cognitivecomputations/dolphin-mistral-24b-venice-edition:free", Name: "Dolphin Uncensored (free)", Provider: "openrouter", MaxTokens: 32768},
+		{ID: "openrouter/free",                                  Name: "OpenRouter Free Router",     Provider: "openrouter", MaxTokens: 8192},
+		// Paid fallbacks
+		{ID: "mistralai/mistral-7b-instruct",                    Name: "Mistral 7B Instruct",        Provider: "openrouter", MaxTokens: 32768},
 	})
 }
 
