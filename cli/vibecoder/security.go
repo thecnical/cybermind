@@ -142,7 +142,7 @@ func (g *WorkspaceGuard) IsSensitive(p string) bool {
 	return false
 }
 
-// blockedCommands is the list of dangerous command substrings.
+// blockedCommands is the list of dangerous command substrings (legacy — kept for compatibility).
 var blockedCommands = []string{
 	"rm -rf /",
 	"rm -rf ~",
@@ -156,15 +156,59 @@ var blockedCommands = []string{
 	"mkfs.",
 }
 
-// IsCommandBlocked returns true if cmd (lowercased, trimmed) contains any
-// blocked pattern.
+// blockedPatterns is a comprehensive regex-based blocklist that catches bypass attempts.
+// These patterns are checked AFTER lowercasing and trimming the command.
+var blockedPatterns = []*regexp.Regexp{
+	// Recursive deletion of root or home
+	regexp.MustCompile(`\brm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+[/~]`),
+	regexp.MustCompile(`\brm\s+--[a-z-]*\s+[/~]`),
+	// Disk destruction
+	regexp.MustCompile(`\bdd\s+if=`),
+	regexp.MustCompile(`\bmkfs\b`),
+	regexp.MustCompile(`\bshred\b`),
+	regexp.MustCompile(`>\s*/dev/(sda|sdb|sdc|hda|nvme|disk)`),
+	// Mass deletion
+	regexp.MustCompile(`\bfind\s+[/~].*-delete\b`),
+	regexp.MustCompile(`\bfind\s+[/~].*-exec\s+rm\b`),
+	// Fork bomb
+	regexp.MustCompile(`:\(\)\s*\{.*:\|:.*\}`),
+	// Pipe to shell (code execution from network)
+	regexp.MustCompile(`\|\s*(ba)?sh\b`),
+	regexp.MustCompile(`\|\s*zsh\b`),
+	regexp.MustCompile(`\|\s*python[23]?\s+-`),
+	// Windows disk format
+	regexp.MustCompile(`\bformat\s+[a-z]:`),
+	regexp.MustCompile(`\bdel\s+/[fsq]`),
+	// Chmod 777 on system dirs
+	regexp.MustCompile(`\bchmod\s+[0-9]*7[0-9]*7[0-9]*\s+/`),
+	// Overwrite critical files
+	regexp.MustCompile(`>\s*/etc/(passwd|shadow|sudoers|hosts|crontab)`),
+	regexp.MustCompile(`>\s*/boot/`),
+	// Crontab manipulation
+	regexp.MustCompile(`\bcrontab\s+-r\b`),
+	// Uninstall self
+	regexp.MustCompile(`cybermind\s+uninstall`),
+}
+
+// IsCommandBlocked returns true if cmd contains any blocked pattern.
+// Checks both the legacy substring list and the comprehensive regex patterns.
 func IsCommandBlocked(cmd string) bool {
 	lower := strings.ToLower(strings.TrimSpace(cmd))
+
+	// Legacy substring check
 	for _, blocked := range blockedCommands {
 		if strings.Contains(lower, strings.ToLower(blocked)) {
 			return true
 		}
 	}
+
+	// Comprehensive regex check
+	for _, re := range blockedPatterns {
+		if re.MatchString(lower) {
+			return true
+		}
+	}
+
 	return false
 }
 

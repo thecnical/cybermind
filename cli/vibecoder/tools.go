@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -454,11 +456,13 @@ func (t *GlobSearchTool) Execute(ctx context.Context, params json.RawMessage, en
 		return ToolResult{}, err
 	}
 
-	// If pattern is not absolute, join with workspace root.
-	pattern := p.Pattern
-	if !filepath.IsAbs(pattern) {
-		pattern = filepath.Join(env.WorkspaceRoot, pattern)
+	// FIX: reject absolute paths — they bypass workspace root join
+	if filepath.IsAbs(p.Pattern) {
+		return ToolResult{}, fmt.Errorf("glob_search: absolute paths not allowed; use relative paths within workspace")
 	}
+
+	// Join with workspace root
+	pattern := filepath.Join(env.WorkspaceRoot, p.Pattern)
 
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -645,9 +649,13 @@ func (t *RunBackgroundCommandTool) Execute(ctx context.Context, params json.RawM
 		return ToolResult{}, fmt.Errorf("run_background_command: command is blocked for safety reasons")
 	}
 
+	// FIX: background commands get a maximum lifetime of 30 minutes to prevent resource exhaustion
+	const maxBgLifetime = 30 * time.Minute
+	bgCtx, bgCancel := context.WithTimeout(context.Background(), maxBgLifetime)
+
 	shell, args := DefaultShell()
 	args = append(args, p.Command)
-	cmd := exec.Command(shell, args...)
+	cmd := exec.CommandContext(bgCtx, shell, args...)
 	cmd.Dir = env.WorkspaceRoot
 
 	bp := &backgroundProcess{cmd: cmd}
@@ -655,6 +663,7 @@ func (t *RunBackgroundCommandTool) Execute(ctx context.Context, params json.RawM
 	cmd.Stderr = &bp.buf
 
 	if err := cmd.Start(); err != nil {
+		bgCancel()
 		return ToolResult{}, fmt.Errorf("run_background_command: start failed: %w", err)
 	}
 
@@ -662,15 +671,16 @@ func (t *RunBackgroundCommandTool) Execute(ctx context.Context, params json.RawM
 	bgProcesses[p.ID] = bp
 	bgMu.Unlock()
 
-	// Reap the process in background.
+	// Reap the process in background; cancel context when done.
 	go func() {
+		defer bgCancel()
 		_ = cmd.Wait()
 		bp.mu.Lock()
 		bp.done = true
 		bp.mu.Unlock()
 	}()
 
-	return ToolResult{Output: fmt.Sprintf("started: pid=%d", cmd.Process.Pid)}, nil
+	return ToolResult{Output: fmt.Sprintf("started: pid=%d (max lifetime: 30m)", cmd.Process.Pid)}, nil
 }
 
 // GetCommandOutputTool — get_command_output
@@ -830,9 +840,10 @@ func (t *RefactorCodeTool) Execute(ctx context.Context, params json.RawMessage, 
 	return ToolResult{Output: fmt.Sprintf("[refactor_code] file: %s\ninstruction: %s\n%s\n[AI should refactor per the instruction above]", p.Path, p.Instruction, string(data))}, nil
 }
 
-// ─── 11.5 Web tools (stubs) ───────────────────────────────────────────────────
+// ─── 11.5 Web tools ───────────────────────────────────────────────────────────
 
 // WebFetchTool — web_fetch
+// FIX: SSRF protection — blocks private/internal IPs and cloud metadata endpoints
 type WebFetchTool struct{}
 
 func (t *WebFetchTool) Name() string { return "web_fetch" }
@@ -847,11 +858,29 @@ func (t *WebFetchTool) Execute(ctx context.Context, params json.RawMessage, env 
 		return ToolResult{}, err
 	}
 
+	// FIX: SSRF protection
+	if err := validateFetchURL(p.URL); err != nil {
+		return ToolResult{}, fmt.Errorf("web_fetch: %w", err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("web_fetch: %w", err)
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	req.Header.Set("User-Agent", "CyberMind-VibeCoder/1.0")
+
+	// FIX: custom transport that validates redirect targets
+	transport := &ssrfSafeTransport{wrapped: http.DefaultTransport}
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects")
+			}
+			return validateFetchURL(req.URL.String())
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("web_fetch: %w", err)
@@ -1000,7 +1029,60 @@ func (t *SemanticSearchTool) Execute(ctx context.Context, params json.RawMessage
 	return ToolResult{Output: "Semantic search not yet implemented. Query: " + p.Query}, nil
 }
 
-// ─── DefaultToolRegistry ──────────────────────────────────────────────────────
+// ─── SSRF protection helpers ──────────────────────────────────────────────────
+
+// blockedMetadataHosts are cloud metadata endpoints that must never be fetched.
+var blockedMetadataHosts = map[string]bool{
+	"169.254.169.254":          true, // AWS/GCP/Azure IMDS
+	"metadata.google.internal": true,
+	"metadata.internal":        true,
+	"169.254.170.2":            true, // ECS task metadata
+}
+
+// validateFetchURL checks that a URL is safe to fetch (no SSRF vectors).
+func validateFetchURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("only http/https URLs are allowed (got %q)", u.Scheme)
+	}
+	host := u.Hostname()
+	if blockedMetadataHosts[host] {
+		return fmt.Errorf("access to metadata endpoint %q is blocked", host)
+	}
+	// Resolve hostname and check all IPs
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		// If we can't resolve, allow through (may be a valid external host)
+		return nil
+	}
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("access to private/internal IP %q is blocked (SSRF protection)", addr)
+		}
+	}
+	return nil
+}
+
+// ssrfSafeTransport wraps http.RoundTripper and validates the resolved IP before connecting.
+type ssrfSafeTransport struct {
+	wrapped http.RoundTripper
+}
+
+func (t *ssrfSafeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := validateFetchURL(req.URL.String()); err != nil {
+		return nil, err
+	}
+	return t.wrapped.RoundTrip(req)
+}
+
+// ─── DefaultToolRegistry ───────────────────────────────────────────────────────
 
 // NewDefaultToolRegistry creates a ToolRegistry pre-populated with all built-in tools.
 func NewDefaultToolRegistry() *ToolRegistry {
