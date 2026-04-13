@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -3353,8 +3355,9 @@ func runVibeCoder(args []string) {
 	// by setting it on the ToolEnv when the agent loop is created
 	_ = noExec
 
-	// Select theme
-	theme := vibetui.ThemeByName(themeName)
+	// Select theme (kept for future use)
+	_ = vibetui.ThemeByName(themeName)
+	_ = themeName
 
 	// Get plan info for welcome screen — read from cached config, don't block on network
 	tier := "Free"
@@ -3380,23 +3383,13 @@ func runVibeCoder(args []string) {
 		userName = api.GetCachedUserName()
 	}
 
-	// Create and run TUI
-	model := vibetui.NewVibeModelWithInfo(session, theme, vibetui.WelcomeInfo{
-		Tier:      tier,
-		Model:     activeModel,
-		Workspace: cwd,
-		UserName:  userName,
-	})
-
 	// ── Wire the full backend ──────────────────────────────────────────────
-	// Build provider chain (CyberMind backend → direct provider keys)
+	var agentLoop *vibecoder.AgentLoop
 	providerChain, providerErr := vibecoder.BuildProviderChain(cfg)
 	if providerErr != nil {
-		// No providers — TUI will show the warning, still launch
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
 			"  ⚠ " + providerErr.Error()))
 	} else {
-		// Build tool engine
 		guard, guardErr := vibecoder.NewWorkspaceGuard(cwd)
 		if guardErr != nil {
 			guard, _ = vibecoder.NewWorkspaceGuard(".")
@@ -3410,56 +3403,246 @@ func runVibeCoder(args []string) {
 		}
 		registry := vibecoder.NewDefaultToolRegistry()
 		toolEngine := vibecoder.NewToolEngine(registry, toolEnv)
-
-		// Build checkpoint manager
 		checkpointMgr := vibecoder.NewCheckpointManager("", cfg.CheckpointIntervalTurns)
-
-		// Build agent loop
-		agentLoop := vibecoder.NewAgentLoop(session, providerChain, toolEngine, checkpointMgr, vibecoder.AgentLoopConfig{
+		agentLoop = vibecoder.NewAgentLoop(session, providerChain, toolEngine, checkpointMgr, vibecoder.AgentLoopConfig{
 			MaxIterations:   50,
 			WarnAt:          0.8,
 			CircuitBreakerN: 3,
 			StuckHashCount:  3,
 		})
-
-		// Build memory
-		memory := vibecoder.NewCyberMindMemory(cwd)
-
-		// Wire backend into TUI
-		backend := &vibetui.Backend{
-			AgentLoop:   agentLoop,
-			FileIndexer: nil, // started below
-			Memory:      memory,
-		}
-		model.SetBackend(backend)
-
 		// Start file indexer in background
 		indexer := vibecoder.NewFileIndexer(cwd, "", nil)
 		indexer.LoadIgnorePatterns()
-		backend.FileIndexer = indexer
-		indexer.Start(nil) // background goroutine, no progress callback needed at startup
+		indexer.Start(nil)
 	}
 
-	// Create the bubbletea program
-	// On Windows: bubbletea needs a real console handle — use AltScreen for proper rendering
-	// WithInput(os.Stdin) ensures we get the real console, not a pipe
-	opts := []tea.ProgramOption{
-		tea.WithInput(os.Stdin),
-		tea.WithOutput(os.Stdout),
-	}
-	// AltScreen gives Claude Code-style full-screen experience on real terminals
-	if runtime.GOOS != "windows" {
-		// On Linux/macOS: AltScreen works perfectly
-		opts = append(opts, tea.WithAltScreen())
-	}
-	p := tea.NewProgram(model, opts...)
+	// ── Launch stable readline-based interface ─────────────────────────────
+	// Replaces bubbletea which has Windows console compatibility issues.
+	// Direct terminal I/O — works on Windows, macOS, Linux without any issues.
+	runVibeCoderCLI(session, cwd, tier, activeModel, userName, agentLoop)
+}
 
-	// Give the model a reference to the program so agent loop callbacks
-	// can send messages back into the event loop via p.Send()
-	model.SetProgram(p)
+// runVibeCoderCLI is the stable, cross-platform CBM Code interface.
+// Uses direct readline I/O — banner stays visible, prompt always works.
+func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userName string, agentLoop *vibecoder.AgentLoop) {
+	cyan2   := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff"))
+	purple2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2"))
+	green2  := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88"))
+	yellow2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
+	dim2    := lipgloss.NewStyle().Foreground(lipgloss.Color("#777777"))
+	red2    := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444"))
 
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "CBM Code error: %v\n", err)
-		os.Exit(1)
+	// ── Print welcome banner (stays visible, never disappears) ────────────
+	fmt.Println()
+	vibebannerLines := []struct{ text, color string }{
+		{` ██████╗██████╗ ███╗   ███╗     ██████╗ ██████╗ ██████╗ ███████╗`, "#00d4ff"},
+		{`██╔════╝██╔══██╗████╗ ████║    ██╔════╝██╔═══██╗██╔══██╗██╔════╝`, "#00b8e6"},
+		{`██║     ██████╔╝██╔████╔██║    ██║     ██║   ██║██║  ██║█████╗  `, "#009fcc"},
+		{`██║     ██╔══██╗██║╚██╔╝██║    ██║     ██║   ██║██║  ██║██╔══╝  `, "#7B68EE"},
+		{`╚██████╗██████╔╝██║ ╚═╝ ██║    ╚██████╗╚██████╔╝██████╔╝███████╗`, "#8A2BE2"},
+		{` ╚═════╝╚═════╝ ╚═╝     ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝`, "#9400D3"},
+	}
+	for _, l := range vibebannerLines {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(l.color)).Render(l.text))
+	}
+	fmt.Println()
+
+	// Mascot
+	for _, ml := range []string{"         ▐▛███▜▌         ", "        ▝▜█████▛▘        ", "          ▘▘ ▝▝          "} {
+		fmt.Println(cyan2.Render(ml))
+	}
+	fmt.Println()
+
+	greeting := "  Welcome back!"
+	if userName != "" {
+		greeting = fmt.Sprintf("  Welcome back %s!", userName)
+	}
+	fmt.Println(cyan2.Bold(true).Render(greeting))
+	fmt.Println()
+	fmt.Println(dim2.Render(fmt.Sprintf("  %-12s %s", "Tier:", tier)))
+	fmt.Println(dim2.Render(fmt.Sprintf("  %-12s %s", "Model:", activeModel)))
+	fmt.Println(dim2.Render(fmt.Sprintf("  %-12s %s", "Workspace:", cwd)))
+	fmt.Println()
+	fmt.Println(dim2.Render("  ─────────────────────────────────────────────────────"))
+	fmt.Println(yellow2.Render("  Tips:"))
+	fmt.Println(green2.Render("  Type your task and press Enter to get AI response"))
+	fmt.Println(green2.Render("  /add <file>  — add file to context"))
+	fmt.Println(green2.Render("  /clear       — reset context"))
+	fmt.Println(green2.Render("  /mode agent  — autonomous mode (default)"))
+	fmt.Println(green2.Render("  /mode chat   — chat only mode"))
+	fmt.Println(green2.Render("  /help        — show all commands"))
+	fmt.Println(green2.Render("  /exit        — quit  |  Ctrl+C to cancel"))
+	fmt.Println(dim2.Render("  ─────────────────────────────────────────────────────"))
+	fmt.Println()
+
+	// ── Main REPL loop ─────────────────────────────────────────────────────
+	reader := bufio.NewReader(os.Stdin)
+	var chatHistory []vibecoder.APIMessage
+	editMode := string(session.EditMode)
+	if editMode == "" {
+		editMode = "guard"
+	}
+
+	for {
+		// Edit mode icon
+		icon := "⟩"
+		switch editMode {
+		case "guard":      icon = "🛡 ⟩"
+		case "auto_edit":  icon = "✏ ⟩"
+		case "blueprint":  icon = "📐 ⟩"
+		case "autopilot":  icon = "🤖 ⟩"
+		case "unleashed":  icon = "⚡ ⟩"
+		}
+
+		fmt.Print(cyan2.Render(icon) + " ")
+
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println()
+			fmt.Println(dim2.Render("  Goodbye!"))
+			return
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// ── Slash commands ─────────────────────────────────────────────────
+		if strings.HasPrefix(line, "/") {
+			parts := strings.Fields(line)
+			switch parts[0] {
+			case "/exit", "/quit":
+				fmt.Println(dim2.Render("  Goodbye!"))
+				return
+
+			case "/clear":
+				session.History = nil
+				chatHistory = nil
+				session.TokensUsed = 0
+				fmt.Println(green2.Render("  ✓ Context cleared"))
+
+			case "/help":
+				fmt.Println()
+				fmt.Println(cyan2.Render("  Commands:"))
+				fmt.Println(dim2.Render("  /add <file>           — add file to context"))
+				fmt.Println(dim2.Render("  /clear                — reset context window"))
+				fmt.Println(dim2.Render("  /mode agent|chat      — switch mode"))
+				fmt.Println(dim2.Render("  /effort low|medium|max — set effort level"))
+				fmt.Println(dim2.Render("  /model <name>         — override model"))
+				fmt.Println(dim2.Render("  /undo                 — undo last file change"))
+				fmt.Println(dim2.Render("  /debug                — toggle debug mode"))
+				fmt.Println(dim2.Render("  /exit                 — quit"))
+				fmt.Println()
+
+			case "/mode":
+				if len(parts) > 1 {
+					switch parts[1] {
+					case "agent":
+						session.InteractMode = vibecoder.InteractModeAgent
+						fmt.Println(cyan2.Render("  ⇄ Agent mode"))
+					case "chat":
+						session.InteractMode = vibecoder.InteractModeChat
+						fmt.Println(cyan2.Render("  ⇄ Chat mode"))
+					default:
+						fmt.Println(red2.Render("  Usage: /mode agent|chat"))
+					}
+				}
+
+			case "/effort":
+				if len(parts) > 1 {
+					switch parts[1] {
+					case "low":    session.EffortLevel = vibecoder.EffortLow;    fmt.Println(dim2.Render("  ⇄ Effort: low"))
+					case "medium": session.EffortLevel = vibecoder.EffortMedium; fmt.Println(dim2.Render("  ⇄ Effort: medium"))
+					case "max":    session.EffortLevel = vibecoder.EffortMax;    fmt.Println(cyan2.Render("  ⇄ Effort: max"))
+					}
+				}
+
+			case "/add":
+				if len(parts) > 1 {
+					filePath := strings.Join(parts[1:], " ")
+					content, readErr := os.ReadFile(filePath)
+					if readErr != nil {
+						fmt.Println(red2.Render("  ✗ Cannot read: " + filePath))
+					} else {
+						fileCtx := fmt.Sprintf("[File: %s]\n```\n%s\n```", filePath, string(content))
+						chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: fileCtx})
+						fmt.Println(green2.Render(fmt.Sprintf("  ✓ Added: %s (%d bytes)", filePath, len(content))))
+					}
+				} else {
+					fmt.Println(red2.Render("  Usage: /add <filepath>"))
+				}
+
+			case "/undo":
+				if snap, ok := session.PopUndo(); ok {
+					if writeErr := os.WriteFile(snap.Path, []byte(snap.OldContent), 0644); writeErr == nil {
+						fmt.Println(yellow2.Render("  ↩ Undone: " + snap.Path))
+					} else {
+						fmt.Println(red2.Render("  ✗ Undo failed: " + writeErr.Error()))
+					}
+				} else {
+					fmt.Println(dim2.Render("  Nothing to undo"))
+				}
+
+			case "/debug":
+				session.DebugMode = !session.DebugMode
+				if session.DebugMode {
+					fmt.Println(yellow2.Render("  🔍 Debug mode ON"))
+				} else {
+					fmt.Println(dim2.Render("  Debug mode OFF"))
+				}
+
+			case "/model":
+				if len(parts) > 1 {
+					activeModel = strings.Join(parts[1:], " ")
+					fmt.Println(cyan2.Render("  ⇄ Model: " + activeModel))
+				}
+
+			default:
+				fmt.Println(dim2.Render("  Unknown: " + parts[0] + " (type /help)"))
+			}
+			continue
+		}
+
+		// ── AI prompt ──────────────────────────────────────────────────────
+		prompt := line
+		fmt.Println()
+		fmt.Print(purple2.Render("  ◆ CBM Code: "))
+
+		chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: prompt})
+
+		var responseErr error
+		if agentLoop != nil {
+			agentLoop.SetOnToken(func(token string) { fmt.Print(token) })
+			agentLoop.SetOnToolStatus(func(tool, action string) {
+				fmt.Println()
+				fmt.Print(dim2.Render(fmt.Sprintf("  ⟳ %s: %s", tool, action)))
+			})
+			agentLoop.SetOnWarn(func(msg string) {
+				fmt.Println()
+				fmt.Print(yellow2.Render("  ⚠ " + msg))
+			})
+			session.History = append(session.History, vibecoder.Message{
+				Role:    vibecoder.RoleUser,
+				Content: prompt,
+				Tokens:  vibecoder.EstimateTokensPublic(prompt),
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+			responseErr = agentLoop.Run(ctx)
+			cancel()
+		} else {
+			_, responseErr = vibecoder.SendVibeChat(prompt, chatHistory[:len(chatHistory)-1], func(token string) {
+				fmt.Print(token)
+			})
+		}
+
+		fmt.Println()
+		fmt.Println()
+
+		if responseErr != nil {
+			fmt.Println(red2.Render("  ✗ " + responseErr.Error()))
+			fmt.Println()
+		} else {
+			chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: "[response]"})
+		}
 	}
 }
