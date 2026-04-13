@@ -542,27 +542,59 @@ onStatus("HTTP", fmt.Sprintf("Status %d | Server: %s", resp.StatusCode, server))
 break
 }
 
-// 7. Shodan InternetDB (free, no key)
-if onStatus != nil { onStatus("Shodan InternetDB", "") }
+// 7. Shodan — use real API if key available, else free InternetDB
+if onStatus != nil { onStatus("Shodan", "") }
 if len(intel.DNSIPs) > 0 {
 ip := intel.DNSIPs[0]
-// Skip private IPs
 if !isPrivateIPOmega(ip) {
-shodanClient := &http.Client{Timeout: 8 * time.Second}
-shodanResp, err := shodanClient.Get("https://internetdb.shodan.io/" + ip)
+shodanAPIKey := os.Getenv("SHODAN_API_KEY")
+shodanClient := &http.Client{Timeout: 10 * time.Second}
+
+var shodanURL string
+if shodanAPIKey != "" {
+	// Real Shodan API — full data: org, ISP, OS, all services, CVEs
+	shodanURL = "https://api.shodan.io/shodan/host/" + ip + "?key=" + shodanAPIKey
+	if onStatus != nil { onStatus("Shodan API", "using real API key") }
+} else {
+	// Free InternetDB — limited but no key needed
+	shodanURL = "https://internetdb.shodan.io/" + ip
+	if onStatus != nil { onStatus("Shodan InternetDB", "free tier") }
+}
+
+shodanResp, err := shodanClient.Get(shodanURL)
 if err == nil && shodanResp.StatusCode == 200 {
 defer shodanResp.Body.Close()
 var body strings.Builder
-buf := make([]byte, 8192)
+buf := make([]byte, 32768)
 for {
-n, err := shodanResp.Body.Read(buf)
+n, readErr := shodanResp.Body.Read(buf)
 if n > 0 { body.Write(buf[:n]) }
-if err != nil { break }
+if readErr != nil { break }
 }
 raw := body.String()
+
+if shodanAPIKey != "" {
+	// Parse full Shodan API response
+	// Extract org, isp, os, country
+	if org := extractJSONStringOmega(raw, "org"); org != "" {
+		intel.ShodanData["org"] = org
+		intel.TechStack = append(intel.TechStack, "Org:"+org)
+	}
+	if isp := extractJSONStringOmega(raw, "isp"); isp != "" {
+		intel.ShodanData["isp"] = isp
+	}
+	if osHint := extractJSONStringOmega(raw, "os"); osHint != "" && intel.OSHint == "" {
+		intel.OSHint = osHint
+		intel.ShodanData["os"] = osHint
+	}
+	if country := extractJSONStringOmega(raw, "country_name"); country != "" {
+		intel.ShodanData["country"] = country
+	}
+}
+
+// Parse ports (works for both API and InternetDB)
 if ports := extractJSONArrayOmega(raw, "ports"); ports != "" {
 intel.ShodanData["ports"] = ports
-// Parse open ports
 for _, p := range strings.Split(ports, ",") {
 p = strings.TrimSpace(p)
 var port int
@@ -579,9 +611,12 @@ intel.ShodanData["tags"] = tags
 if strings.Contains(tags, "cloud") { intel.TechStack = append(intel.TechStack, "Cloud hosted") }
 if strings.Contains(tags, "vpn") { intel.TechStack = append(intel.TechStack, "VPN") }
 if strings.Contains(tags, "tor") { intel.TechStack = append(intel.TechStack, "Tor exit node") }
+if strings.Contains(tags, "self-signed") { intel.TechStack = append(intel.TechStack, "Self-signed cert") }
+if strings.Contains(tags, "starttls") { intel.TechStack = append(intel.TechStack, "STARTTLS") }
 }
 if onStatus != nil {
-onStatus("Shodan", fmt.Sprintf("ports=[%s] vulns=[%s]", intel.ShodanData["ports"], intel.ShodanData["vulns"]))
+onStatus("Shodan", fmt.Sprintf("ports=[%s] vulns=[%s] org=[%s]",
+	intel.ShodanData["ports"], intel.ShodanData["vulns"], intel.ShodanData["org"]))
 }
 }
 }
@@ -619,6 +654,26 @@ end := strings.Index(jsonStr[start:], "]")
 if end < 0 { return "" }
 inner := strings.ReplaceAll(jsonStr[start+1:start+end], `"`, "")
 return strings.TrimSpace(inner)
+}
+
+// extractJSONStringOmega extracts a string value from JSON by key
+func extractJSONStringOmega(jsonStr, key string) string {
+search := `"` + key + `":`
+idx := strings.Index(jsonStr, search)
+if idx < 0 { return "" }
+rest := jsonStr[idx+len(search):]
+rest = strings.TrimSpace(rest)
+if len(rest) == 0 { return "" }
+if rest[0] == '"' {
+	end := strings.Index(rest[1:], `"`)
+	if end < 0 { return "" }
+	return rest[1 : end+1]
+}
+// null or number
+if strings.HasPrefix(rest, "null") { return "" }
+end := strings.IndexAny(rest, ",}\n")
+if end < 0 { return strings.TrimSpace(rest) }
+return strings.TrimSpace(rest[:end])
 }
 
 
