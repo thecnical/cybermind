@@ -166,6 +166,7 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /cve <CVE-ID>") + d.Render("         → CVE intelligence from NVD"))
 	fmt.Println(g.Render("  cybermind /cve --latest") + d.Render("         → latest critical CVEs (7 days)"))
 	fmt.Println(g.Render("  cybermind /wordlist <target>") + d.Render("    → custom wordlist generator"))
+	fmt.Println(g.Render("  cybermind /doctor") + d.Render("               → update CLI + check/install tools"))
 	fmt.Println(g.Render("  cybermind report") + d.Render("                → generate pentest report from history"))
 	fmt.Println(g.Render("  cybermind --local") + d.Render("               → use local Ollama AI (CYBERMIND_LOCAL=true)"))
 	fmt.Println()
@@ -1074,13 +1075,156 @@ func printAbhimanyuSummary(results []abhimanyu.ExploitResult, ctx *abhimanyu.Abh
 	fmt.Println()
 }
 
+// runSelfUpdate downloads and replaces the current binary with the latest version.
+// Works on Linux, macOS, and Windows.
+func runSelfUpdate() {
+	cyan2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF"))
+	green2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00"))
+	dim2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#777777"))
+	red2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444"))
+	yellow2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
+
+	// Determine download URL based on OS/arch
+	var binaryURL string
+	switch runtime.GOOS {
+	case "linux":
+		if runtime.GOARCH == "arm64" {
+			binaryURL = "https://cybermindcli1.vercel.app/cybermind-linux-arm64"
+		} else {
+			binaryURL = "https://cybermindcli1.vercel.app/cybermind-linux-amd64"
+		}
+	case "darwin":
+		if runtime.GOARCH == "arm64" {
+			binaryURL = "https://cybermindcli1.vercel.app/cybermind-darwin-arm64"
+		} else {
+			binaryURL = "https://cybermindcli1.vercel.app/cybermind-darwin-amd64"
+		}
+	case "windows":
+		binaryURL = "https://cybermindcli1.vercel.app/cybermind-windows-amd64.exe"
+	default:
+		fmt.Println(dim2.Render("  Self-update not supported on " + runtime.GOOS))
+		return
+	}
+
+	fmt.Println(dim2.Render("  Downloading latest CyberMind CLI..."))
+
+	// Get current executable path
+	exePath, err := os.Executable()
+	if err != nil {
+		fmt.Println(red2.Render("  ✗ Cannot determine executable path: " + err.Error()))
+		return
+	}
+	exePath = filepath.Clean(exePath)
+
+	// Download to temp file
+	tmpPath := exePath + ".update_tmp"
+	if runtime.GOOS == "windows" {
+		tmpPath = os.TempDir() + `\cybermind_update.exe`
+	}
+
+	// Use curl or wget on Linux/macOS, PowerShell on Windows
+	var downloadErr error
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		var dlCmd *exec.Cmd
+		if _, err2 := exec.LookPath("curl"); err2 == nil {
+			dlCmd = exec.Command("curl", "-fsSL", "-o", tmpPath, binaryURL)
+		} else {
+			dlCmd = exec.Command("wget", "-q", "-O", tmpPath, binaryURL)
+		}
+		downloadErr = dlCmd.Run()
+	case "windows":
+		psScript := fmt.Sprintf(
+			`[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `+
+				`(New-Object System.Net.WebClient).DownloadFile('%s', '%s')`,
+			binaryURL, tmpPath)
+		downloadErr = exec.Command("powershell", "-NoProfile", "-Command", psScript).Run()
+	}
+
+	if downloadErr != nil {
+		fmt.Println(red2.Render("  ✗ Download failed: " + downloadErr.Error()))
+		fmt.Println(dim2.Render("  Manual update: " + binaryURL))
+		return
+	}
+
+	// Verify downloaded file is non-empty
+	info, err := os.Stat(tmpPath)
+	if err != nil || info.Size() < 1024*1024 { // must be > 1MB
+		os.Remove(tmpPath)
+		fmt.Println(red2.Render("  ✗ Downloaded file looks invalid (too small). Skipping update."))
+		return
+	}
+
+	// Make executable
+	if runtime.GOOS != "windows" {
+		os.Chmod(tmpPath, 0755)
+	}
+
+	// Replace binary
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		// Try direct replace first, then sudo
+		installPaths := []string{"/usr/local/bin/cybermind", "/usr/bin/cybermind", exePath}
+		updated := false
+		for _, installPath := range installPaths {
+			if _, err2 := os.Stat(installPath); err2 != nil {
+				continue
+			}
+			// Try sudo cp
+			if cmd2 := exec.Command("sudo", "cp", tmpPath, installPath); cmd2.Run() == nil {
+				exec.Command("sudo", "chmod", "+x", installPath).Run()
+				// Also update cbm alias
+				cbmPath := filepath.Dir(installPath) + "/cbm"
+				exec.Command("sudo", "cp", installPath, cbmPath).Run()
+				exec.Command("sudo", "chmod", "+x", cbmPath).Run()
+				fmt.Println(green2.Render("  ✓ Updated: " + installPath))
+				fmt.Println(green2.Render("  ✓ Updated: " + cbmPath + " (cbm alias)"))
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			// Fallback: replace current exe directly
+			if err2 := os.Rename(tmpPath, exePath); err2 == nil {
+				os.Chmod(exePath, 0755)
+				fmt.Println(green2.Render("  ✓ Updated: " + exePath))
+			} else {
+				fmt.Println(yellow2.Render("  ⚡ Could not replace binary. Run manually: sudo cp " + tmpPath + " /usr/local/bin/cybermind"))
+			}
+		}
+		os.Remove(tmpPath)
+
+	case "windows":
+		// On Windows: copy to install dir, update cbm.exe too
+		installDir := filepath.Dir(exePath)
+		newExe := installDir + `\cybermind.exe`
+		newCbm := installDir + `\cbm.exe`
+
+		// Use PowerShell to copy (handles locked files better)
+		psReplace := fmt.Sprintf(
+			`Copy-Item -Path '%s' -Destination '%s' -Force; Copy-Item -Path '%s' -Destination '%s' -Force`,
+			tmpPath, newExe, tmpPath, newCbm)
+		if err2 := exec.Command("powershell", "-NoProfile", "-Command", psReplace).Run(); err2 == nil {
+			fmt.Println(green2.Render("  ✓ Updated: " + newExe))
+			fmt.Println(green2.Render("  ✓ Updated: " + newCbm + " (cbm alias)"))
+		} else {
+			fmt.Println(yellow2.Render("  ⚡ Update downloaded but could not replace. Restart terminal and try again."))
+			fmt.Println(dim2.Render("  Manual: copy " + tmpPath + " to " + newExe))
+		}
+	}
+
+	fmt.Println(cyan2.Render("  ✓ CyberMind CLI updated to latest version"))
+	fmt.Println(dim2.Render("  Restart your terminal for changes to take effect."))
+}
+
 // runUninstall removes CyberMind CLI fully from the system — Linux, macOS, Windows.
 func runUninstall() {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚠  Uninstall CyberMind CLI"))
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  This will remove:"))
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • The cybermind binary from your system"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • cybermind + cbm binaries from your system"))
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • ~/.cybermind/ (config, API key, chat history)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • cybermind from PATH"))
 	fmt.Println()
 	fmt.Print(lipgloss.NewStyle().Foreground(red).Render("  Are you sure? [y/N] → "))
 
@@ -1128,35 +1272,38 @@ func runUninstall() {
 
 	// ── 1. Remove config directory (API key + history) ────────────────────
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Removing config and history..."))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Removing config, API key, and history..."))
 
 	switch runtime.GOOS {
 	case "windows":
-		// Windows: config in both USERPROFILE and APPDATA
 		winPaths := []string{
 			homedir + `\.cybermind`,
 			os.Getenv("APPDATA") + `\cybermind`,
+			os.Getenv("LOCALAPPDATA") + `\Programs\cybermind`,
 			os.Getenv("LOCALAPPDATA") + `\cybermind`,
 		}
 		for _, p := range winPaths {
-			if p != `\.cybermind` && p != `\cybermind` {
+			if p != `\.cybermind` && p != `\cybermind` && p != `\Programs\cybermind` {
 				tryRemove(p, p)
 			}
 		}
 	default:
-		tryRemove(homedir+"/.cybermind", "~/.cybermind")
+		tryRemove(homedir+"/.cybermind", "~/.cybermind (config + API key + history)")
 	}
 
-	// ── 2. Remove binary ──────────────────────────────────────────────────
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Removing binary..."))
+	// ── 2. Remove binaries (cybermind + cbm) ──────────────────────────────
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Removing binaries..."))
 
 	switch runtime.GOOS {
 	case "linux", "darwin":
 		binLocations := []string{
 			"/usr/local/bin/cybermind",
+			"/usr/local/bin/cbm",
 			"/usr/bin/cybermind",
+			"/usr/bin/cbm",
 			homedir + "/bin/cybermind",
 			homedir + "/.local/bin/cybermind",
+			homedir + "/.local/bin/cbm",
 			homedir + "/go/bin/cybermind",
 		}
 		for _, loc := range binLocations {
@@ -1172,12 +1319,12 @@ func runUninstall() {
 		}
 
 	case "windows":
-		// Windows: check PATH locations + common install dirs
 		winBinLocations := []string{
 			`C:\Windows\System32\cybermind.exe`,
+			`C:\Windows\System32\cbm.exe`,
 			`C:\Windows\cybermind.exe`,
-			homedir + `\AppData\Local\Microsoft\WindowsApps\cybermind.exe`,
 			homedir + `\AppData\Local\Programs\cybermind\cybermind.exe`,
+			homedir + `\AppData\Local\Programs\cybermind\cbm.exe`,
 			`C:\Program Files\cybermind\cybermind.exe`,
 			`C:\Program Files (x86)\cybermind\cybermind.exe`,
 		}
@@ -1188,19 +1335,20 @@ func runUninstall() {
 		for _, loc := range winBinLocations {
 			if _, err := os.Stat(loc); err == nil {
 				tryRemove(loc, loc)
-				// Also remove parent dir if it's a dedicated install dir
+				// Remove parent dir if it's a dedicated install dir
 				if strings.Contains(loc, `Programs\cybermind`) || strings.Contains(loc, `Program Files\cybermind`) {
 					tryRemove(filepath.Dir(loc), filepath.Dir(loc))
 				}
 			}
 		}
-		// Remove from PATH via PowerShell
+		// Remove from PATH via PowerShell (removes both cybermind and cbm entries)
 		psCmd := exec.Command("powershell", "-NoProfile", "-Command",
 			`$p = [Environment]::GetEnvironmentVariable('PATH','User'); `+
-				`$p = ($p -split ';' | Where-Object { $_ -notmatch 'cybermind' }) -join ';'; `+
+				`$p = ($p -split ';' | Where-Object { $_ -notmatch 'cybermind' -and $_ -notmatch '\\cbm' }) -join ';'; `+
 				`[Environment]::SetEnvironmentVariable('PATH', $p, 'User')`)
 		if psCmd.Run() == nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed cybermind from user PATH"))
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Removed cybermind/cbm from user PATH"))
+			removed++
 		}
 	}
 
@@ -1209,6 +1357,7 @@ func runUninstall() {
 	if failed == 0 {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
 			fmt.Sprintf("  ✓ CyberMind CLI fully uninstalled (%d items removed).", removed)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  API key, config, history — all deleted."))
 	} else {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
 			fmt.Sprintf("  ⚡ Uninstall complete (%d removed, %d need manual removal — see above).", removed, failed)))
@@ -1704,20 +1853,21 @@ func main() {
 		normalized := strings.TrimPrefix(cmd, "/")
 		linuxOnlyCmds := map[string]bool{
 			"recon": true, "hunt": true, "tools": true,
-			"install-tools": true, "install-hunt": true, "doctor": true,
+			"install-tools": true, "install-hunt": true,
 			"abhimanyu": true,
 		}
-		// New cross-platform slash commands — allowed on all OS
+		// Cross-platform slash commands — allowed on all OS (including /doctor for self-update)
 		crossPlatformSlashCmds := map[string]bool{
 			"scan": true, "portscan": true, "osint": true,
 			"payload": true, "cve": true, "wordlist": true,
+			"doctor": true, // /doctor runs self-update on all platforms
 		}
 		if linuxOnlyCmds[normalized] || (strings.HasPrefix(cmd, "/") && !crossPlatformSlashCmds[normalized]) {
 			printError("This command is only available on Linux/Kali.")
 			if runtime.GOOS == "darwin" {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  macOS supports AI chat, /scan, /portscan, /osint, /payload, /cve, /wordlist, report"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  macOS supports AI chat, /scan, /portscan, /osint, /payload, /cve, /wordlist, /doctor, report"))
 			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows supports AI chat, /scan, /portscan, /osint, /payload, /cve, /wordlist, report"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows supports AI chat, /scan, /portscan, /osint, /payload, /cve, /wordlist, /doctor, report"))
 			}
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use Kali Linux for full recon/hunt/abhimanyu pipeline"))
 			os.Exit(1)
@@ -1905,10 +2055,26 @@ func main() {
 		runHunt(huntTarget, nil, huntRequested)
 
 	case "/doctor":
-		// Full health check for all recon + hunt tools, auto-install missing ones
+		// Full health check + self-update + auto-install missing tools
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🩺 CyberMind Doctor — Tool Health Check"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🩺 CyberMind Doctor — Health Check + Auto-Update"))
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		// ── Step 0: Self-update (all platforms) ──────────────────────────────
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ① Checking for CLI updates..."))
+		runSelfUpdate()
+		fmt.Println()
+
+		// ── Step 1: Tool health check (Linux only) ────────────────────────────
+		if runtime.GOOS != "linux" {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ CLI is up to date. Recon/hunt tools are Linux-only."))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows/macOS: AI chat + CBM Code are fully functional."))
+			fmt.Println()
+			return
+		}
+
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ② Checking recon + hunt tools..."))
 		fmt.Println()
 
 		type toolEntry struct {
