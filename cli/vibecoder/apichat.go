@@ -312,13 +312,12 @@ func sendVibeChatInternal(prompt string, history []chatMsg, onToken func(string)
 	// Build messages with unlimited brain system prompt
 	sysPrompt := buildVibeSystemPrompt()
 
-	allMsgs := append([]chatMsg{
-		{Role: "system", Content: sysPrompt},
-	}, history...)
-
 	body := map[string]interface{}{
-		"prompt":   prompt,
-		"messages": allMsgs,
+		"prompt":        prompt,
+		"messages":      history, // history without system (backend handles system separately)
+		"system_prompt": sysPrompt, // pass as dedicated field so backend uses it
+		"effort_level":  "max",
+		"edit_mode":     "agent",
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -383,8 +382,16 @@ func sendVibeChatInternal(prompt string, history []chatMsg, onToken func(string)
 		}
 	}
 
-	// Fallback: /chat endpoint (non-streaming)
-	chatReq, err := http.NewRequest("POST", backendURL+"/chat", bytes.NewReader(payload))
+	// Fallback: /chat endpoint (non-streaming) — inject system prompt into messages
+	chatHistory := append([]chatMsg{
+		{Role: "system", Content: sysPrompt},
+	}, history...)
+	chatBody := map[string]interface{}{
+		"prompt":   prompt,
+		"messages": chatHistory,
+	}
+	chatPayload, _ := json.Marshal(chatBody)
+	chatReq, err := http.NewRequest("POST", backendURL+"/chat", bytes.NewReader(chatPayload))
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
