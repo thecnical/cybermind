@@ -484,3 +484,86 @@ func ReportFilePath(target string) string {
 	safeTarget := strings.ReplaceAll(target, ".", "_")
 	return filepath.Join(".", fmt.Sprintf("cybermind_bugs_%s_%s.md", safeTarget, ts))
 }
+
+// ─── PoC Integration ─────────────────────────────────────────────────────────
+
+// AppendPoC adds a PoC section to an existing report file
+func AppendPoC(reportPath string, bug Bug, poc string) error {
+	f, err := os.OpenFile(reportPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = fmt.Fprintf(f, "\n## PoC — %s\n\n%s\n\n---\n", bug.Title, poc)
+	return err
+}
+
+// GenerateReportWithPoC creates a report with PoC sections already included
+func GenerateReportWithPoC(report BugReport, pocs map[int]string) string {
+	var sb strings.Builder
+
+	sb.WriteString("# CyberMind Bug Bounty Report\n\n")
+	sb.WriteString(fmt.Sprintf("**Target:** %s\n", report.Target))
+	sb.WriteString(fmt.Sprintf("**Scan Date:** %s\n", report.StartTime.Format("2006-01-02 15:04:05")))
+	sb.WriteString(fmt.Sprintf("**Duration:** %s\n", report.EndTime.Sub(report.StartTime).Round(time.Second)))
+	sb.WriteString(fmt.Sprintf("**Total Findings:** %d\n\n", len(report.Bugs)))
+
+	// Summary
+	counts := map[Severity]int{}
+	for _, b := range report.Bugs {
+		counts[b.Severity]++
+	}
+	sb.WriteString("## Summary\n\n")
+	sb.WriteString("| Severity | Count |\n|----------|-------|\n")
+	for _, sev := range []Severity{SeverityCritical, SeverityHigh, SeverityMedium, SeverityLow, SeverityInfo} {
+		if counts[sev] > 0 {
+			sb.WriteString(fmt.Sprintf("| %s | %d |\n", strings.ToUpper(string(sev)), counts[sev]))
+		}
+	}
+	sb.WriteString("\n")
+
+	// Detailed findings with PoC
+	sb.WriteString("## Findings\n\n")
+	for i, bug := range report.Bugs {
+		sb.WriteString(fmt.Sprintf("### %d. %s\n\n", i+1, bug.Title))
+		sb.WriteString(fmt.Sprintf("- **Severity:** %s\n", strings.ToUpper(string(bug.Severity))))
+		sb.WriteString(fmt.Sprintf("- **CVSS Score:** %.1f\n", bug.CVSS))
+		if bug.CWE != "" {
+			sb.WriteString(fmt.Sprintf("- **CWE:** %s\n", bug.CWE))
+		}
+		if bug.CVE != "" {
+			sb.WriteString(fmt.Sprintf("- **CVE:** %s\n", bug.CVE))
+		}
+		sb.WriteString(fmt.Sprintf("- **Tool:** %s\n", bug.Tool))
+		if bug.URL != "" {
+			sb.WriteString(fmt.Sprintf("- **URL:** `%s`\n", bug.URL))
+		}
+		sb.WriteString(fmt.Sprintf("- **Found:** %s\n\n", bug.FoundAt.Format("15:04:05")))
+
+		if bug.Description != "" {
+			sb.WriteString(fmt.Sprintf("**Description:**\n%s\n\n", bug.Description))
+		}
+
+		if bug.Evidence != "" {
+			sb.WriteString("**Evidence:**\n```\n")
+			evidence := bug.Evidence
+			if len(evidence) > 500 {
+				evidence = evidence[:500] + "\n... [truncated]"
+			}
+			sb.WriteString(evidence)
+			sb.WriteString("\n```\n\n")
+		}
+
+		// Include PoC if available
+		if poc, ok := pocs[i]; ok && poc != "" {
+			sb.WriteString("**Proof of Concept:**\n\n")
+			sb.WriteString(poc)
+			sb.WriteString("\n\n")
+		}
+
+		sb.WriteString("---\n\n")
+	}
+
+	return sb.String()
+}

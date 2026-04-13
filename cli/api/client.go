@@ -1114,3 +1114,174 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+
+// ─── PoC Generation ───────────────────────────────────────────────────────────
+
+// PoCRequest is the payload for /poc endpoint
+type PoCRequest struct {
+	BugType  string `json:"bug_type"`
+	URL      string `json:"url"`
+	Evidence string `json:"evidence"`
+	Target   string `json:"target"`
+	CVE      string `json:"cve,omitempty"`
+	CWE      string `json:"cwe,omitempty"`
+	Severity string `json:"severity"`
+	Tool     string `json:"tool"`
+}
+
+// SendPoCGeneration generates a PoC for a confirmed vulnerability
+func SendPoCGeneration(req PoCRequest) (string, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/poc", bytes.NewBuffer(payload))
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: cannot connect — %s", err.Error())
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return "", fmt.Errorf("_backend_down: status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success bool   `json:"success"`
+		PoC     string `json:"poc"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	return result.PoC, nil
+}
+
+// ─── HackerOne Integration ────────────────────────────────────────────────────
+
+// H1Program represents a HackerOne bug bounty program
+type H1Program struct {
+	Name      string   `json:"name"`
+	Handle    string   `json:"handle"`
+	Domain    string   `json:"domain"`
+	Scope     string   `json:"scope"`
+	MinBounty int      `json:"min_bounty"`
+	MaxBounty int      `json:"max_bounty"`
+	Currency  string   `json:"currency"`
+	URL       string   `json:"url"`
+	Why       string   `json:"why"`
+	BestBugs  []string `json:"best_bugs"`
+}
+
+// FetchH1Programs fetches public HackerOne programs from backend
+func FetchH1Programs() ([]H1Program, error) {
+	req, err := http.NewRequest("GET", getBaseURL()+"/hackerone/programs", nil)
+	if err != nil {
+		return nil, err
+	}
+	if key := getAPIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach backend")
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	var result struct {
+		Success  bool        `json:"success"`
+		Programs []H1Program `json:"programs"`
+		Error    string      `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("invalid response")
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("%s", result.Error)
+	}
+	return result.Programs, nil
+}
+
+// FetchH1Suggestion asks AI to suggest best targets
+func FetchH1Suggestion(skill, focus string) (string, error) {
+	u := getBaseURL() + "/hackerone/suggest?skill=" + url.QueryEscape(skill)
+	if focus != "" {
+		u += "&focus=" + url.QueryEscape(focus)
+	}
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return "", err
+	}
+	if key := getAPIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("cannot reach backend")
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	var result struct {
+		Success  bool   `json:"success"`
+		Targets  []struct {
+			Domain          string `json:"domain"`
+			Program         string `json:"program"`
+			Platform        string `json:"platform"`
+			Scope           string `json:"scope"`
+			Why             string `json:"why"`
+			BestAttack      string `json:"best_attack"`
+			EstimatedBounty string `json:"estimated_bounty"`
+			Difficulty      string `json:"difficulty"`
+		} `json:"targets"`
+		Strategy string `json:"strategy"`
+		Raw      string `json:"raw"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("invalid response")
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+
+	var sb strings.Builder
+	if len(result.Targets) > 0 {
+		for i, t := range result.Targets {
+			sb.WriteString(fmt.Sprintf("%d. %s (%s)\n", i+1, t.Domain, t.Platform))
+			sb.WriteString(fmt.Sprintf("   Scope: %s\n", t.Scope))
+			sb.WriteString(fmt.Sprintf("   Why: %s\n", t.Why))
+			sb.WriteString(fmt.Sprintf("   Best bug: %s | Bounty: %s | Difficulty: %s\n\n",
+				t.BestAttack, t.EstimatedBounty, t.Difficulty))
+		}
+		if result.Strategy != "" {
+			sb.WriteString("Strategy: " + result.Strategy)
+		}
+	} else {
+		sb.WriteString(result.Raw)
+	}
+	return sb.String(), nil
+}

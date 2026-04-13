@@ -1109,10 +1109,49 @@ func runOmegaPlan(target string, localMode bool) {
 		}
 		fmt.Println()
 
-		// Auto-save report immediately when bugs found
-		if reportPath, err := bugdetect.SaveReport(bugReport); err == nil {
+		// ── AUTO PoC GENERATION ────────────────────────────────────────────
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+			"  ⟳ Generating PoC for each confirmed bug..."))
+
+		pocs := make(map[int]string)
+		for i, bug := range allBugs {
+			// Only generate PoC for medium+ severity
+			if bug.Severity == bugdetect.SeverityLow || bug.Severity == bugdetect.SeverityInfo {
+				continue
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				fmt.Sprintf("  ⟳ PoC [%d/%d]: %s", i+1, len(allBugs), bug.Title)))
+
+			poc, pocErr := api.SendPoCGeneration(api.PoCRequest{
+				BugType:  bug.Title,
+				URL:      bug.URL,
+				Evidence: bug.Evidence,
+				Target:   target,
+				CVE:      bug.CVE,
+				CWE:      bug.CWE,
+				Severity: string(bug.Severity),
+				Tool:     bug.Tool,
+			})
+			if pocErr == nil && poc != "" {
+				pocs[i] = poc
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+					fmt.Sprintf("  ✓ PoC generated for: %s", bug.Title)))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+					fmt.Sprintf("  - PoC generation failed: %v", pocErr)))
+			}
+		}
+
+		// Save report with PoCs included
+		bugReport.Bugs = allBugs
+		bugReport.EndTime = time.Now()
+		content := bugdetect.GenerateReportWithPoC(bugReport, pocs)
+		ts := time.Now().Format("2006-01-02_15-04-05")
+		safeTarget := strings.ReplaceAll(target, ".", "_")
+		reportPath := fmt.Sprintf("cybermind_bugs_%s_%s.md", safeTarget, ts)
+		if err := os.WriteFile(reportPath, []byte(content), 0644); err == nil {
 			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
-				"  ✓ Bug report saved: " + reportPath))
+				"  ✓ Full bug report with PoCs saved: " + reportPath))
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
 				"  " + bugdetect.GetBugBountyInfo(target)))
 		}

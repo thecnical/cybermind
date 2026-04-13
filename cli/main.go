@@ -2200,6 +2200,14 @@ func main() {
 			{"ldeep", "exploit", "sudo apt install -y ldeep", false, false},             // LDAP enumeration (Kali 2025.2)
 			{"donut-shellcode", "exploit", "sudo apt install -y donut-shellcode", false, false}, // Shellcode gen (Kali 2025.2)
 			{"bopscrk", "exploit", "sudo apt install -y bopscrk", false, false},         // Smart wordlist gen (Kali 2025.2)
+			// ── Exploit Phase — C2 + Post-Exploit ──────────────────────────────
+			{"routersploit", "exploit", "pip3 install routersploit --break-system-packages", false, false}, // Router/IoT exploiter
+			{"empire", "exploit", "sudo apt install -y powershell-empire", false, false},                   // PowerShell C2 (Kali)
+			{"sliver", "exploit", "go install github.com/BishopFox/sliver/client@latest", true, false},     // Cross-platform C2
+			{"poshc2", "exploit", "pip3 install poshc2 --break-system-packages", false, false},             // PowerShell C2
+			// ── Web Exploit Tools ───────────────────────────────────────────────
+			{"commix", "exploit", "sudo apt install -y commix", false, false},           // Command injection exploiter
+			{"routersploit", "exploit", "pip3 install routersploit --break-system-packages", false, false}, // Router exploiter
 		}
 
 		var missing []toolEntry
@@ -3008,23 +3016,99 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use Kali Linux for full OMEGA pipeline"))
 			os.Exit(1)
 		}
-		if len(args) < 2 {
-			printError("Usage: cybermind /plan <target>")
-			printError("Example: cybermind /plan example.com")
-			printError("Example: cybermind /plan 192.168.1.1")
-			os.Exit(1)
+
+		// ── Parse flags: --auto-target, --focus, --skill ──────────────────
+		autoTarget := false
+		focusTypes := ""
+		skillLevel := "intermediate"
+		planTarget := ""
+
+		for i := 1; i < len(args); i++ {
+			switch args[i] {
+			case "--auto-target":
+				autoTarget = true
+			case "--focus":
+				if i+1 < len(args) {
+					focusTypes = args[i+1]
+					i++
+				}
+			case "--skill":
+				if i+1 < len(args) {
+					skillLevel = args[i+1]
+					i++
+				}
+			default:
+				if !strings.HasPrefix(args[i], "--") && planTarget == "" {
+					planTarget = args[i]
+				}
+			}
 		}
-		planTarget := args[1]
-		if err := recon.ValidateTarget(planTarget); err != nil {
-			printError(err.Error())
-			os.Exit(1)
-		}
+
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
 		}
 		if !localMode && !requireAPIKey() {
 			os.Exit(1)
 		}
+
+		// ── --auto-target: fetch best target from HackerOne ───────────────
+		if autoTarget {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🎯 AUTO-TARGET MODE — Fetching best bug bounty targets..."))
+			fmt.Println()
+
+			// Try AI suggestion first
+			suggestion, sugErr := api.FetchH1Suggestion(skillLevel, focusTypes)
+			if sugErr == nil && suggestion != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  Top targets for you:"))
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).MarginLeft(2).Render(suggestion))
+				fmt.Println()
+			} else {
+				// Fallback: show curated list
+				programs, progErr := api.FetchH1Programs()
+				if progErr == nil && len(programs) > 0 {
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  Top bug bounty programs:"))
+					fmt.Println()
+					for i, p := range programs {
+						if i >= 5 {
+							break
+						}
+						fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(fmt.Sprintf("  %d. %s — %s", i+1, p.Domain, p.Name)))
+						fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("     Scope: %s", p.Scope)))
+						fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("     Bounty: $%d-$%d | %s", p.MinBounty, p.MaxBounty, p.Why)))
+						fmt.Println()
+					}
+				}
+			}
+
+			if planTarget == "" {
+				fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Enter target domain to start plan: "))
+				fmt.Scanln(&planTarget)
+				planTarget = strings.TrimSpace(planTarget)
+			}
+		}
+
+		if planTarget == "" {
+			printError("Usage: cybermind /plan <target>")
+			printError("       cybermind /plan --auto-target")
+			printError("       cybermind /plan example.com --focus xss,idor")
+			printError("       cybermind /plan --auto-target --skill beginner --focus xss")
+			os.Exit(1)
+		}
+
+		if err := recon.ValidateTarget(planTarget); err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+
+		// Pass focus types via env for plan mode to use
+		if focusTypes != "" {
+			os.Setenv("CYBERMIND_FOCUS_BUGS", focusTypes)
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+				fmt.Sprintf("  🎯 Focus: %s vulnerabilities", focusTypes)))
+		}
+
 		runOmegaPlan(planTarget, localMode)
 
 	case "/scan":
