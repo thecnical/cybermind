@@ -39,6 +39,19 @@ var allCommands = []SlashCommand{
 	{"/cve-check", "Check dependencies for CVEs", "Cyber"},
 	{"/fix-vuln", "Fix a detected vulnerability", "Cyber"},
 	{"/audit", "Generate security audit report", "Cyber"},
+	{"/skills", "List all available skills", "Skills"},
+	{"/hooks", "Show hook configuration", "Skills"},
+	// Built-in skills (always shown)
+	{"/review", "Code review — correctness, security, performance", "Skills"},
+	{"/commit", "Generate conventional commit message", "Skills"},
+	{"/security", "Deep security audit (OWASP Top 10)", "Skills"},
+	{"/test", "Generate comprehensive tests", "Skills"},
+	{"/document", "Generate documentation", "Skills"},
+	{"/refactor", "Refactor for clarity and performance", "Skills"},
+	{"/explain", "Explain code in plain language", "Skills"},
+	{"/pr", "Generate pull request description", "Skills"},
+	{"/debug", "Systematically debug an issue", "Skills"},
+	{"/migrate", "Generate database migration", "Skills"},
 }
 
 // SlashMenuModel manages the slash command popup state.
@@ -123,4 +136,17 @@ func (m SlashMenuModel) Render(width int, theme Theme) string {
 		Render(strings.Join(lines, "\n"))
 
 	return box
+}
+
+// AddSkillCommands adds dynamically loaded skills to the command list.
+func (m *SlashMenuModel) AddSkillCommands(skills []SlashCommand) {
+	// Remove existing skill entries to avoid duplicates
+	var base []SlashCommand
+	for _, cmd := range m.commands {
+		if cmd.Category != "Skills" {
+			base = append(base, cmd)
+		}
+	}
+	m.commands = append(base, skills...)
+	m.filtered = m.commands
 }

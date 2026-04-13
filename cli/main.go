@@ -3436,8 +3436,30 @@ func runVibeCoder(args []string) {
 			Timeout:       cfg.CommandTimeoutSecs,
 			SessionID:     session.ID,
 		}
-		registry := vibecoder.NewDefaultToolRegistry()
+
+		// ── Install built-in skills and hooks on first run ─────────────────
+		_ = vibecoder.InstallBuiltinSkills()
+		_ = vibecoder.InstallBuiltinHooks()
+
+		// ── Load skills ────────────────────────────────────────────────────
+		skillRegistry := vibecoder.NewSkillRegistry()
+		_ = skillRegistry.Load(cwd)
+
+		// ── Load hooks ─────────────────────────────────────────────────────
+		hookRegistry := vibecoder.NewHookRegistry()
+		_ = hookRegistry.Load(cwd)
+
+		// ── Build orchestrator for real subagents ──────────────────────────
+		orchestrator := vibecoder.NewSubagentOrchestrator(providerChain, nil, cwd)
+
+		// ── Build tool registry with real subagents ────────────────────────
+		registry := vibecoder.NewDefaultToolRegistryWithOrchestrator(orchestrator)
 		toolEngine := vibecoder.NewToolEngine(registry, toolEnv)
+		toolEngine.SetHooks(hookRegistry)
+
+		// ── Wire orchestrator's tool engine (for subagent tool use) ────────
+		orchestrator.SetToolEngine(toolEngine)
+
 		checkpointMgr := vibecoder.NewCheckpointManager("", cfg.CheckpointIntervalTurns)
 		agentLoop = vibecoder.NewAgentLoop(session, providerChain, toolEngine, checkpointMgr, vibecoder.AgentLoopConfig{
 			MaxIterations:   50,
@@ -3445,21 +3467,32 @@ func runVibeCoder(args []string) {
 			CircuitBreakerN: 3,
 			StuckHashCount:  3,
 		})
+
+		// ── Wire skills into system prompt for skill adherence ─────────────
+		promptBuilder := vibecoder.NewSystemPromptBuilder(session, vibecoder.NewCyberMindMemory(cwd))
+		promptBuilder.SetSkills(skillRegistry)
+		_ = promptBuilder // used by provider chain via session
+
 		// Start file indexer in background
 		indexer := vibecoder.NewFileIndexer(cwd, "", nil)
 		indexer.LoadIgnorePatterns()
 		indexer.Start(nil)
+
+		// Pass skills to CLI for /skill-name invocation
+		_ = hookRegistry
+
+		// Launch CLI with full backend
+		runVibeCoderCLI(session, cwd, tier, activeModel, userName, agentLoop, skillRegistry)
+		return
 	}
 
-	// ── Launch stable readline-based interface ─────────────────────────────
-	// Replaces bubbletea which has Windows console compatibility issues.
-	// Direct terminal I/O — works on Windows, macOS, Linux without any issues.
-	runVibeCoderCLI(session, cwd, tier, activeModel, userName, agentLoop)
+	// No provider — launch without agent loop
+	runVibeCoderCLI(session, cwd, tier, activeModel, userName, nil, nil)
 }
 
 // runVibeCoderCLI is the stable, cross-platform CBM Code interface.
 // Uses direct readline I/O — banner stays visible, prompt always works.
-func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userName string, agentLoop *vibecoder.AgentLoop) {
+func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userName string, agentLoop *vibecoder.AgentLoop, skills *vibecoder.SkillRegistry) {
 	cyan2   := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff"))
 	purple2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2"))
 	green2  := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88"))
@@ -4338,7 +4371,44 @@ DO NOT write any code yet — just the plan.`, planTask)
 				}
 
 			default:
-				fmt.Println(dim2.Render("  Unknown: " + parts[0] + " (type /help)"))
+				// ── Try skill invocation ───────────────────────────────────
+				if skills != nil {
+					skillName := strings.TrimPrefix(parts[0], "/")
+					arguments := strings.Join(parts[1:], " ")
+					if expanded, skillErr := skills.Expand(skillName, arguments); skillErr == nil {
+						fmt.Println(cyan2.Render(fmt.Sprintf("  🔧 Skill: /%s", skillName)))
+						fmt.Println()
+						fmt.Print(purple2.Render("  ◆ CBM Code: "))
+						chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: expanded})
+						agentErr := runAgentLoop(expanded, cwd, &chatHistory, green2, dim2, red2, yellow2, purple2, cyan2)
+						if agentErr != nil {
+							fmt.Println(red2.Render("  ✗ " + agentErr.Error()))
+						}
+						saveSession(sessionFile, chatHistory)
+						continue
+					}
+				}
+				fmt.Println(dim2.Render("  Unknown: " + parts[0] + " (type /help or /skills)"))
+
+			case "/skills":
+				// List all available skills
+				if skills == nil || len(skills.All()) == 0 {
+					fmt.Println(dim2.Render("  No skills loaded. Add .md files to .kiro/skills/ or ~/.cybermind/skills/"))
+					fmt.Println(dim2.Render("  Built-in skills: /review /commit /security /test /document /refactor /explain /pr /debug /migrate"))
+				} else {
+					fmt.Println()
+					fmt.Println(cyan2.Render(fmt.Sprintf("  📚 %d skills available:", len(skills.All()))))
+					for _, s := range skills.All() {
+						scope := ""
+						if s.Scope == "project" {
+							scope = " [project]"
+						}
+						fmt.Println(dim2.Render(fmt.Sprintf("  /%-18s %s%s", s.Meta.Name, s.Meta.Description, scope)))
+					}
+					fmt.Println()
+					fmt.Println(dim2.Render("  Usage: /skill-name [arguments]"))
+					fmt.Println(dim2.Render("  Add skills: .kiro/skills/my-skill.md"))
+				}
 			}
 			continue
 		}

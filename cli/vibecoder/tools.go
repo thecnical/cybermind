@@ -91,13 +91,20 @@ func (r *ToolRegistry) All() []Tool {
 
 // ─── ToolEngine ───────────────────────────────────────────────────────────────
 
+// ToolEngine wraps the registry and fires hooks on tool execution.
 type ToolEngine struct {
 	registry *ToolRegistry
 	env      *ToolEnv
+	hooks    *HookRegistry // optional — fires pre/post tool hooks
 }
 
 func NewToolEngine(registry *ToolRegistry, env *ToolEnv) *ToolEngine {
 	return &ToolEngine{registry: registry, env: env}
+}
+
+// SetHooks wires the hook registry for pre/post tool events.
+func (e *ToolEngine) SetHooks(hooks *HookRegistry) {
+	e.hooks = hooks
 }
 
 // Execute runs a single tool call with JSON schema validation and logging.
@@ -119,6 +126,14 @@ func (e *ToolEngine) Execute(ctx context.Context, call ToolCall) ToolResult {
 	}
 	log.Printf("[tool] name=%s params=%s", call.Name, paramStr)
 
+	// 3. Fire preToolUse hooks — can block execution.
+	if e.hooks != nil {
+		blocked, reason := e.hooks.FirePreTool(call.Name, string(call.Params), e.env.WorkspaceRoot)
+		if blocked {
+			return ToolResult{ToolCallID: call.ID, Error: "blocked by hook: " + reason}
+		}
+	}
+
 	tool, ok := e.registry.Get(call.Name)
 	if !ok {
 		return ToolResult{ToolCallID: call.ID, Error: fmt.Sprintf("unknown tool: %s", call.Name)}
@@ -130,7 +145,46 @@ func (e *ToolEngine) Execute(ctx context.Context, call ToolCall) ToolResult {
 		result.Error = err.Error()
 	}
 
-	// 3. Log after execution.
+	// 4. Fire postToolUse hooks.
+	if e.hooks != nil {
+		event := HookEvent{
+			Type:      HookEventPostToolUse,
+			ToolName:  call.Name,
+			ToolInput: string(call.Params),
+		}
+		// Fire file events for write operations
+		if call.Name == "write_file" || call.Name == "edit_file" || call.Name == "create_file" {
+			var p struct {
+				Path string `json:"path"`
+			}
+			if json.Unmarshal(call.Params, &p) == nil && p.Path != "" {
+				fileEvent := HookEvent{
+					Type:     HookEventFileEdited,
+					FilePath: p.Path,
+					ToolName: call.Name,
+				}
+				if call.Name == "create_file" {
+					fileEvent.Type = HookEventFileCreated
+				}
+				go e.hooks.Fire(fileEvent, e.env.WorkspaceRoot)
+			}
+		}
+		if call.Name == "delete_file" {
+			var p struct {
+				Path string `json:"path"`
+			}
+			if json.Unmarshal(call.Params, &p) == nil && p.Path != "" {
+				go e.hooks.Fire(HookEvent{
+					Type:     HookEventFileDeleted,
+					FilePath: p.Path,
+					ToolName: call.Name,
+				}, e.env.WorkspaceRoot)
+			}
+		}
+		go e.hooks.Fire(event, e.env.WorkspaceRoot)
+	}
+
+	// 5. Log after execution.
 	summary := result.Output
 	if len(summary) > 100 {
 		summary = summary[:100] + "..."
@@ -1086,6 +1140,12 @@ func (t *ssrfSafeTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 // NewDefaultToolRegistry creates a ToolRegistry pre-populated with all built-in tools.
 func NewDefaultToolRegistry() *ToolRegistry {
+	return NewDefaultToolRegistryWithOrchestrator(nil)
+}
+
+// NewDefaultToolRegistryWithOrchestrator creates a ToolRegistry with real subagent support.
+// Pass nil orchestrator to use stub subagent (no parallel execution).
+func NewDefaultToolRegistryWithOrchestrator(orchestrator *SubagentOrchestrator) *ToolRegistry {
 	r := NewToolRegistry()
 	r.Register(&ReadFileTool{})
 	r.Register(&WriteFileTool{})
@@ -1105,7 +1165,13 @@ func NewDefaultToolRegistry() *ToolRegistry {
 	r.Register(&RefactorCodeTool{})
 	r.Register(&WebFetchTool{})
 	r.Register(&WebSearchTool{})
-	r.Register(&SpawnSubagentTool{})
+	// Register real subagent tools if orchestrator is available
+	if orchestrator != nil {
+		r.Register(&SubagentToolReal{orchestrator: orchestrator})
+		r.Register(&SpawnParallelSubagentsTool{orchestrator: orchestrator})
+	} else {
+		r.Register(&SpawnSubagentTool{}) // stub fallback
+	}
 	r.Register(&TodoWriteTool{})
 	r.Register(&ExitPlanModeTool{})
 	r.Register(&SemanticSearchTool{})

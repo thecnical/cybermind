@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -306,6 +307,42 @@ func (m VibeModel) handleSlashCommand(cmd string) (tea.Model, tea.Cmd) {
 			model := strings.TrimPrefix(trimmed, "/model ")
 			m.statusBar.Model = model
 			m.appendLine("⇄ Model override: "+model, m.theme.Cyan)
+		} else if strings.HasPrefix(trimmed, "/skills") {
+			// List all available skills
+			if m.backend != nil && m.backend.Skills != nil {
+				skills := m.backend.Skills.All()
+				if len(skills) == 0 {
+					m.appendLine("No skills loaded. Add .md files to .kiro/skills/ or ~/.cybermind/skills/", m.theme.Dim)
+				} else {
+					m.appendLine(fmt.Sprintf("📚 %d skills available:", len(skills)), m.theme.Cyan)
+					for _, s := range skills {
+						scope := ""
+						if s.Scope == "project" {
+							scope = " [project]"
+						}
+						m.appendLine(fmt.Sprintf("  /%-16s %s%s", s.Meta.Name, s.Meta.Description, scope), m.theme.Dim)
+					}
+				}
+			}
+		} else if strings.HasPrefix(trimmed, "/hooks") {
+			m.appendLine("Hooks: edit .kiro/hooks/*.json or ~/.cybermind/hooks/", m.theme.Dim)
+		} else if m.backend != nil && m.backend.Skills != nil && strings.HasPrefix(trimmed, "/") {
+			// Try to invoke a skill
+			parts := strings.SplitN(trimmed[1:], " ", 2)
+			skillName := parts[0]
+			arguments := ""
+			if len(parts) > 1 {
+				arguments = parts[1]
+			}
+			if expanded, err := m.backend.Skills.Expand(skillName, arguments); err == nil {
+				// Skill found — submit as a prompt
+				m.appendLine(fmt.Sprintf("🔧 Skill: /%s", skillName), m.theme.Cyan)
+				m.inputBuf = ""
+				// Submit the expanded skill prompt as a user message
+				return m.submitSkillPrompt(expanded)
+			} else {
+				m.appendLine("Unknown command: "+trimmed+" (type /help or /skills)", m.theme.Dim)
+			}
 		} else {
 			m.appendLine("Unknown command: "+trimmed+" (type /help)", m.theme.Dim)
 		}
@@ -356,4 +393,31 @@ func (m *VibeModel) navigateHistory(dir int) {
 		return
 	}
 	m.inputBuf = m.inputHistory[len(m.inputHistory)-1-m.historyIdx]
+}
+
+// ─── Skill invocation ─────────────────────────────────────────────────────────
+
+// submitSkillPrompt submits an expanded skill prompt as a user message.
+func (m VibeModel) submitSkillPrompt(prompt string) (tea.Model, tea.Cmd) {
+	m.inputHistory = append(m.inputHistory, prompt)
+	m.historyIdx = -1
+	m.inputBuf = ""
+	m.mode = UIModeSession
+
+	// Add to session history
+	m.session.History = append(m.session.History, vibecoder.Message{
+		Role:      vibecoder.RoleUser,
+		Content:   prompt,
+		Timestamp: time.Now(),
+		Tokens:    vibecoder.EstimateTokensPublic(prompt),
+	})
+
+	m.mode = UIModeRunning
+	m.statusBar.Running = true
+	m.startAssistantLine()
+
+	if m.backend == nil || m.backend.AgentLoop == nil {
+		return m, m.runDirectChatCmd(prompt)
+	}
+	return m, m.runAgentLoopCmd(prompt)
 }

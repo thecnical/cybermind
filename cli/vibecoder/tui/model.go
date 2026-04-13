@@ -85,9 +85,12 @@ type ApprovalGateModel struct {
 
 // Backend holds the wired backend components for the TUI.
 type Backend struct {
-	AgentLoop   *vibecoder.AgentLoop
-	FileIndexer *vibecoder.FileIndexer
-	Memory      *vibecoder.CyberMindMemory
+	AgentLoop    *vibecoder.AgentLoop
+	FileIndexer  *vibecoder.FileIndexer
+	Memory       *vibecoder.CyberMindMemory
+	Skills       *vibecoder.SkillRegistry
+	Hooks        *vibecoder.HookRegistry
+	Orchestrator *vibecoder.SubagentOrchestrator
 	// cancelLoop cancels the currently running agent loop goroutine.
 	cancelLoop context.CancelFunc
 }
