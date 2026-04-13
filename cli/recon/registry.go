@@ -89,6 +89,160 @@ var toolRegistry = []ToolSpec{
 		},
 	},
 
+	// ── Shodan CLI — internet-wide host intelligence ──────────────────────────
+	// Queries Shodan for open ports, CVEs, banners, tags on target IPs
+	// Requires SHODAN_API_KEY env var (free tier available at shodan.io)
+	{
+		Name:        "shodan",
+		Phase:       1,
+		Timeout:     60,
+		DomainOnly:  false,
+		InstallHint: "pip3 install shodan --break-system-packages && shodan init YOUR_API_KEY",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// shodan host <ip> — full host intelligence
+			if len(ctx.LiveHosts) > 0 {
+				return []string{"host", ctx.LiveHosts[0]}
+			}
+			return []string{"host", target}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				// shodan search — domain-based search
+				return []string{"search", "--fields", "ip_str,port,org,os,vulns", "hostname:" + target}
+			},
+		},
+	},
+
+	// ── h8mail — email OSINT + breach hunting ────────────────────────────────
+	// Finds breached credentials, email addresses, and associated data
+	// Uses free APIs: HaveIBeenPwned, Hunter.io, Snusbase
+	{
+		Name:        "h8mail",
+		Phase:       1,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "pip3 install h8mail --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-t", target,
+				"--json", "/tmp/cybermind_h8mail.json",
+				"-q",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-t", target, "-q"}
+			},
+		},
+	},
+
+	// ── exiftool — metadata extraction from web files ────────────────────────
+	// Extracts GPS, author, software, creation date from images/docs
+	// Finds leaked internal paths, usernames, software versions
+	{
+		Name:        "exiftool",
+		Phase:       1,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install -y libimage-exiftool-perl",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Download and analyze files from target
+			// First try to find downloadable files via wayback
+			outDir := "/tmp/cybermind_exiftool_" + target
+			return []string{
+				"-r",          // recursive
+				"-json",       // JSON output
+				"-all",        // all metadata
+				"-q",          // quiet
+				outDir,
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				// Analyze any already-downloaded files
+				return []string{"-json", "-all", "/tmp/cybermind_exiftool_" + target}
+			},
+		},
+	},
+
+	// ── metagoofil — document metadata harvesting ────────────────────────────
+	// Downloads public documents (PDF, DOCX, XLSX) and extracts metadata
+	// Finds: usernames, email addresses, software versions, internal paths
+	{
+		Name:        "metagoofil",
+		Phase:       1,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install -y metagoofil",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-d", target,
+				"-t", "pdf,doc,docx,xls,xlsx,ppt,pptx",
+				"-l", "50",    // limit 50 results
+				"-n", "20",    // download 20 files
+				"-o", "/tmp/cybermind_metagoofil_" + target,
+				"-f", "/tmp/cybermind_metagoofil_" + target + "/results.html",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-t", "pdf,doc,docx", "-l", "20", "-n", "10",
+					"-o", "/tmp/cybermind_metagoofil_" + target}
+			},
+		},
+	},
+
+	// ── spiderfoot — automated OSINT framework ───────────────────────────────
+	// 200+ modules: DNS, WHOIS, email, social media, dark web, breach data
+	// CLI mode: spiderfoot -s target -m all -o /tmp/output.json
+	{
+		Name:        "spiderfoot",
+		Phase:       1,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install -y spiderfoot",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-s", target,
+				"-m", "sfp_dns,sfp_whois,sfp_email,sfp_pgp,sfp_shodan,sfp_hunter,sfp_haveibeenpwned,sfp_linkedin,sfp_twitter,sfp_github",
+				"-o", "json",
+				"-q",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-s", target, "-m", "sfp_dns,sfp_whois,sfp_email", "-o", "json", "-q"}
+			},
+		},
+	},
+
+	// ── recon-ng — modular web reconnaissance framework ──────────────────────
+	// Marketplace of 100+ modules for OSINT, DNS, social media, breach data
+	{
+		Name:        "recon-ng",
+		Phase:       1,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install -y recon-ng",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Run recon-ng in batch mode with key modules
+			script := fmt.Sprintf(
+				"workspaces create %s; "+
+					"modules load recon/domains-hosts/hackertarget; run; "+
+					"modules load recon/domains-contacts/whois_pocs; run; "+
+					"modules load recon/domains-hosts/certificate_transparency; run; "+
+					"show hosts; show contacts",
+				target)
+			return []string{"-w", target, "-x", script}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-w", target, "-x",
+					fmt.Sprintf("modules load recon/domains-hosts/hackertarget; run; show hosts")}
+			},
+		},
+	},
+
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 2 — SUBDOMAIN ENUMERATION
 	// Goal: maximum subdomain coverage — passive + active + brute + permutations

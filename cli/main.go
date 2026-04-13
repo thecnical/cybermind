@@ -2094,6 +2094,12 @@ func main() {
 			{"whois", "recon", "sudo apt install -y whois", false, false},
 			{"theHarvester", "recon", "sudo apt install -y theharvester", false, false},
 			{"dig", "recon", "sudo apt install -y dnsutils", false, false},
+			{"shodan", "recon", "pip3 install shodan --break-system-packages", false, false},
+			{"h8mail", "recon", "pip3 install h8mail --break-system-packages", false, false},
+			{"exiftool", "recon", "sudo apt install -y libimage-exiftool-perl", false, false},
+			{"metagoofil", "recon", "sudo apt install -y metagoofil", false, false},
+			{"spiderfoot", "recon", "sudo apt install -y spiderfoot", false, false},
+			{"recon-ng", "recon", "sudo apt install -y recon-ng", false, false},
 			// ── Recon Phase 2 — Subdomain Enumeration ──────────────────────────
 			{"subfinder", "recon", "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", true, false},
 			{"amass", "recon", "sudo apt install -y amass", false, false},
@@ -2331,6 +2337,30 @@ func main() {
 					installErr = installPythonPipTool("graphw00f")
 				case "wafw00f":
 					installErr = installPythonPipTool("wafw00f")
+				case "shodan":
+					installErr = installPythonPipTool("shodan")
+				case "h8mail":
+					installErr = installPythonPipTool("h8mail")
+				case "exiftool":
+					cmd2 := exec.Command("sudo", "apt", "install", "-y", "libimage-exiftool-perl")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+				case "metagoofil":
+					cmd2 := exec.Command("sudo", "apt", "install", "-y", "metagoofil")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+				case "spiderfoot":
+					cmd2 := exec.Command("sudo", "apt", "install", "-y", "spiderfoot")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+				case "recon-ng":
+					cmd2 := exec.Command("sudo", "apt", "install", "-y", "recon-ng")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
 				case "sprayhound":
 					installErr = installPythonPipTool("sprayhound")
 				case "certipy":
