@@ -177,34 +177,62 @@ var toolRegistry = []ToolSpec{
 		Timeout:     21600, // 6 hours max — full exhaustive mode, no shortcuts
 		DomainOnly:  true,
 		InstallHint: "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh && sudo tee /usr/local/bin/reconftw > /dev/null << 'EOF'\n#!/bin/bash\ncd /opt/reconftw && bash reconftw.sh \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/reconftw",
-		// PRIMARY: ALL mode — runs EVERY reconftw function exhaustively
-		// -a = all (subdomains + web + vuln + osint + fuzzing + screenshots)
+		// PRIMARY: ALL mode with every explicit flag for maximum coverage
+		// -a  = all modules (subs + ports + web + vulns + osint + fuzzing + screenshots)
 		// --deep = maximum depth on every scan
-		// --parallel = parallel execution
-		// No time limit — we wait as long as it takes
+		// --parallel = parallel execution for speed
+		// --subs-bruteforce-threads 50 = aggressive DNS brute
+		// --nuclei-templates-all = every nuclei template
+		// --dalfox --all = XSS on every endpoint
+		// --waf-detect --waf-bypass = WAF fingerprint + bypass
+		// --screenshotting = visual recon of all subs
+		// --hakrawler --crawl-depth 5 = deep web crawling
+		// --paramspider = parameter extraction from JS/source
+		// --ffuf = directory fuzzing
+		// --loots = save all findings to loot directory
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			outDir := "/tmp/cybermind_reconftw_" + target
 			return []string{
 				"-d", target,
-				"-a",          // ALL mode — every function enabled
-				"--deep",      // deep scanning — no shortcuts
-				"--parallel",  // parallel execution
+				"-a",                              // ALL mode — every function enabled
+				"--deep",                          // deep scanning — no shortcuts
+				"--parallel",                      // parallel execution
+				"--subs-bruteforce-threads", "50", // aggressive DNS brute
+				"--nuclei-templates-all",          // every nuclei template
+				"--dalfox", "--all",               // XSS on every endpoint
+				"--waf-detect", "--waf-bypass",    // WAF fingerprint + bypass
+				"--screenshotting",                // visual recon
+				"--hakrawler", "--crawl-depth", "5", // deep crawling
+				"--paramspider",                   // parameter extraction
+				"--ffuf",                          // directory fuzzing
+				"--loots",                         // save all findings
 				"-o", outDir,
 			}
 		},
-		// Fallback 1: full recon (-r) with deep — still very comprehensive
+		// Fallback 1: -a --deep --parallel (without extra flags — some reconftw versions differ)
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
 				return []string{
 					"-d", target,
-					"-r",          // full recon mode
+					"-a",
 					"--deep",
 					"--parallel",
 					"-o", outDir,
 				}
 			},
-			// Fallback 2: full recon without --deep
+			// Fallback 2: full recon (-r) with deep
+			func(target string, ctx *ReconContext) []string {
+				outDir := "/tmp/cybermind_reconftw_" + target
+				return []string{
+					"-d", target,
+					"-r",
+					"--deep",
+					"--parallel",
+					"-o", outDir,
+				}
+			},
+			// Fallback 3: full recon without --deep
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
 				return []string{
@@ -214,7 +242,7 @@ var toolRegistry = []ToolSpec{
 					"-o", outDir,
 				}
 			},
-			// Fallback 3: subdomain + web only (-s) — fast but thorough
+			// Fallback 4: subdomain + web only (-s)
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
 				return []string{
@@ -224,7 +252,7 @@ var toolRegistry = []ToolSpec{
 					"-o", outDir,
 				}
 			},
-			// Fallback 4: passive only (-p) — stealthy, no active probing
+			// Fallback 5: passive only (-p) — stealthy
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
 				return []string{

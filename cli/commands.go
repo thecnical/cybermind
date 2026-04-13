@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cybermind-cli/api"
+	"cybermind-cli/bugdetect"
 	"cybermind-cli/hunt"
 	"cybermind-cli/omega"
 	"cybermind-cli/storage"
@@ -1044,6 +1045,83 @@ func runOmegaPlan(target string, localMode bool) {
 	// Run hunt silently with recon context and plan-aware tool filter
 	huntResult := runHuntSilent(target, huntCtxFromRecon, buildRequestedTools(skipTools, "hunt"))
 
+	// ── BUG DETECTION: Parse hunt + recon output for confirmed vulnerabilities ──
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
+		"  🔍 BUG DETECTION — Analyzing tool output..."))
+
+	var allBugs []bugdetect.Bug
+	bugReport := bugdetect.BugReport{
+		Target:    target,
+		StartTime: time.Now().Add(-time.Hour), // approximate
+		EndTime:   time.Now(),
+	}
+
+	// Parse nuclei output from hunt
+	for _, tr := range huntResult.Results {
+		if tr.Output != "" {
+			bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+			allBugs = append(allBugs, bugs...)
+		}
+	}
+	// Parse nuclei output from recon
+	for _, tr := range reconResult.Results {
+		if tr.Output != "" {
+			bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+			allBugs = append(allBugs, bugs...)
+		}
+	}
+
+	bugReport.Bugs = allBugs
+
+	if len(allBugs) > 0 {
+		// Count by severity
+		critCount, highCount, medCount := 0, 0, 0
+		for _, b := range allBugs {
+			switch b.Severity {
+			case bugdetect.SeverityCritical:
+				critCount++
+			case bugdetect.SeverityHigh:
+				highCount++
+			case bugdetect.SeverityMedium:
+				medCount++
+			}
+		}
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+			fmt.Sprintf("  🐛 BUGS FOUND: %d total (Critical:%d High:%d Medium:%d)",
+				len(allBugs), critCount, highCount, medCount)))
+		fmt.Println()
+
+		// Show each bug
+		for _, bug := range allBugs {
+			color := lipgloss.Color("#FFD700")
+			if bug.Severity == bugdetect.SeverityCritical {
+				color = lipgloss.Color("#FF4444")
+			} else if bug.Severity == bugdetect.SeverityHigh {
+				color = lipgloss.Color("#FF6600")
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(color).Render(
+				fmt.Sprintf("  [%s] %s", strings.ToUpper(string(bug.Severity)), bug.Title)))
+			if bug.URL != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+					"    URL: " + bug.URL))
+			}
+		}
+		fmt.Println()
+
+		// Auto-save report immediately when bugs found
+		if reportPath, err := bugdetect.SaveReport(bugReport); err == nil {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
+				"  ✓ Bug report saved: " + reportPath))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				"  " + bugdetect.GetBugBountyInfo(target)))
+		}
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  No confirmed bugs detected yet — continuing to Abhimanyu exploitation phase..."))
+	}
+	fmt.Println()
+
 	// ── PHASE 3: ABHIMANYU (plan-aware, hunt context fed in) ─────────────
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
@@ -1110,12 +1188,50 @@ func runOmegaPlan(target string, localMode bool) {
 	fmt.Println()
 	runReport("markdown", localMode)
 
+	// ── FINAL SUMMARY ─────────────────────────────────────────────────────
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
 		"  ✓ OMEGA PLAN EXECUTION COMPLETE — " + target))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		fmt.Sprintf("  Recon: %d tools ran | Hunt: %d tools ran | Vulns: %d found",
-			len(reconResult.Tools), len(huntResult.Tools), vulnCount)))
+		fmt.Sprintf("  Recon: %d tools ran | Hunt: %d tools ran | Bugs: %d confirmed",
+			len(reconResult.Tools), len(huntResult.Tools), len(allBugs))))
+	fmt.Println()
+
+	// ── CONTINUOUS LOOP: Suggest next target if no high-severity bugs found ──
+	if !bugdetect.HasHighSeverityBugs(allBugs) {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+			"  ⚡ No medium/high/critical bugs found on this target."))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Suggesting next bug bounty targets with better attack surface:"))
+		fmt.Println()
+
+		nextTargets := bugdetect.SuggestNextTarget(target)
+		for i, t := range nextTargets {
+			info := bugdetect.GetBugBountyInfo(t)
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+				fmt.Sprintf("  %d. %s", i+1, t)))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				"     " + info))
+		}
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			"  Run: sudo cybermind /plan <next-target>"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Tip: Choose targets with *.domain.com wildcard scope for maximum attack surface"))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+			fmt.Sprintf("  🎯 %d bugs confirmed! Check the report file for details.", len(allBugs))))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Next steps:"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			"  1. Review the bug report (cybermind_bugs_*.md)"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			"  2. Write PoC for each confirmed bug"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			"  3. Submit to HackerOne/Bugcrowd with full evidence"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  "+bugdetect.GetBugBountyInfo(target)))
+	}
 }
 
 // launchFloatingTerminal launches a live monitoring window during OMEGA execution.
