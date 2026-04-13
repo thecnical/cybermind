@@ -3692,6 +3692,19 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 		// ── AI prompt ──────────────────────────────────────────────────────
 		prompt := line
 		fmt.Println()
+
+		// ── Context Awareness: Auto-inject relevant workspace files ────────
+		// Detect if prompt references existing files or asks to fix/edit/update
+		autoContext := buildAutoContext(prompt, cwd, chatHistory)
+		if autoContext != "" {
+			// Inject file context silently before the prompt
+			chatHistory = append(chatHistory, vibecoder.APIMessage{
+				Role:    "user",
+				Content: autoContext,
+			})
+			fmt.Println(dim2.Render("  ◆ Context: auto-loaded relevant files"))
+		}
+
 		fmt.Print(purple2.Render("  ◆ CBM Code: "))
 
 		chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: prompt})
@@ -3717,43 +3730,207 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 			chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: response})
 
 			// ── Auto-write files from code blocks ──────────────────────────
-			// Parse response for filename + code block patterns and write them
-			written := writeCodeBlocksToFiles(response, cwd, green2, dim2, red2)
+			written, editedFiles := writeCodeBlocksToFilesTracked(response, cwd, green2, dim2, red2)
 			if written > 0 {
 				fmt.Println(green2.Render(fmt.Sprintf("  ✓ %d file(s) written to disk", written)))
+				// Track created/modified files in session for multi-turn consistency
+				for _, f := range editedFiles {
+					trackFileInSession(f, cwd, &chatHistory)
+				}
 				fmt.Println()
 			}
 		}
 	}
 }
 
-// writeCodeBlocksToFiles parses AI response for file patterns and writes them.
-// Handles all common AI response patterns:
-//   **filename.ext** or ### **filename.ext** before code block
-//   `filename.ext` before code block
-//   File: filename.ext or Path: filename.ext
-//   // filename.ext or # filename.ext inside code block (first line)
+// writeCodeBlocksToFiles is a backward-compatible wrapper around writeCodeBlocksToFilesTracked.
 func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipgloss.Style) int {
+	n, _ := writeCodeBlocksToFilesTracked(response, workspaceRoot, green, dim, red)
+	return n
+}
+
+// ─── Context Awareness ────────────────────────────────────────────────────────
+
+// buildAutoContext scans the workspace and injects relevant file contents
+// into the context when the prompt references existing files or asks to fix/edit.
+func buildAutoContext(prompt, cwd string, history []vibecoder.APIMessage) string {
+	lower := strings.ToLower(prompt)
+
+	// Keywords that indicate the user wants to work with existing code
+	editKeywords := []string{
+		"fix", "bug", "error", "issue", "problem", "broken",
+		"update", "change", "modify", "edit", "refactor",
+		"add to", "improve", "optimize", "debug",
+		"in the", "in my", "the file", "this file",
+	}
+
+	isEditRequest := false
+	for _, kw := range editKeywords {
+		if strings.Contains(lower, kw) {
+			isEditRequest = true
+			break
+		}
+	}
+
+	// Check if any specific filenames are mentioned in the prompt
+	mentionedFiles := extractMentionedFiles(prompt, cwd)
+
+	// If it's an edit request or files are mentioned, load relevant context
+	if !isEditRequest && len(mentionedFiles) == 0 {
+		return ""
+	}
+
+	var contextParts []string
+
+	// Load specifically mentioned files
+	for _, f := range mentionedFiles {
+		content, err := os.ReadFile(f)
+		if err == nil && len(content) < 50000 {
+			rel, _ := filepath.Rel(cwd, f)
+			contextParts = append(contextParts, fmt.Sprintf("[Current file: %s]\n```\n%s\n```", rel, string(content)))
+		}
+	}
+
+	// If edit request but no specific files mentioned, load key project files
+	if isEditRequest && len(mentionedFiles) == 0 {
+		keyFiles := findKeyProjectFiles(cwd)
+		for _, f := range keyFiles {
+			content, err := os.ReadFile(f)
+			if err == nil && len(content) < 20000 {
+				rel, _ := filepath.Rel(cwd, f)
+				contextParts = append(contextParts, fmt.Sprintf("[Current file: %s]\n```\n%s\n```", rel, string(content)))
+			}
+		}
+	}
+
+	// Also check if any files were created in this session (from history)
+	sessionFiles := extractSessionFiles(history, cwd)
+	for _, f := range sessionFiles {
+		// Only add if not already added
+		alreadyAdded := false
+		for _, cp := range contextParts {
+			if strings.Contains(cp, f) {
+				alreadyAdded = true
+				break
+			}
+		}
+		if !alreadyAdded {
+			content, err := os.ReadFile(filepath.Join(cwd, f))
+			if err == nil && len(content) < 20000 {
+				contextParts = append(contextParts, fmt.Sprintf("[Current file: %s]\n```\n%s\n```", f, string(content)))
+			}
+		}
+	}
+
+	if len(contextParts) == 0 {
+		return ""
+	}
+
+	return "[Workspace context — current file contents for reference:]\n\n" + strings.Join(contextParts, "\n\n")
+}
+
+// extractMentionedFiles finds files mentioned in the prompt that exist in workspace.
+func extractMentionedFiles(prompt, cwd string) []string {
+	var found []string
+	words := strings.Fields(prompt)
+	for _, word := range words {
+		// Clean punctuation
+		word = strings.Trim(word, ".,;:!?\"'()")
+		if looksLikeFilePath(word) {
+			// Try relative to cwd
+			absPath := filepath.Join(cwd, word)
+			if _, err := os.Stat(absPath); err == nil {
+				found = append(found, absPath)
+				continue
+			}
+			// Try as absolute
+			if filepath.IsAbs(word) {
+				if _, err := os.Stat(word); err == nil {
+					found = append(found, word)
+				}
+			}
+		}
+	}
+	return found
+}
+
+// findKeyProjectFiles returns the most important files in a project for context.
+func findKeyProjectFiles(cwd string) []string {
+	// Priority order: entry points, config, main components
+	priorities := []string{
+		"package.json", "tsconfig.json", "next.config.js", "next.config.ts",
+		"vite.config.ts", "vite.config.js", "tailwind.config.js", "tailwind.config.ts",
+		"app/page.tsx", "app/layout.tsx", "pages/index.tsx", "pages/_app.tsx",
+		"src/App.tsx", "src/App.jsx", "src/main.tsx", "src/main.jsx",
+		"server.js", "server.ts", "index.js", "index.ts",
+		"app.js", "app.ts", "main.go", "main.py",
+	}
+
+	var found []string
+	for _, p := range priorities {
+		full := filepath.Join(cwd, p)
+		if _, err := os.Stat(full); err == nil {
+			found = append(found, full)
+			if len(found) >= 5 { // max 5 files to avoid context overflow
+				break
+			}
+		}
+	}
+	return found
+}
+
+// extractSessionFiles extracts filenames that were created/modified in this session.
+func extractSessionFiles(history []vibecoder.APIMessage, cwd string) []string {
+	var files []string
+	seen := make(map[string]bool)
+
+	for _, msg := range history {
+		if msg.Role != "assistant" {
+			continue
+		}
+		// Look for "Created: filename" patterns in assistant messages
+		lines := strings.Split(msg.Content, "\n")
+		for _, line := range lines {
+			for _, prefix := range []string{"✓ Created: ", "✓ Wrote: ", "✓ Modified: ", "created: ", "wrote: "} {
+				if strings.Contains(line, prefix) {
+					parts := strings.SplitN(line, prefix, 2)
+					if len(parts) == 2 {
+						f := strings.TrimSpace(parts[1])
+						if looksLikeFilePath(f) && !seen[f] {
+							// Verify file exists
+							if _, err := os.Stat(filepath.Join(cwd, f)); err == nil {
+								files = append(files, f)
+								seen[f] = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return files
+}
+
+// writeCodeBlocksToFilesTracked is like writeCodeBlocksToFiles but also returns
+// the list of files that were written (for session tracking).
+func writeCodeBlocksToFilesTracked(response, workspaceRoot string, green, dim, red lipgloss.Style) (int, []string) {
 	written := 0
+	var writtenFiles []string
 	lines := strings.Split(response, "\n")
 
 	var currentFile string
 	var inCodeBlock bool
 	var codeLines []string
-	var codeLang string
 
 	extractFilePath := func(s string) string {
 		s = strings.TrimSpace(s)
-		// Remove markdown formatting
 		s = strings.TrimPrefix(s, "###")
 		s = strings.TrimPrefix(s, "##")
 		s = strings.TrimPrefix(s, "#")
 		s = strings.TrimSpace(s)
-		// Remove bold markers
 		s = strings.Trim(s, "*")
 		s = strings.Trim(s, "`")
 		s = strings.TrimSpace(s)
-		// Remove trailing colon
 		s = strings.TrimSuffix(s, ":")
 		s = strings.TrimSpace(s)
 		if looksLikeFilePath(s) {
@@ -3766,16 +3943,12 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 		trimmed := strings.TrimSpace(line)
 
 		if !inCodeBlock {
-			// Pattern 1: ### **filename.ext** or **filename.ext** or ### `filename.ext`
 			if strings.Contains(trimmed, "**") || strings.Contains(trimmed, "`") {
-				// Extract content between ** or `
 				inner := trimmed
-				// Remove ### prefix
 				inner = strings.TrimPrefix(inner, "###")
 				inner = strings.TrimPrefix(inner, "##")
 				inner = strings.TrimPrefix(inner, "#")
 				inner = strings.TrimSpace(inner)
-				// Extract between ** **
 				if strings.HasPrefix(inner, "**") && strings.HasSuffix(inner, "**") {
 					inner = strings.TrimPrefix(strings.TrimSuffix(inner, "**"), "**")
 					if fp := extractFilePath(inner); fp != "" {
@@ -3783,7 +3956,6 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 						continue
 					}
 				}
-				// Extract between ` `
 				if strings.HasPrefix(inner, "`") && strings.HasSuffix(inner, "`") && !strings.HasPrefix(inner, "```") {
 					inner = strings.Trim(inner, "`")
 					if fp := extractFilePath(inner); fp != "" {
@@ -3793,7 +3965,6 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 				}
 			}
 
-			// Pattern 2: File: filename.ext or Path: filename.ext
 			for _, prefix := range []string{"File: ", "file: ", "Filename: ", "filename: ", "Path: ", "path: ", "**File**: ", "**Filename**: "} {
 				if strings.HasPrefix(trimmed, prefix) {
 					candidate := strings.TrimPrefix(trimmed, prefix)
@@ -3803,14 +3974,12 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 				}
 			}
 
-			// Pattern 3: Start of code block
 			if strings.HasPrefix(trimmed, "```") {
-				codeLang = strings.TrimPrefix(trimmed, "```")
+				codeLang := strings.TrimPrefix(trimmed, "```")
 				_ = codeLang
 				inCodeBlock = true
 				codeLines = nil
 
-				// Check if next line is a file path comment
 				if i+1 < len(lines) {
 					nextLine := strings.TrimSpace(lines[i+1])
 					for _, commentPrefix := range []string{"// ", "# ", "<!-- ", "-- "} {
@@ -3827,11 +3996,9 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 				}
 			}
 		} else {
-			// End of code block
 			if trimmed == "```" || (strings.HasPrefix(trimmed, "```") && len(trimmed) > 3 && !strings.Contains(trimmed, " ")) {
 				inCodeBlock = false
 				if currentFile != "" && len(codeLines) > 0 {
-					// Write the file
 					filePath := filepath.Join(workspaceRoot, currentFile)
 					dir := filepath.Dir(filePath)
 					if mkErr := os.MkdirAll(dir, 0755); mkErr == nil {
@@ -3840,6 +4007,7 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 							fmt.Println()
 							fmt.Print(green.Render(fmt.Sprintf("  ✓ Created: %s", currentFile)))
 							written++
+							writtenFiles = append(writtenFiles, currentFile)
 						} else {
 							fmt.Println()
 							fmt.Print(red.Render(fmt.Sprintf("  ✗ Failed: %s — %s", currentFile, writeErr.Error())))
@@ -3848,14 +4016,32 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 					currentFile = ""
 				}
 				codeLines = nil
-				codeLang = ""
 				_ = dim
 			} else {
 				codeLines = append(codeLines, line)
 			}
 		}
 	}
-	return written
+	return written, writtenFiles
+}
+
+// trackFileInSession adds a created/modified file to the chat history
+// so future prompts automatically have context about it.
+func trackFileInSession(relPath, cwd string, history *[]vibecoder.APIMessage) {
+	absPath := filepath.Join(cwd, relPath)
+	content, err := os.ReadFile(absPath)
+	if err != nil || len(content) > 30000 {
+		return // skip large files
+	}
+	// Add as a system context message (not shown to user)
+	*history = append(*history, vibecoder.APIMessage{
+		Role:    "user",
+		Content: fmt.Sprintf("[File created/updated in this session: %s]\n```\n%s\n```", relPath, string(content)),
+	})
+	*history = append(*history, vibecoder.APIMessage{
+		Role:    "assistant",
+		Content: fmt.Sprintf("I've noted the current content of %s for context.", relPath),
+	})
 }
 
 // looksLikeFilePath returns true if s looks like a file path (has extension or slash).
