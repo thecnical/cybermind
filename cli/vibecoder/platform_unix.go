@@ -13,11 +13,17 @@ func NormalizePath(p string) string {
 	return p
 }
 
-// DefaultShell returns the user's default shell from $SHELL, defaulting to /bin/zsh.
+// DefaultShell returns the user's default shell from $SHELL.
+// Falls back to /bin/bash (Linux) or /bin/zsh (macOS).
 func DefaultShell() (string, []string) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
-		shell = "/bin/zsh"
+		// Prefer bash on Linux, zsh on macOS
+		if _, err := os.Stat("/bin/bash"); err == nil {
+			shell = "/bin/bash"
+		} else {
+			shell = "/bin/sh"
+		}
 	}
 	return shell, []string{"-c"}
 }
