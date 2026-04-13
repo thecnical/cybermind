@@ -1223,15 +1223,22 @@ func FetchH1Programs() ([]H1Program, error) {
 	return result.Programs, nil
 }
 
-// FetchH1Suggestion asks AI to suggest best targets
-func FetchH1Suggestion(skill, focus string) (string, error) {
+// H1SuggestionResult holds the parsed suggestion response
+type H1SuggestionResult struct {
+	Text      string // formatted display text
+	TopDomain string // first/best domain for auto-select
+}
+
+// FetchH1Suggestion asks AI to suggest best targets.
+// Returns structured result with display text and top domain for auto-select.
+func FetchH1Suggestion(skill, focus string) (*H1SuggestionResult, error) {
 	u := getBaseURL() + "/hackerone/suggest?skill=" + url.QueryEscape(skill)
 	if focus != "" {
 		u += "&focus=" + url.QueryEscape(focus)
 	}
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if key := getAPIKey(); key != "" {
 		req.Header.Set("X-API-Key", key)
@@ -1240,14 +1247,14 @@ func FetchH1Suggestion(skill, focus string) (string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("cannot reach backend")
+		return nil, fmt.Errorf("cannot reach backend")
 	}
 	defer resp.Body.Close()
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	var result struct {
-		Success  bool   `json:"success"`
-		Targets  []struct {
+		Success bool `json:"success"`
+		Targets []struct {
 			Domain          string `json:"domain"`
 			Program         string `json:"program"`
 			Platform        string `json:"platform"`
@@ -1262,14 +1269,16 @@ func FetchH1Suggestion(skill, focus string) (string, error) {
 		Error    string `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", fmt.Errorf("invalid response")
+		return nil, fmt.Errorf("invalid response")
 	}
 	if !result.Success {
-		return "", fmt.Errorf("%s", result.Error)
+		return nil, fmt.Errorf("%s", result.Error)
 	}
 
+	out := &H1SuggestionResult{}
 	var sb strings.Builder
 	if len(result.Targets) > 0 {
+		out.TopDomain = result.Targets[0].Domain
 		for i, t := range result.Targets {
 			sb.WriteString(fmt.Sprintf("%d. %s (%s)\n", i+1, t.Domain, t.Platform))
 			sb.WriteString(fmt.Sprintf("   Scope: %s\n", t.Scope))
@@ -1283,7 +1292,8 @@ func FetchH1Suggestion(skill, focus string) (string, error) {
 	} else {
 		sb.WriteString(result.Raw)
 	}
-	return sb.String(), nil
+	out.Text = sb.String()
+	return out, nil
 }
 
 // ─── Tools Config (server-side API keys) ─────────────────────────────────────

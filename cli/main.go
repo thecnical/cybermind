@@ -3089,13 +3089,20 @@ func main() {
 
 			// Try AI suggestion first
 			suggestion, sugErr := api.FetchH1Suggestion(skillLevel, focusTypes)
-			if sugErr == nil && suggestion != "" {
+			if sugErr == nil && suggestion != nil && suggestion.Text != "" {
 				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  Top targets for you:"))
 				fmt.Println()
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).MarginLeft(2).Render(suggestion))
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).MarginLeft(2).Render(suggestion.Text))
 				fmt.Println()
+				// Auto-select top domain if no target provided
+				if planTarget == "" && suggestion.TopDomain != "" {
+					planTarget = suggestion.TopDomain
+					fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+						fmt.Sprintf("  ✓ Auto-selected: %s", planTarget)))
+					fmt.Println()
+				}
 			} else {
-				// Fallback: show curated list
+				// Fallback: show curated list and auto-pick first
 				programs, progErr := api.FetchH1Programs()
 				if progErr == nil && len(programs) > 0 {
 					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  Top bug bounty programs:"))
@@ -3109,9 +3116,17 @@ func main() {
 						fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("     Bounty: $%d-$%d | %s", p.MinBounty, p.MaxBounty, p.Why)))
 						fmt.Println()
 					}
+					// Auto-select top program if no target provided
+					if planTarget == "" && programs[0].Domain != "" {
+						planTarget = programs[0].Domain
+						fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+							fmt.Sprintf("  ✓ Auto-selected: %s", planTarget)))
+						fmt.Println()
+					}
 				}
 			}
 
+			// Only prompt if auto-select failed
 			if planTarget == "" {
 				fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Enter target domain to start plan: "))
 				fmt.Scanln(&planTarget)
