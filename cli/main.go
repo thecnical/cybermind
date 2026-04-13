@@ -3460,17 +3460,34 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 	fmt.Println()
 	fmt.Println(dim2.Render(fmt.Sprintf("  %-12s %s", "Tier:", tier)))
 	fmt.Println(dim2.Render(fmt.Sprintf("  %-12s %s", "Model:", activeModel)))
-	fmt.Println(dim2.Render(fmt.Sprintf("  %-12s %s", "Workspace:", cwd)))
+
+	// Count workspace files for display
+	fileCount := countWorkspaceFiles(cwd)
+	workspaceDisplay := cwd
+	if fileCount > 0 {
+		workspaceDisplay = fmt.Sprintf("%s (%d files)", cwd, fileCount)
+	}
+	fmt.Println(dim2.Render(fmt.Sprintf("  %-12s %s", "Workspace:", workspaceDisplay)))
+
+	// Detect tech stack if files exist
+	if fileCount > 0 {
+		stack := detectWorkspaceStack(cwd)
+		if stack != "" {
+			fmt.Println(dim2.Render(fmt.Sprintf("  %-12s %s", "Stack:", stack)))
+		}
+	}
+
 	fmt.Println()
 	fmt.Println(dim2.Render("  ─────────────────────────────────────────────────────"))
 	fmt.Println(yellow2.Render("  Tips:"))
 	fmt.Println(green2.Render("  Type your task and press Enter to get AI response"))
 	fmt.Println(green2.Render("  /add <file>  — add file to context"))
+	fmt.Println(green2.Render("  /ls          — list workspace files"))
+	fmt.Println(green2.Render("  /read <file> — read file into context"))
+	fmt.Println(green2.Render("  /run <cmd>   — run a command"))
 	fmt.Println(green2.Render("  /clear       — reset context"))
-	fmt.Println(green2.Render("  /mode agent  — autonomous mode (default)"))
-	fmt.Println(green2.Render("  /mode chat   — chat only mode"))
 	fmt.Println(green2.Render("  /help        — show all commands"))
-	fmt.Println(green2.Render("  /exit        — quit  |  Ctrl+C to cancel"))
+	fmt.Println(green2.Render("  /exit        — quit"))
 	fmt.Println(dim2.Render("  ─────────────────────────────────────────────────────"))
 	fmt.Println()
 
@@ -3524,6 +3541,9 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 				fmt.Println()
 				fmt.Println(cyan2.Render("  Commands:"))
 				fmt.Println(dim2.Render("  /add <file>           — add file to context"))
+				fmt.Println(dim2.Render("  /read <file>          — read file and add to context"))
+				fmt.Println(dim2.Render("  /ls [path]            — list workspace files"))
+				fmt.Println(dim2.Render("  /run <command>        — run a shell command"))
 				fmt.Println(dim2.Render("  /clear                — reset context window"))
 				fmt.Println(dim2.Render("  /mode agent|chat      — switch mode"))
 				fmt.Println(dim2.Render("  /effort low|medium|max — set effort level"))
@@ -3569,6 +3589,73 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 					}
 				} else {
 					fmt.Println(red2.Render("  Usage: /add <filepath>"))
+				}
+
+			case "/read":
+				if len(parts) > 1 {
+					filePath := strings.Join(parts[1:], " ")
+					content, readErr := os.ReadFile(filePath)
+					if readErr != nil {
+						fmt.Println(red2.Render("  ✗ Cannot read: " + filePath))
+					} else {
+						fileCtx := fmt.Sprintf("[File: %s]\n```\n%s\n```", filePath, string(content))
+						chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: fileCtx})
+						fmt.Println(green2.Render(fmt.Sprintf("  ✓ Read: %s (%d bytes)", filePath, len(content))))
+					}
+				} else {
+					fmt.Println(red2.Render("  Usage: /read <filepath>"))
+				}
+
+			case "/ls":
+				listPath := cwd
+				if len(parts) > 1 {
+					listPath = filepath.Join(cwd, strings.Join(parts[1:], " "))
+				}
+				entries, lsErr := os.ReadDir(listPath)
+				if lsErr != nil {
+					fmt.Println(red2.Render("  ✗ Cannot list: " + lsErr.Error()))
+				} else {
+					fmt.Println()
+					for _, e := range entries {
+						if e.IsDir() {
+							fmt.Println(cyan2.Render("  📁 " + e.Name() + "/"))
+						} else {
+							info, _ := e.Info()
+							size := ""
+							if info != nil {
+								size = fmt.Sprintf(" (%d bytes)", info.Size())
+							}
+							fmt.Println(dim2.Render("  📄 " + e.Name() + size))
+						}
+					}
+					fmt.Println()
+				}
+
+			case "/run":
+				if len(parts) > 1 {
+					cmd := strings.Join(parts[1:], " ")
+					fmt.Println(dim2.Render("  ⟳ Running: " + cmd))
+					var shell, flag string
+					if runtime.GOOS == "windows" {
+						shell, flag = "cmd", "/c"
+					} else {
+						shell, flag = "sh", "-c"
+					}
+					out, runErr := exec.Command(shell, flag, cmd).CombinedOutput()
+					output := strings.TrimSpace(string(out))
+					if runErr != nil {
+						fmt.Println(red2.Render("  ✗ " + runErr.Error()))
+					}
+					if output != "" {
+						fmt.Println(dim2.Render(output))
+						// Add output to context
+						chatHistory = append(chatHistory, vibecoder.APIMessage{
+							Role:    "user",
+							Content: fmt.Sprintf("[Command output: %s]\n```\n%s\n```", cmd, output),
+						})
+					}
+				} else {
+					fmt.Println(red2.Render("  Usage: /run <command>"))
 				}
 
 			case "/undo":
@@ -3641,10 +3728,11 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 }
 
 // writeCodeBlocksToFiles parses AI response for file patterns and writes them.
-// Supports patterns like:
-//   **filename.ext** followed by ```lang ... ```
-//   // filename.ext at top of code block
-//   File: filename.ext
+// Handles all common AI response patterns:
+//   **filename.ext** or ### **filename.ext** before code block
+//   `filename.ext` before code block
+//   File: filename.ext or Path: filename.ext
+//   // filename.ext or # filename.ext inside code block (first line)
 func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipgloss.Style) int {
 	written := 0
 	lines := strings.Split(response, "\n")
@@ -3654,54 +3742,93 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 	var codeLines []string
 	var codeLang string
 
+	extractFilePath := func(s string) string {
+		s = strings.TrimSpace(s)
+		// Remove markdown formatting
+		s = strings.TrimPrefix(s, "###")
+		s = strings.TrimPrefix(s, "##")
+		s = strings.TrimPrefix(s, "#")
+		s = strings.TrimSpace(s)
+		// Remove bold markers
+		s = strings.Trim(s, "*")
+		s = strings.Trim(s, "`")
+		s = strings.TrimSpace(s)
+		// Remove trailing colon
+		s = strings.TrimSuffix(s, ":")
+		s = strings.TrimSpace(s)
+		if looksLikeFilePath(s) {
+			return s
+		}
+		return ""
+	}
+
 	for i, line := range lines {
-		// Detect filename patterns before code block
+		trimmed := strings.TrimSpace(line)
+
 		if !inCodeBlock {
-			// Pattern: **filename.ext** or **path/to/file.ext**
-			if strings.HasPrefix(line, "**") && strings.HasSuffix(line, "**") {
-				inner := strings.TrimPrefix(strings.TrimSuffix(line, "**"), "**")
-				if looksLikeFilePath(inner) {
-					currentFile = inner
-					continue
+			// Pattern 1: ### **filename.ext** or **filename.ext** or ### `filename.ext`
+			if strings.Contains(trimmed, "**") || strings.Contains(trimmed, "`") {
+				// Extract content between ** or `
+				inner := trimmed
+				// Remove ### prefix
+				inner = strings.TrimPrefix(inner, "###")
+				inner = strings.TrimPrefix(inner, "##")
+				inner = strings.TrimPrefix(inner, "#")
+				inner = strings.TrimSpace(inner)
+				// Extract between ** **
+				if strings.HasPrefix(inner, "**") && strings.HasSuffix(inner, "**") {
+					inner = strings.TrimPrefix(strings.TrimSuffix(inner, "**"), "**")
+					if fp := extractFilePath(inner); fp != "" {
+						currentFile = fp
+						continue
+					}
 				}
-			}
-			// Pattern: `filename.ext` or `path/to/file.ext`
-			if strings.HasPrefix(line, "`") && strings.HasSuffix(line, "`") && !strings.HasPrefix(line, "```") {
-				inner := strings.Trim(line, "`")
-				if looksLikeFilePath(inner) {
-					currentFile = inner
-					continue
-				}
-			}
-			// Pattern: File: filename.ext or filename.ext:
-			for _, prefix := range []string{"File: ", "file: ", "Filename: ", "filename: ", "Path: "} {
-				if strings.HasPrefix(line, prefix) {
-					candidate := strings.TrimPrefix(line, prefix)
-					candidate = strings.TrimSuffix(candidate, ":")
-					if looksLikeFilePath(candidate) {
-						currentFile = candidate
+				// Extract between ` `
+				if strings.HasPrefix(inner, "`") && strings.HasSuffix(inner, "`") && !strings.HasPrefix(inner, "```") {
+					inner = strings.Trim(inner, "`")
+					if fp := extractFilePath(inner); fp != "" {
+						currentFile = fp
+						continue
 					}
 				}
 			}
-			// Start of code block
-			if strings.HasPrefix(line, "```") {
-				codeLang = strings.TrimPrefix(line, "```")
+
+			// Pattern 2: File: filename.ext or Path: filename.ext
+			for _, prefix := range []string{"File: ", "file: ", "Filename: ", "filename: ", "Path: ", "path: ", "**File**: ", "**Filename**: "} {
+				if strings.HasPrefix(trimmed, prefix) {
+					candidate := strings.TrimPrefix(trimmed, prefix)
+					if fp := extractFilePath(candidate); fp != "" {
+						currentFile = fp
+					}
+				}
+			}
+
+			// Pattern 3: Start of code block
+			if strings.HasPrefix(trimmed, "```") {
+				codeLang = strings.TrimPrefix(trimmed, "```")
+				_ = codeLang
 				inCodeBlock = true
 				codeLines = nil
-				// Check if next line looks like a file path (inline filename)
+
+				// Check if next line is a file path comment
 				if i+1 < len(lines) {
 					nextLine := strings.TrimSpace(lines[i+1])
-					if strings.HasPrefix(nextLine, "// ") || strings.HasPrefix(nextLine, "# ") {
-						candidate := strings.TrimPrefix(strings.TrimPrefix(nextLine, "// "), "# ")
-						if looksLikeFilePath(candidate) {
-							currentFile = candidate
+					for _, commentPrefix := range []string{"// ", "# ", "<!-- ", "-- "} {
+						if strings.HasPrefix(nextLine, commentPrefix) {
+							candidate := strings.TrimPrefix(nextLine, commentPrefix)
+							candidate = strings.TrimSuffix(candidate, " -->")
+							candidate = strings.TrimSpace(candidate)
+							if fp := extractFilePath(candidate); fp != "" {
+								currentFile = fp
+							}
+							break
 						}
 					}
 				}
 			}
 		} else {
 			// End of code block
-			if line == "```" || strings.HasPrefix(line, "```") {
+			if trimmed == "```" || (strings.HasPrefix(trimmed, "```") && len(trimmed) > 3 && !strings.Contains(trimmed, " ")) {
 				inCodeBlock = false
 				if currentFile != "" && len(codeLines) > 0 {
 					// Write the file
@@ -3719,15 +3846,10 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 						}
 					}
 					currentFile = ""
-				} else if currentFile == "" && len(codeLines) > 0 && codeLang != "" {
-					// Try to infer filename from language
-					ext := langToExt(codeLang)
-					if ext != "" {
-						_ = dim // suppress unused warning
-					}
 				}
 				codeLines = nil
 				codeLang = ""
+				_ = dim
 			} else {
 				codeLines = append(codeLines, line)
 			}
@@ -3781,4 +3903,79 @@ func langToExt(lang string) string {
 		"sql": ".sql",
 	}
 	return m[strings.ToLower(strings.TrimSpace(lang))]
+}
+
+// countWorkspaceFiles counts non-hidden, non-node_modules files in workspace.
+func countWorkspaceFiles(root string) int {
+	count := 0
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		name := info.Name()
+		// Skip hidden dirs, node_modules, .git, dist, build
+		if info.IsDir() {
+			if strings.HasPrefix(name, ".") || name == "node_modules" ||
+				name == "dist" || name == "build" || name == ".next" ||
+				name == "vendor" || name == "__pycache__" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasPrefix(name, ".") {
+			count++
+		}
+		return nil
+	})
+	return count
+}
+
+// detectWorkspaceStack detects the tech stack from workspace files.
+func detectWorkspaceStack(root string) string {
+	var stack []string
+
+	// Check package.json
+	pkgPath := filepath.Join(root, "package.json")
+	if data, err := os.ReadFile(pkgPath); err == nil {
+		content := string(data)
+		if strings.Contains(content, `"next"`) {
+			stack = append(stack, "Next.js")
+		} else if strings.Contains(content, `"react"`) {
+			stack = append(stack, "React")
+		} else if strings.Contains(content, `"vue"`) {
+			stack = append(stack, "Vue")
+		} else if strings.Contains(content, `"express"`) {
+			stack = append(stack, "Express")
+		}
+		if strings.Contains(content, `"typescript"`) || strings.Contains(content, `"@types/`) {
+			stack = append(stack, "TypeScript")
+		}
+		if strings.Contains(content, `"tailwindcss"`) {
+			stack = append(stack, "Tailwind")
+		}
+		if strings.Contains(content, `"prisma"`) {
+			stack = append(stack, "Prisma")
+		}
+		if strings.Contains(content, `"supabase"`) {
+			stack = append(stack, "Supabase")
+		}
+	}
+
+	// Check for Go
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+		stack = append(stack, "Go")
+	}
+
+	// Check for Python
+	if _, err := os.Stat(filepath.Join(root, "requirements.txt")); err == nil {
+		stack = append(stack, "Python")
+	}
+	if _, err := os.Stat(filepath.Join(root, "pyproject.toml")); err == nil {
+		stack = append(stack, "Python")
+	}
+
+	if len(stack) == 0 {
+		return ""
+	}
+	return strings.Join(stack, " + ")
 }
