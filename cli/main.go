@@ -2091,78 +2091,120 @@ func main() {
 
 		allTools := []toolEntry{
 			// ── Recon Phase 1 — Passive OSINT ──────────────────────────────────
-			{"whois", "recon", "sudo apt install whois", false, false},
-			{"theHarvester", "recon", "sudo apt install theharvester", false, false},
-			{"dig", "recon", "sudo apt install dnsutils", false, false},
+			{"whois", "recon", "sudo apt install -y whois", false, false},
+			{"theHarvester", "recon", "sudo apt install -y theharvester", false, false},
+			{"dig", "recon", "sudo apt install -y dnsutils", false, false},
 			// ── Recon Phase 2 — Subdomain Enumeration ──────────────────────────
 			{"subfinder", "recon", "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", true, false},
-			{"amass", "recon", "sudo apt install amass", false, false},
+			{"amass", "recon", "sudo apt install -y amass", false, false},
 			{"reconftw", "recon", "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh", false, false},
 			{"dnsx", "recon", "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest", true, false},
 			// ── Recon Phase 3 — Port Scanning ──────────────────────────────────
 			{"rustscan", "recon", "cargo install rustscan", false, true},
 			{"naabu", "recon", "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", true, false},
-			{"nmap", "recon", "sudo apt install nmap", false, false},
-			{"masscan", "recon", "sudo apt install masscan", false, false},
+			{"nmap", "recon", "sudo apt install -y nmap", false, false},
+			{"masscan", "recon", "sudo apt install -y masscan", false, false},
+			{"zmap", "recon", "sudo apt install -y zmap", false, false},
 			// ── Recon Phase 4 — HTTP Fingerprinting ────────────────────────────
 			{"httpx", "recon", "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", true, false},
-			{"whatweb", "recon", "sudo apt install whatweb", false, false},
+			{"whatweb", "recon", "sudo apt install -y whatweb", false, false},
 			{"tlsx", "recon", "go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest", true, false},
+			{"wafw00f", "recon", "pip3 install wafw00f --break-system-packages", false, false},
 			// ── Recon Phase 5 — Directory Discovery ────────────────────────────
-			{"ffuf", "recon", "sudo apt install ffuf", false, false},
-			{"feroxbuster", "recon", "sudo apt install feroxbuster", false, false},
-			{"gobuster", "recon", "sudo apt install gobuster", false, false},
+			{"ffuf", "recon", "sudo apt install -y ffuf", false, false},
+			{"feroxbuster", "recon", "sudo apt install -y feroxbuster", false, false},
+			{"gobuster", "recon", "sudo apt install -y gobuster", false, false},
 			// ── Recon Phase 6 — Vulnerability Scanning ─────────────────────────
 			{"nuclei", "recon", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false},
-			{"nikto", "recon", "sudo apt install nikto", false, false},
+			{"nikto", "recon", "sudo apt install -y nikto", false, false},
 			{"katana", "recon", "go install github.com/projectdiscovery/katana/cmd/katana@latest", true, false},
 			// ── Hunt Phase 1 — URL Collection ──────────────────────────────────
 			{"waymore", "hunt", "pip3 install waymore --break-system-packages", false, false},
 			{"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false},
 			{"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false},
+			{"hakrawler", "hunt", "go install github.com/hakluke/hakrawler@latest", true, false},
+			{"urlfinder", "hunt", "go install github.com/projectdiscovery/urlfinder/cmd/urlfinder@latest", true, false},
+			{"httprobe", "hunt", "go install github.com/tomnomnom/httprobe@latest", true, false},
 			// ── Hunt Phase 2 — Deep Crawl ──────────────────────────────────────
 			{"gospider", "hunt", "go install github.com/jaeles-project/gospider@latest", true, false},
-			// katana already in recon, shared
+			{"cariddi", "hunt", "go install github.com/edoardottt/cariddi/cmd/cariddi@latest", true, false},
+			{"subjs", "hunt", "go install github.com/lc/subjs@latest", true, false},
+			{"trufflehog", "hunt", "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin", false, false},
+			{"mantra", "hunt", "go install github.com/MrEmpy/mantra@latest", true, false},
 			// ── Hunt Phase 3 — Parameter Discovery ─────────────────────────────
 			{"paramspider", "hunt", "git clone https://github.com/devanshbatham/ParamSpider /opt/ParamSpider && pip3 install -r /opt/ParamSpider/requirements.txt --break-system-packages && sudo ln -sf /opt/ParamSpider/paramspider.py /usr/local/bin/paramspider && sudo chmod +x /usr/local/bin/paramspider", false, false},
 			{"arjun", "hunt", "pip3 install arjun --break-system-packages", false, false},
 			{"x8", "hunt", "Download binary from https://github.com/Sh1Yo/x8/releases/latest", false, false},
+			{"smuggler", "hunt", "git clone https://github.com/defparam/smuggler /opt/smuggler && pip3 install -r /opt/smuggler/requirements.txt --break-system-packages && sudo tee /usr/local/bin/smuggler > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/smuggler/smuggler.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/smuggler", false, false},
+			{"jwt_tool", "hunt", "git clone https://github.com/ticarpi/jwt_tool /opt/jwt_tool && pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages && sudo tee /usr/local/bin/jwt_tool > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/jwt_tool/jwt_tool.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/jwt_tool", false, false},
+			{"graphw00f", "hunt", "pip3 install graphw00f --break-system-packages", false, false},
 			// ── Hunt Phase 4 — XSS Hunting ─────────────────────────────────────
 			{"xsstrike", "hunt", "git clone https://github.com/s0md3v/XSStrike /opt/XSStrike && pip3 install -r /opt/XSStrike/requirements.txt --break-system-packages && sudo ln -sf /opt/XSStrike/xsstrike.py /usr/local/bin/xsstrike && sudo chmod +x /usr/local/bin/xsstrike", false, false},
 			{"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2@latest", true, false},
+			{"kxss", "hunt", "go install github.com/Emoe/kxss@latest", true, false},
+			{"bxss", "hunt", "go install github.com/ethicalhackingplayground/bxss@latest", true, false},
+			{"corsy", "hunt", "git clone https://github.com/s0md3v/Corsy /opt/corsy && pip3 install -r /opt/corsy/requirements.txt --break-system-packages && sudo tee /usr/local/bin/corsy > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/corsy/corsy.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/corsy", false, false},
+			{"beef-xss", "hunt", "sudo apt install -y beef-xss", false, false},
 			// ── Hunt Phase 5 — Deep Vuln Scan ──────────────────────────────────
 			{"gf", "hunt", "go install github.com/tomnomnom/gf@latest && git clone https://github.com/1ndianl33t/Gf-Patterns ~/.gf", true, false},
-			// nuclei already in recon, shared
+			{"ssrfmap", "hunt", "git clone https://github.com/swisskyrepo/SSRFmap /opt/ssrfmap && pip3 install -r /opt/ssrfmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/ssrfmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/ssrfmap/ssrfmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/ssrfmap", false, false},
+			{"tplmap", "hunt", "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap", false, false},
+			{"liffy", "hunt", "git clone https://github.com/mzfr/liffy /opt/liffy && pip3 install -r /opt/liffy/requirements.txt --break-system-packages && sudo tee /usr/local/bin/liffy > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/liffy/liffy.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/liffy", false, false},
+			{"gopherus", "hunt", "git clone https://github.com/tarunkant/Gopherus /opt/gopherus && pip3 install -r /opt/gopherus/requirements.txt --break-system-packages && sudo tee /usr/local/bin/gopherus > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/gopherus/gopherus.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/gopherus", false, false},
 			// ── Abhimanyu Phase 1 — Web Exploitation ───────────────────────────
-			{"sqlmap", "exploit", "sudo apt install sqlmap -y", false, false},
-			{"commix", "exploit", "sudo apt install commix -y", false, false},
-			{"wpscan", "exploit", "sudo apt install wpscan -y", false, false},
-			// nikto already in recon, shared
+			{"sqlmap", "exploit", "sudo apt install -y sqlmap", false, false},
+			{"commix", "exploit", "sudo apt install -y commix", false, false},
+			{"wpscan", "exploit", "sudo apt install -y wpscan", false, false},
+			{"nosqlmap", "exploit", "git clone https://github.com/codingo/NoSQLMap /opt/nosqlmap && pip3 install -r /opt/nosqlmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/nosqlmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/nosqlmap/nosqlmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/nosqlmap", false, false},
+			{"xxeinjector", "exploit", "git clone https://github.com/enjoiz/XXEinjector /opt/xxeinjector && sudo tee /usr/local/bin/xxeinjector > /dev/null <<'EOF'\n#!/bin/bash\nruby /opt/xxeinjector/XXEinjector.rb \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/xxeinjector", false, false},
 			// ── Abhimanyu Phase 2 — Auth Attacks ───────────────────────────────
-			{"hydra", "exploit", "sudo apt install hydra -y", false, false},
-			{"john", "exploit", "sudo apt install john -y", false, false},
-			{"hashcat", "exploit", "sudo apt install hashcat -y", false, false},
+			{"hydra", "exploit", "sudo apt install -y hydra", false, false},
+			{"john", "exploit", "sudo apt install -y john", false, false},
+			{"hashcat", "exploit", "sudo apt install -y hashcat", false, false},
+			{"kerbrute", "exploit", "go install github.com/ropnop/kerbrute@latest", true, false},
+			{"sprayhound", "exploit", "pip3 install sprayhound --break-system-packages", false, false},
 			// ── Abhimanyu Phase 3 — CVE/Exploit Search ─────────────────────────
-			{"searchsploit", "exploit", "sudo apt install exploitdb -y", false, false},
-			{"msfconsole", "exploit", "sudo apt install metasploit-framework -y", false, false},
+			{"searchsploit", "exploit", "sudo apt install -y exploitdb", false, false},
+			{"msfconsole", "exploit", "sudo apt install -y metasploit-framework", false, false},
 			// ── Abhimanyu Phase 4 — Post-Exploitation ──────────────────────────
 			{"linpeas", "exploit", "curl -sL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o /opt/linpeas.sh && chmod +x /opt/linpeas.sh && sudo ln -sf /opt/linpeas.sh /usr/local/bin/linpeas", false, false},
 			{"pspy", "exploit", "curl -sL https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64 -o /opt/pspy && chmod +x /opt/pspy && sudo ln -sf /opt/pspy /usr/local/bin/pspy", false, false},
-			{"bloodhound-python", "exploit", "pip3 install bloodhound --break-system-packages && sudo apt install neo4j -y", false, false},
+			{"bloodhound-python", "exploit", "pip3 install bloodhound --break-system-packages && sudo apt install -y neo4j", false, false},
+			{"certipy", "exploit", "pip3 install certipy-ad --break-system-packages", false, false},
+			{"bloodyAD", "exploit", "pip3 install bloodyAD --break-system-packages", false, false},
 			// ── Abhimanyu Phase 5 — Lateral Movement ───────────────────────────
-			{"crackmapexec", "exploit", "sudo apt install crackmapexec -y", false, false},
+			{"crackmapexec", "exploit", "sudo apt install -y crackmapexec", false, false},
+			{"netexec", "exploit", "pip3 install netexec --break-system-packages", false, false},
 			{"evil-winrm", "exploit", "sudo gem install evil-winrm", false, false},
-			{"impacket-secretsdump", "exploit", "sudo apt install python3-impacket -y", false, false},
+			{"impacket-secretsdump", "exploit", "sudo apt install -y python3-impacket", false, false},
+			{"coercer", "exploit", "pip3 install coercer --break-system-packages", false, false},
+			{"mitm6", "exploit", "pip3 install mitm6 --break-system-packages", false, false},
 			// ── Abhimanyu Phase 6 — Persistence + Exfil ────────────────────────
-			{"iodine", "exploit", "sudo apt install iodine -y", false, false},
+			{"chisel", "exploit", "go install github.com/jpillora/chisel@latest", true, false},
+			{"ligolo-ng", "exploit", "go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest", true, false},
+			{"iodine", "exploit", "sudo apt install -y iodine", false, false},
+			{"evilginx2", "exploit", "go install github.com/kgretzky/evilginx2@latest", true, false},
 		}
 
 		var missing []toolEntry
 		reconOK := 0
 		huntOK := 0
 		exploitOK := 0
+		reconTotal := 0
+		huntTotal := 0
+		exploitTotal := 0
+		for _, t := range allTools {
+			switch t.mode {
+			case "recon":
+				reconTotal++
+			case "hunt":
+				huntTotal++
+			case "exploit":
+				exploitTotal++
+			}
+		}
 
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  RECON TOOLS (20):"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(fmt.Sprintf("  RECON TOOLS (%d):", reconTotal)))
 		for _, t := range allTools {
 			if t.mode != "recon" {
 				continue
@@ -2177,7 +2219,7 @@ func main() {
 		}
 
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  HUNT TOOLS (11):"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(fmt.Sprintf("  HUNT TOOLS (%d):", huntTotal)))
 		for _, t := range allTools {
 			if t.mode != "hunt" {
 				continue
@@ -2192,7 +2234,7 @@ func main() {
 		}
 
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ABHIMANYU EXPLOIT TOOLS (13):"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(fmt.Sprintf("  ABHIMANYU EXPLOIT TOOLS (%d):", exploitTotal)))
 		for _, t := range allTools {
 			if t.mode != "exploit" {
 				continue
@@ -2209,11 +2251,11 @@ func main() {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
-			fmt.Sprintf("  Recon:     %d/20 installed", reconOK)))
+			fmt.Sprintf("  Recon:     %d/%d installed", reconOK, reconTotal)))
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Render(
-			fmt.Sprintf("  Hunt:      %d/11 installed", huntOK)))
+			fmt.Sprintf("  Hunt:      %d/%d installed", huntOK, huntTotal)))
 		fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
-			fmt.Sprintf("  Abhimanyu: %d/13 installed", exploitOK)))
+			fmt.Sprintf("  Abhimanyu: %d/%d installed", exploitOK, exploitTotal)))
 
 		if len(missing) == 0 {
 			fmt.Println()
@@ -2226,21 +2268,28 @@ func main() {
 			fmt.Println()
 
 			instOK, instFail := 0, 0
+			// helper: symlink go binary
+			symlinkGoTool := func(name string) {
+				homedir2, _ := os.UserHomeDir()
+				for _, gobin := range []string{homedir2 + "/go/bin/" + name, "/root/go/bin/" + name} {
+					if _, err2 := os.Stat(gobin); err2 == nil {
+						exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/"+name).Run()
+						return
+					}
+				}
+			}
 			for _, t := range missing {
-				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-16s installing...", t.name)))
+				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-20s installing...", t.name)))
 
 				var installErr error
 
 				switch t.name {
 				case "reconftw":
 					installErr = installReconftw()
-
 				case "x8":
 					installErr = installX8()
-
 				case "rustscan":
 					installErr = installRustscan()
-
 				case "naabu":
 					exec.Command("sudo", "apt", "install", "-y", "libpcap-dev").Run()
 					cmd2 := exec.Command("go", "install", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest")
@@ -2248,145 +2297,141 @@ func main() {
 					cmd2.Stderr = os.Stderr
 					installErr = cmd2.Run()
 					if installErr == nil {
-						homedir2, _ := os.UserHomeDir()
-						for _, gobin := range []string{homedir2 + "/go/bin/naabu", "/root/go/bin/naabu"} {
-							if _, err2 := os.Stat(gobin); err2 == nil {
-								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/naabu").Run()
+						symlinkGoTool("naabu")
+					}
+				case "paramspider":
+					installErr = installPythonGitTool("paramspider", "https://github.com/devanshbatham/ParamSpider", "/opt/ParamSpider", "paramspider.py")
+				case "arjun":
+					installErr = installPythonPipTool("arjun")
+				case "graphw00f":
+					installErr = installPythonPipTool("graphw00f")
+				case "wafw00f":
+					installErr = installPythonPipTool("wafw00f")
+				case "sprayhound":
+					installErr = installPythonPipTool("sprayhound")
+				case "certipy":
+					cmd2 := exec.Command("pip3", "install", "certipy-ad", "--break-system-packages", "-q")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+				case "bloodyAD":
+					installErr = installPythonPipTool("bloodyAD")
+				case "netexec":
+					installErr = installPythonPipTool("netexec")
+				case "coercer":
+					installErr = installPythonPipTool("coercer")
+				case "mitm6":
+					installErr = installPythonPipTool("mitm6")
+				case "xsstrike":
+					installErr = installPythonGitTool("xsstrike", "https://github.com/s0md3v/XSStrike", "/opt/XSStrike", "xsstrike.py")
+				case "smuggler":
+					installErr = installPythonGitTool("smuggler", "https://github.com/defparam/smuggler", "/opt/smuggler", "smuggler.py")
+				case "jwt_tool":
+					installErr = installPythonGitTool("jwt_tool", "https://github.com/ticarpi/jwt_tool", "/opt/jwt_tool", "jwt_tool.py")
+				case "corsy":
+					installErr = installPythonGitTool("corsy", "https://github.com/s0md3v/Corsy", "/opt/corsy", "corsy.py")
+				case "ssrfmap":
+					installErr = installPythonGitTool("ssrfmap", "https://github.com/swisskyrepo/SSRFmap", "/opt/ssrfmap", "ssrfmap.py")
+				case "tplmap":
+					installErr = installPythonGitTool("tplmap", "https://github.com/epinna/tplmap", "/opt/tplmap", "tplmap.py")
+				case "liffy":
+					installErr = installPythonGitTool("liffy", "https://github.com/mzfr/liffy", "/opt/liffy", "liffy.py")
+				case "gopherus":
+					installErr = installPythonGitTool("gopherus", "https://github.com/tarunkant/Gopherus", "/opt/gopherus", "gopherus.py")
+				case "nosqlmap":
+					installErr = installPythonGitTool("nosqlmap", "https://github.com/codingo/NoSQLMap", "/opt/nosqlmap", "nosqlmap.py")
+				case "xxeinjector":
+					exec.Command("sudo", "rm", "-rf", "/opt/xxeinjector").Run()
+					cloneCmd := exec.Command("git", "clone", "--depth=1", "https://github.com/enjoiz/XXEinjector", "/opt/xxeinjector")
+					cloneCmd.Stdout = os.Stdout
+					cloneCmd.Stderr = os.Stderr
+					if err := cloneCmd.Run(); err != nil {
+						installErr = err
+					} else {
+						exec.Command("sudo", "apt", "install", "-y", "ruby").Run()
+						teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/xxeinjector")
+						teeCmd.Stdin = strings.NewReader("#!/bin/bash\nruby /opt/xxeinjector/XXEinjector.rb \"$@\"\n")
+						teeCmd.Run()
+						exec.Command("sudo", "chmod", "+x", "/usr/local/bin/xxeinjector").Run()
+					}
+				case "trufflehog":
+					cmd2 := exec.Command("bash", "-c",
+						"curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
+				case "waymore":
+					cmd2 := exec.Command("pip3", "install", "waymore", "--break-system-packages", "-q")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					if err := cmd2.Run(); err == nil {
+						for _, p := range []string{"/usr/local/bin/waymore", "/usr/bin/waymore"} {
+							if _, e := os.Stat(p); e == nil {
 								break
 							}
 						}
-					}
-
-				case "paramspider":
-					installErr = installPythonGitTool(
-						"paramspider",
-						"https://github.com/devanshbatham/ParamSpider",
-						"/opt/ParamSpider",
-						"paramspider.py",
-					)
-
-				case "arjun":
-					installErr = installPythonPipTool("arjun")
-
-				case "xsstrike":
-					installErr = installPythonGitTool(
-						"xsstrike",
-						"https://github.com/s0md3v/XSStrike",
-						"/opt/XSStrike",
-						"xsstrike.py",
-					)
-
-				case "waymore":
-					// waymore is a Python tool — pip3 install (NOT go install)
-					installErr = func() error {
-						cmd2 := exec.Command("pip3", "install", "waymore", "--break-system-packages", "-q")
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						if err := cmd2.Run(); err == nil {
-							for _, p := range []string{"/usr/local/bin/waymore", "/usr/bin/waymore"} {
-								if _, e := os.Stat(p); e == nil {
-									return nil
-								}
-							}
-						}
-						// Method 2: git clone
+					} else {
 						exec.Command("sudo", "rm", "-rf", "/opt/waymore").Run()
 						cloneCmd := exec.Command("git", "clone", "--depth=1", "https://github.com/xnl-h4ck3r/waymore.git", "/opt/waymore")
 						cloneCmd.Stdout = os.Stdout
 						cloneCmd.Stderr = os.Stderr
-						if err := cloneCmd.Run(); err != nil {
-							return err
+						if err2 := cloneCmd.Run(); err2 != nil {
+							installErr = err2
+						} else {
+							exec.Command("pip3", "install", "-r", "/opt/waymore/requirements.txt", "--break-system-packages", "-q").Run()
+							teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/waymore")
+							teeCmd.Stdin = strings.NewReader("#!/bin/bash\npython3 /opt/waymore/waymore.py \"$@\"\n")
+							teeCmd.Run()
+							exec.Command("sudo", "chmod", "+x", "/usr/local/bin/waymore").Run()
 						}
-						exec.Command("pip3", "install", "-r", "/opt/waymore/requirements.txt", "--break-system-packages", "-q").Run()
-						teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/waymore")
-						teeCmd.Stdin = strings.NewReader("#!/bin/bash\npython3 /opt/waymore/waymore.py \"$@\"\n")
-						teeCmd.Run()
-						exec.Command("sudo", "chmod", "+x", "/usr/local/bin/waymore").Run()
-						return nil
-					}()
-
+					}
 				case "gf":
-					installErr = func() error {
-						cmd2 := exec.Command("go", "install", "github.com/tomnomnom/gf@latest")
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						if err := cmd2.Run(); err != nil {
-							return err
-						}
+					cmd2 := exec.Command("go", "install", "github.com/tomnomnom/gf@latest")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					if err := cmd2.Run(); err != nil {
+						installErr = err
+					} else {
+						symlinkGoTool("gf")
 						homedir2, _ := os.UserHomeDir()
-						for _, gobin := range []string{homedir2 + "/go/bin/gf", "/root/go/bin/gf"} {
-							if _, err2 := os.Stat(gobin); err2 == nil {
-								exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/gf").Run()
-								break
-							}
-						}
-						// Install gf patterns
 						gfDir := homedir2 + "/.gf"
 						if _, err2 := os.Stat(gfDir); err2 != nil {
 							exec.Command("git", "clone", "--depth=1", "https://github.com/1ndianl33t/Gf-Patterns", gfDir).Run()
 						}
-						return nil
-					}()
-
+					}
 				case "linpeas":
-					installErr = func() error {
-						cmd2 := exec.Command("bash", "-c",
-							"curl -sL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o /opt/linpeas.sh && chmod +x /opt/linpeas.sh && sudo ln -sf /opt/linpeas.sh /usr/local/bin/linpeas")
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						return cmd2.Run()
-					}()
-
+					cmd2 := exec.Command("bash", "-c",
+						"curl -sL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o /opt/linpeas.sh && chmod +x /opt/linpeas.sh && sudo ln -sf /opt/linpeas.sh /usr/local/bin/linpeas")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
 				case "pspy":
-					installErr = func() error {
-						cmd2 := exec.Command("bash", "-c",
-							"curl -sL https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64 -o /opt/pspy && chmod +x /opt/pspy && sudo ln -sf /opt/pspy /usr/local/bin/pspy")
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						return cmd2.Run()
-					}()
-
+					cmd2 := exec.Command("bash", "-c",
+						"curl -sL https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64 -o /opt/pspy && chmod +x /opt/pspy && sudo ln -sf /opt/pspy /usr/local/bin/pspy")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
 				case "bloodhound-python":
-					installErr = func() error {
-						exec.Command("pip3", "install", "bloodhound", "--break-system-packages", "-q").Run()
-						exec.Command("sudo", "apt", "install", "-y", "neo4j", "-qq").Run()
-						return nil
-					}()
-
+					exec.Command("pip3", "install", "bloodhound", "--break-system-packages", "-q").Run()
+					exec.Command("sudo", "apt", "install", "-y", "neo4j").Run()
 				case "evil-winrm":
-					installErr = func() error {
-						exec.Command("sudo", "apt", "install", "-y", "ruby", "ruby-dev", "-qq").Run()
-						cmd2 := exec.Command("sudo", "gem", "install", "evil-winrm")
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						return cmd2.Run()
-					}()
-
+					exec.Command("sudo", "apt", "install", "-y", "ruby", "ruby-dev").Run()
+					cmd2 := exec.Command("sudo", "gem", "install", "evil-winrm")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					installErr = cmd2.Run()
 				case "impacket-secretsdump":
-					installErr = func() error {
-						cmd2 := exec.Command("sudo", "apt", "install", "-y", "python3-impacket")
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						if err := cmd2.Run(); err == nil {
-							return nil
-						}
+					cmd2 := exec.Command("sudo", "apt", "install", "-y", "python3-impacket")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					if err := cmd2.Run(); err != nil {
 						cmd3 := exec.Command("pip3", "install", "impacket", "--break-system-packages", "-q")
 						cmd3.Stdout = os.Stdout
 						cmd3.Stderr = os.Stderr
-						return cmd3.Run()
-					}()
-
-				case "iodine":
-					installErr = func() error {
-						cmd2 := exec.Command("sudo", "apt", "install", "-y", "iodine")
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						return cmd2.Run()
-					}()
-
+						installErr = cmd3.Run()
+					}
 				default:
 					if t.isCargo {
-						// Install openssl deps first for any cargo tool
 						exec.Command("sudo", "apt", "install", "-y", "libssl-dev", "pkg-config").Run()
 						if _, cargoErr := exec.LookPath("cargo"); cargoErr != nil {
 							exec.Command("sudo", "apt", "install", "-y", "cargo").Run()
@@ -2409,16 +2454,9 @@ func main() {
 						cmd2.Stderr = os.Stderr
 						installErr = cmd2.Run()
 						if installErr == nil {
-							homedir2, _ := os.UserHomeDir()
-							for _, gobin := range []string{homedir2 + "/go/bin/" + t.name, "/root/go/bin/" + t.name} {
-								if _, err2 := os.Stat(gobin); err2 == nil {
-									exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/"+t.name).Run()
-									break
-								}
-							}
+							symlinkGoTool(t.name)
 						}
 					} else {
-						// Python/git tools — use bash to run the install string
 						cmd2 := exec.Command("bash", "-c", t.install)
 						cmd2.Stdout = os.Stdout
 						cmd2.Stderr = os.Stderr
@@ -2427,8 +2465,7 @@ func main() {
 				}
 
 				if installErr != nil {
-					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-16s failed: %v", t.name, installErr)))
-					// Send error to AI for diagnosis
+					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s failed: %v", t.name, installErr)))
 					errMsg := fmt.Sprintf("Tool installation failed: %s\nError: %v\nOS: Linux/Kali\nPlease provide exact fix commands.", t.name, installErr)
 					if fix, aiErr := api.SendPrompt(errMsg); aiErr == nil {
 						fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  💡 AI Fix suggestion:"))
@@ -2436,7 +2473,7 @@ func main() {
 					}
 					instFail++
 				} else {
-					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-16s installed", t.name)))
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 					instOK++
 				}
 			}
