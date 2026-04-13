@@ -1285,3 +1285,94 @@ func FetchH1Suggestion(skill, focus string) (string, error) {
 	}
 	return sb.String(), nil
 }
+
+// ─── Tools Config (server-side API keys) ─────────────────────────────────────
+
+// ToolsConfig holds API keys fetched from the backend server
+type ToolsConfig struct {
+	ShodanAPIKey          string `json:"shodan_api_key"`
+	HunterAPIKey          string `json:"hunter_api_key"`
+	SecurityTrailsAPIKey  string `json:"securitytrails_api_key"`
+	VirusTotalAPIKey      string `json:"virustotal_api_key"`
+}
+
+// FetchToolsConfig fetches tool API keys from the backend server.
+// These keys are stored server-side so users don't need to configure them.
+func FetchToolsConfig() (*ToolsConfig, error) {
+	req, err := http.NewRequest("GET", getBaseURL()+"/auth/tools-config", nil)
+	if err != nil {
+		return nil, err
+	}
+	if key := getAPIKey(); key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach backend")
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 32768))
+	var result struct {
+		Success bool        `json:"success"`
+		Config  ToolsConfig `json:"config"`
+		Error   string      `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("invalid response")
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("%s", result.Error)
+	}
+	return &result.Config, nil
+}
+
+// SaveToolsConfig saves tool API keys to ~/.cybermind/tools_config.json
+func SaveToolsConfig(cfg *ToolsConfig) error {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dir := homedir + "/.cybermind"
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dir+"/tools_config.json", data, 0600)
+}
+
+// LoadToolsConfig loads tool API keys from ~/.cybermind/tools_config.json
+func LoadToolsConfig() *ToolsConfig {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(homedir + "/.cybermind/tools_config.json")
+	if err != nil {
+		return nil
+	}
+	var cfg ToolsConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	return &cfg
+}
+
+// GetShodanAPIKey returns the Shodan API key — from env, cached config, or backend
+// Priority: SHODAN_API_KEY env → cached tools_config.json → backend fetch
+func GetShodanAPIKey() string {
+	// 1. Environment variable (user-set)
+	if key := os.Getenv("SHODAN_API_KEY"); key != "" {
+		return key
+	}
+	// 2. Cached tools config
+	if cfg := LoadToolsConfig(); cfg != nil && cfg.ShodanAPIKey != "" {
+		return cfg.ShodanAPIKey
+	}
+	return ""
+}

@@ -547,7 +547,18 @@ if onStatus != nil { onStatus("Shodan", "") }
 if len(intel.DNSIPs) > 0 {
 ip := intel.DNSIPs[0]
 if !isPrivateIPOmega(ip) {
+// Priority: env var → cached tools_config.json → free InternetDB
 shodanAPIKey := os.Getenv("SHODAN_API_KEY")
+if shodanAPIKey == "" {
+	homedir, _ := os.UserHomeDir()
+	if data, err := os.ReadFile(homedir + "/.cybermind/tools_config.json"); err == nil {
+		var cfg struct { ShodanAPIKey string `json:"shodan_api_key"` }
+		if json.Unmarshal(data, &cfg) == nil && cfg.ShodanAPIKey != "" {
+			shodanAPIKey = cfg.ShodanAPIKey
+			os.Setenv("SHODAN_API_KEY", shodanAPIKey)
+		}
+	}
+}
 shodanClient := &http.Client{Timeout: 10 * time.Second}
 
 var shodanURL string

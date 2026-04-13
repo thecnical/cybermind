@@ -797,6 +797,30 @@ func runOmegaPlan(target string, localMode bool) {
 		fmt.Println()
 	}
 
+	// ── Auto-fetch tool API keys from backend (Shodan, etc.) ─────────────
+	// User doesn't need to configure anything — keys come from server
+	if os.Getenv("SHODAN_API_KEY") == "" {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ Fetching tool API keys from server..."))
+		if toolsCfg, cfgErr := api.FetchToolsConfig(); cfgErr == nil && toolsCfg != nil {
+			if toolsCfg.ShodanAPIKey != "" {
+				os.Setenv("SHODAN_API_KEY", toolsCfg.ShodanAPIKey)
+				// Auto-init shodan CLI
+				if _, shodanErr := exec.LookPath("shodan"); shodanErr == nil {
+					exec.Command("shodan", "init", toolsCfg.ShodanAPIKey).Run()
+				}
+				// Cache for future use
+				_ = api.SaveToolsConfig(toolsCfg)
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ Shodan API key loaded from server"))
+			}
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  ℹ  Using free Shodan InternetDB (no API key)"))
+		}
+		fmt.Println()
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ Shodan API key: configured"))
+		fmt.Println()
+	}
+
 	// ── STEP 1: System resource check ────────────────────────────────────
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ Checking system resources..."))
 	sysRes := omega.CheckSystemResources()
