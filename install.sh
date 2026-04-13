@@ -76,9 +76,12 @@ echo ""
 echo -e "${YELLOW}[*] Installing to /usr/local/bin/cybermind...${NC}"
 sudo cp cybermind /usr/local/bin/cybermind
 sudo chmod +x /usr/local/bin/cybermind
+# Create cbm alias — same binary, short name for CBM Code
+sudo cp /usr/local/bin/cybermind /usr/local/bin/cbm
+sudo chmod +x /usr/local/bin/cbm
 rm -f cybermind  # clean up local binary
 cd "$SCRIPT_DIR"
-echo -e "${GREEN}[✓] cybermind installed globally${NC}"
+echo -e "${GREEN}[✓] cybermind + cbm installed globally${NC}"
 
 # ── Step 4: Configure Go PATH ─────────────────────────────────────────────────
 echo ""

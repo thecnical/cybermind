@@ -205,16 +205,13 @@ func (m VibeModel) renderInputLine() string {
 		icon = "⚡ ⟩"
 	}
 
-	prompt := m.theme.Cyan.Render(icon) + " " + m.inputBuf
-
-	lineStyle := lipgloss.NewStyle().
-		BorderTop(true).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("#333333"))
-
-	if m.width > 0 {
-		lineStyle = lineStyle.Width(m.width)
+	separator := strings.Repeat("─", m.width)
+	if m.width <= 0 {
+		separator = strings.Repeat("─", 80)
 	}
 
-	return lineStyle.Render(prompt)
+	sepLine := lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render(separator)
+	promptLine := m.theme.Cyan.Render(icon) + " " + m.inputBuf + "█"
+
+	return sepLine + "\n" + promptLine
 }

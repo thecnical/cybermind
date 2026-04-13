@@ -501,13 +501,10 @@ func ValidateKey(key string) (string, error) {
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	var result struct {
-		Success      bool   `json:"success"`
-		Plan         string `json:"plan"`
-		Error        string `json:"error"`
-		PromoActive  bool   `json:"promo_active"`
-		PromoMessage string `json:"promo_message"`
-		PromoEnds    string `json:"promo_ends"`
-		UserName     string `json:"user_name"`
+		Success  bool   `json:"success"`
+		Plan     string `json:"plan"`
+		Error    string `json:"error"`
+		UserName string `json:"user_name"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return "", fmt.Errorf("invalid response")
@@ -519,13 +516,10 @@ func ValidateKey(key string) (string, error) {
 	if result.UserName != "" {
 		saveUserName(result.UserName)
 	}
-	// Return plan + promo + username info
+	// Return plan + username info
 	planInfo := result.Plan
 	if result.UserName != "" {
 		planInfo = result.Plan + "|NAME|" + result.UserName
-	}
-	if result.PromoActive && result.PromoMessage != "" {
-		planInfo += "|PROMO|" + result.PromoMessage
 	}
 	return planInfo, nil
 }

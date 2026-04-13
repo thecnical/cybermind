@@ -103,11 +103,6 @@ func printBanner() {
 	// System info — compact, no extra blank lines
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Local IP:  %s", localIP)))
 
-	// 🎉 Free Month Promo Banner
-	promoEnd := "May 10, 2026"
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
-		"  🎉 FREE MONTH ACTIVE — All features unlimited until " + promoEnd + "!"))
-
 	// Linux-only recon notice
 	if runtime.GOOS == "linux" {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ OMEGA Plan Mode available    →  cybermind /plan <target>"))
@@ -1579,7 +1574,6 @@ func promptForAPIKey() string {
 	fmt.Println(cyan2.Render("  ③ Copy the key (starts with cp_live_...)"))
 	fmt.Println(cyan2.Render("  ④ Paste it below"))
 	fmt.Println()
-	fmt.Println(dim2.Render("  🎉 Free Month active — all features unlimited until May 10, 2026"))
 	fmt.Println()
 
 	// Allow up to 3 attempts
@@ -1763,9 +1757,11 @@ func main() {
 			printError("Failed to save key: " + err.Error())
 			os.Exit(1)
 		}
+		// Also update vibecoder config so both CLI and CBM Code use the new key
+		_ = vibecoder.SetAPIKey("openrouter", key)
 		masked := key[:min(12, len(key))] + strings.Repeat("•", max(0, len(key)-12))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ API key saved: " + masked))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Key will be used automatically for all requests"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Previous key replaced. Key will be used automatically for all requests."))
 
 	case "whoami":
 		// Show current key and plan
@@ -1781,13 +1777,10 @@ func main() {
 			if err != nil {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ Key validation failed: " + err.Error()))
 			} else {
-				// Check for promo info in response
-				parts := strings.SplitN(planRaw, "|PROMO|", 2)
+				// Parse plan info (may contain |NAME| suffix)
+				parts := strings.SplitN(planRaw, "|NAME|", 2)
 				plan := parts[0]
 				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Plan: " + strings.ToUpper(plan)))
-				if len(parts) > 1 {
-					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  " + parts[1]))
-				}
 			}
 		}
 
