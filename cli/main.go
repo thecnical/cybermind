@@ -3544,6 +3544,8 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 				fmt.Println(dim2.Render("  /read <file>          — read file and add to context"))
 				fmt.Println(dim2.Render("  /ls [path]            — list workspace files"))
 				fmt.Println(dim2.Render("  /run <command>        — run a shell command"))
+				fmt.Println(dim2.Render("  /init                 — create CYBERMIND.md project memory"))
+				fmt.Println(dim2.Render("  /plan <task>          — plan architecture before coding"))
 				fmt.Println(dim2.Render("  /clear                — reset context window"))
 				fmt.Println(dim2.Render("  /mode agent|chat      — switch mode"))
 				fmt.Println(dim2.Render("  /effort low|medium|max — set effort level"))
@@ -3683,6 +3685,88 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 					fmt.Println(cyan2.Render("  ⇄ Model: " + activeModel))
 				}
 
+			case "/init":
+				// Create CYBERMIND.md project memory file
+				cybermindPath := filepath.Join(cwd, "CYBERMIND.md")
+				if _, err := os.Stat(cybermindPath); err == nil {
+					fmt.Println(yellow2.Render("  CYBERMIND.md already exists. Edit it to update project memory."))
+				} else {
+					stack := detectWorkspaceStack(cwd)
+					if stack == "" {
+						stack = "Not detected yet"
+					}
+					content := fmt.Sprintf(`# CYBERMIND.md — Project Memory
+
+## Project
+Name: %s
+Stack: %s
+
+## Coding Conventions
+- Use TypeScript strict mode
+- Tailwind CSS for styling
+- Functional components with hooks
+- Error handling on all async operations
+
+## Architecture Notes
+(Add your architecture decisions here)
+
+## API Endpoints
+(Document your API endpoints here)
+
+## Environment Variables
+(List required env vars here)
+
+## Important Files
+(List key files and their purpose)
+`, filepath.Base(cwd), stack)
+					if err := os.WriteFile(cybermindPath, []byte(content), 0644); err == nil {
+						fmt.Println(green2.Render("  ✓ Created CYBERMIND.md — edit it to add project memory"))
+						fmt.Println(dim2.Render("  CBM Code will auto-load this file in every session"))
+					} else {
+						fmt.Println(red2.Render("  ✗ Failed: " + err.Error()))
+					}
+				}
+
+			case "/plan":
+				// Architecture planning mode — think before coding
+				planTask := strings.Join(parts[1:], " ")
+				if planTask == "" {
+					fmt.Println(red2.Render("  Usage: /plan <task description>"))
+				} else {
+					fmt.Println()
+					fmt.Print(purple2.Render("  ◆ CBM Code [Plan Mode]: "))
+					planPrompt := fmt.Sprintf(`PLAN MODE — Think through this task architecturally before writing any code.
+
+Task: %s
+
+Provide:
+1. Architecture overview (what components/files are needed)
+2. Tech stack recommendation with reasons
+3. File structure (list all files to create)
+4. Implementation order (which files to create first)
+5. Potential challenges and how to handle them
+6. Estimated complexity (simple/medium/complex)
+
+DO NOT write any code yet — just the plan.`, planTask)
+
+					chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: planPrompt})
+					var planResponse strings.Builder
+					_, planErr := vibecoder.SendVibeChat(planPrompt, chatHistory[:len(chatHistory)-1], func(token string) {
+						if !strings.Contains(token, "<tool_call>") {
+							fmt.Print(token)
+							planResponse.WriteString(token)
+						}
+					})
+					fmt.Println()
+					fmt.Println()
+					if planErr != nil {
+						fmt.Println(red2.Render("  ✗ " + planErr.Error()))
+					} else {
+						chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: planResponse.String()})
+						fmt.Println(dim2.Render("  Plan complete. Now type your task to start coding."))
+					}
+				}
+
 			default:
 				fmt.Println(dim2.Render("  Unknown: " + parts[0] + " (type /help)"))
 			}
@@ -3694,10 +3778,29 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 		fmt.Println()
 
 		// ── Context Awareness: Auto-inject relevant workspace files ────────
-		// Detect if prompt references existing files or asks to fix/edit/update
+		// 1. Load CYBERMIND.md if present (project memory)
+		cybermindMD := filepath.Join(cwd, "CYBERMIND.md")
+		if data, err := os.ReadFile(cybermindMD); err == nil {
+			// Only inject once per session (check if already in history)
+			alreadyLoaded := false
+			for _, h := range chatHistory {
+				if strings.Contains(h.Content, "[CYBERMIND.md]") {
+					alreadyLoaded = true
+					break
+				}
+			}
+			if !alreadyLoaded {
+				chatHistory = append(chatHistory, vibecoder.APIMessage{
+					Role:    "user",
+					Content: "[CYBERMIND.md — Project memory]\n" + string(data),
+				})
+				fmt.Println(dim2.Render("  ◆ Memory: loaded CYBERMIND.md"))
+			}
+		}
+
+		// 2. Auto-inject relevant workspace files
 		autoContext := buildAutoContext(prompt, cwd, chatHistory)
 		if autoContext != "" {
-			// Inject file context silently before the prompt
 			chatHistory = append(chatHistory, vibecoder.APIMessage{
 				Role:    "user",
 				Content: autoContext,
