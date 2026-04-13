@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -3610,30 +3609,15 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 
 		chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: prompt})
 
-		var responseErr error
-		if agentLoop != nil {
-			agentLoop.SetOnToken(func(token string) { fmt.Print(token) })
-			agentLoop.SetOnToolStatus(func(tool, action string) {
-				fmt.Println()
-				fmt.Print(dim2.Render(fmt.Sprintf("  ⟳ %s: %s", tool, action)))
-			})
-			agentLoop.SetOnWarn(func(msg string) {
-				fmt.Println()
-				fmt.Print(yellow2.Render("  ⚠ " + msg))
-			})
-			session.History = append(session.History, vibecoder.Message{
-				Role:    vibecoder.RoleUser,
-				Content: prompt,
-				Tokens:  vibecoder.EstimateTokensPublic(prompt),
-			})
-			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-			responseErr = agentLoop.Run(ctx)
-			cancel()
-		} else {
-			_, responseErr = vibecoder.SendVibeChat(prompt, chatHistory[:len(chatHistory)-1], func(token string) {
+		// Always use direct chat — reliable, no loop issues
+		var fullResponse strings.Builder
+		_, responseErr := vibecoder.SendVibeChat(prompt, chatHistory[:len(chatHistory)-1], func(token string) {
+			// Filter out tool call artifacts from streaming
+			if !strings.Contains(token, "<tool_call>") && !strings.Contains(token, "</tool_call>") {
 				fmt.Print(token)
-			})
-		}
+				fullResponse.WriteString(token)
+			}
+		})
 
 		fmt.Println()
 		fmt.Println()
@@ -3642,7 +3626,159 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 			fmt.Println(red2.Render("  ✗ " + responseErr.Error()))
 			fmt.Println()
 		} else {
-			chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: "[response]"})
+			response := fullResponse.String()
+			chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: response})
+
+			// ── Auto-write files from code blocks ──────────────────────────
+			// Parse response for filename + code block patterns and write them
+			written := writeCodeBlocksToFiles(response, cwd, green2, dim2, red2)
+			if written > 0 {
+				fmt.Println(green2.Render(fmt.Sprintf("  ✓ %d file(s) written to disk", written)))
+				fmt.Println()
+			}
 		}
 	}
+}
+
+// writeCodeBlocksToFiles parses AI response for file patterns and writes them.
+// Supports patterns like:
+//   **filename.ext** followed by ```lang ... ```
+//   // filename.ext at top of code block
+//   File: filename.ext
+func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipgloss.Style) int {
+	written := 0
+	lines := strings.Split(response, "\n")
+
+	var currentFile string
+	var inCodeBlock bool
+	var codeLines []string
+	var codeLang string
+
+	for i, line := range lines {
+		// Detect filename patterns before code block
+		if !inCodeBlock {
+			// Pattern: **filename.ext** or **path/to/file.ext**
+			if strings.HasPrefix(line, "**") && strings.HasSuffix(line, "**") {
+				inner := strings.TrimPrefix(strings.TrimSuffix(line, "**"), "**")
+				if looksLikeFilePath(inner) {
+					currentFile = inner
+					continue
+				}
+			}
+			// Pattern: `filename.ext` or `path/to/file.ext`
+			if strings.HasPrefix(line, "`") && strings.HasSuffix(line, "`") && !strings.HasPrefix(line, "```") {
+				inner := strings.Trim(line, "`")
+				if looksLikeFilePath(inner) {
+					currentFile = inner
+					continue
+				}
+			}
+			// Pattern: File: filename.ext or filename.ext:
+			for _, prefix := range []string{"File: ", "file: ", "Filename: ", "filename: ", "Path: "} {
+				if strings.HasPrefix(line, prefix) {
+					candidate := strings.TrimPrefix(line, prefix)
+					candidate = strings.TrimSuffix(candidate, ":")
+					if looksLikeFilePath(candidate) {
+						currentFile = candidate
+					}
+				}
+			}
+			// Start of code block
+			if strings.HasPrefix(line, "```") {
+				codeLang = strings.TrimPrefix(line, "```")
+				inCodeBlock = true
+				codeLines = nil
+				// Check if next line looks like a file path (inline filename)
+				if i+1 < len(lines) {
+					nextLine := strings.TrimSpace(lines[i+1])
+					if strings.HasPrefix(nextLine, "// ") || strings.HasPrefix(nextLine, "# ") {
+						candidate := strings.TrimPrefix(strings.TrimPrefix(nextLine, "// "), "# ")
+						if looksLikeFilePath(candidate) {
+							currentFile = candidate
+						}
+					}
+				}
+			}
+		} else {
+			// End of code block
+			if line == "```" || strings.HasPrefix(line, "```") {
+				inCodeBlock = false
+				if currentFile != "" && len(codeLines) > 0 {
+					// Write the file
+					filePath := filepath.Join(workspaceRoot, currentFile)
+					dir := filepath.Dir(filePath)
+					if mkErr := os.MkdirAll(dir, 0755); mkErr == nil {
+						content := strings.Join(codeLines, "\n")
+						if writeErr := os.WriteFile(filePath, []byte(content), 0644); writeErr == nil {
+							fmt.Println()
+							fmt.Print(green.Render(fmt.Sprintf("  ✓ Created: %s", currentFile)))
+							written++
+						} else {
+							fmt.Println()
+							fmt.Print(red.Render(fmt.Sprintf("  ✗ Failed: %s — %s", currentFile, writeErr.Error())))
+						}
+					}
+					currentFile = ""
+				} else if currentFile == "" && len(codeLines) > 0 && codeLang != "" {
+					// Try to infer filename from language
+					ext := langToExt(codeLang)
+					if ext != "" {
+						_ = dim // suppress unused warning
+					}
+				}
+				codeLines = nil
+				codeLang = ""
+			} else {
+				codeLines = append(codeLines, line)
+			}
+		}
+	}
+	return written
+}
+
+// looksLikeFilePath returns true if s looks like a file path (has extension or slash).
+func looksLikeFilePath(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || len(s) > 200 {
+		return false
+	}
+	// Must have a dot for extension OR a slash for directory
+	hasDot := strings.Contains(s, ".")
+	hasSlash := strings.Contains(s, "/") || strings.Contains(s, `\`)
+	if !hasDot && !hasSlash {
+		return false
+	}
+	// Must not contain spaces (file paths don't have spaces usually)
+	if strings.Contains(s, " ") {
+		return false
+	}
+	// Common file extensions
+	exts := []string{".ts", ".tsx", ".js", ".jsx", ".json", ".css", ".html", ".md",
+		".go", ".py", ".rs", ".java", ".c", ".cpp", ".h", ".yaml", ".yml",
+		".toml", ".env", ".sh", ".ps1", ".sql", ".txt", ".config", ".mjs", ".cjs"}
+	for _, ext := range exts {
+		if strings.HasSuffix(s, ext) {
+			return true
+		}
+	}
+	return hasSlash
+}
+
+// langToExt maps code block language to file extension.
+func langToExt(lang string) string {
+	m := map[string]string{
+		"typescript": ".ts", "ts": ".ts",
+		"javascript": ".js", "js": ".js",
+		"tsx": ".tsx", "jsx": ".jsx",
+		"python": ".py", "py": ".py",
+		"go": ".go",
+		"rust": ".rs",
+		"css": ".css",
+		"html": ".html",
+		"json": ".json",
+		"yaml": ".yaml", "yml": ".yaml",
+		"bash": ".sh", "sh": ".sh",
+		"sql": ".sql",
+	}
+	return m[strings.ToLower(strings.TrimSpace(lang))]
 }

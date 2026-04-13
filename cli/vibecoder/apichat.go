@@ -55,8 +55,18 @@ func sendVibeChatInternal(prompt string, history []chatMsg, onToken func(string)
 	}
 
 	body := map[string]interface{}{
-		"prompt":   prompt,
-		"messages": history,
+		"prompt": prompt,
+		"messages": append([]chatMsg{
+			{
+				Role: "system",
+				Content: `You are CBM Code, an expert AI coding assistant. When creating or modifying files:
+1. ALWAYS prefix each code block with the filename in bold: **filename.ext**
+2. Use complete, working code — no placeholders or comments like "// ..."
+3. Include all necessary imports and dependencies
+4. For multiple files, show each file separately with its filename
+5. Keep responses focused and practical`,
+			},
+		}, history...),
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
