@@ -1092,24 +1092,91 @@ func runOmegaPlan(target string, localMode bool) {
 			len(reconResult.Tools), len(huntResult.Tools), vulnCount)))
 }
 
-// launchFloatingTerminal launches a tmux floating window for live monitoring
+// launchFloatingTerminal launches a live monitoring window during OMEGA execution.
+// Priority: tmux popup → xterm → gnome-terminal → konsole → alacritty → skip
 func launchFloatingTerminal(target string) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return // tmux not available, skip
-	}
-	// Check if we're inside tmux
-	if os.Getenv("TMUX") == "" {
-		return // not in tmux session, skip
-	}
-	// Create a floating popup window showing live tool execution
-	sessionName := "cybermind_omega_" + strings.ReplaceAll(target, ".", "_")
-	cmd := exec.Command("tmux", "popup",
-		"-d", "~",
-		"-w", "80%",
-		"-h", "40%",
-		"-E",
-		fmt.Sprintf("watch -n 1 'echo \"CyberMind OMEGA — %s\" && echo \"\" && ls -lt /tmp/cybermind_* 2>/dev/null | head -20'", target),
+	logFile := fmt.Sprintf("/tmp/cybermind_omega_%s.log", strings.ReplaceAll(target, ".", "_"))
+	// Create log file so tail has something to follow
+	os.WriteFile(logFile, []byte(fmt.Sprintf("⚡ CyberMind OMEGA — %s\n\n", target)), 0644)
+
+	watchCmd := fmt.Sprintf(
+		`echo "⚡ CyberMind OMEGA — %s"; echo ""; `+
+			`tail -f %s 2>/dev/null || `+
+			`watch -n 1 'ls -lt /tmp/cybermind_* 2>/dev/null | head -20'`,
+		target, logFile,
 	)
-	cmd.Run() // non-blocking, ignore error
-	_ = sessionName
+
+	// 1. tmux popup (best — floating overlay in current terminal)
+	if _, err := exec.LookPath("tmux"); err == nil && os.Getenv("TMUX") != "" {
+		cmd := exec.Command("tmux", "popup",
+			"-d", "~",
+			"-w", "85%",
+			"-h", "50%",
+			"-E",
+			fmt.Sprintf("bash -c %q", watchCmd),
+		)
+		if cmd.Start() == nil {
+			return
+		}
+	}
+
+	// 2. xterm (most common on Kali/Debian)
+	if _, err := exec.LookPath("xterm"); err == nil {
+		cmd := exec.Command("xterm",
+			"-title", "CyberMind OMEGA — "+target,
+			"-geometry", "120x30+100+100",
+			"-bg", "black", "-fg", "#00FFFF",
+			"-e", fmt.Sprintf("bash -c %q", watchCmd),
+		)
+		cmd.Start()
+		return
+	}
+
+	// 3. gnome-terminal
+	if _, err := exec.LookPath("gnome-terminal"); err == nil {
+		cmd := exec.Command("gnome-terminal",
+			"--title=CyberMind OMEGA — "+target,
+			"--geometry=120x30",
+			"--",
+			"bash", "-c", watchCmd,
+		)
+		cmd.Start()
+		return
+	}
+
+	// 4. konsole (KDE)
+	if _, err := exec.LookPath("konsole"); err == nil {
+		cmd := exec.Command("konsole",
+			"--title", "CyberMind OMEGA — "+target,
+			"-e", fmt.Sprintf("bash -c %q", watchCmd),
+		)
+		cmd.Start()
+		return
+	}
+
+	// 5. alacritty
+	if _, err := exec.LookPath("alacritty"); err == nil {
+		cmd := exec.Command("alacritty",
+			"--title", "CyberMind OMEGA — "+target,
+			"-e", "bash", "-c", watchCmd,
+		)
+		cmd.Start()
+		return
+	}
+
+	// 6. xfce4-terminal
+	if _, err := exec.LookPath("xfce4-terminal"); err == nil {
+		cmd := exec.Command("xfce4-terminal",
+			"--title=CyberMind OMEGA — "+target,
+			"-e", fmt.Sprintf("bash -c %q", watchCmd),
+		)
+		cmd.Start()
+		return
+	}
+
+	// No terminal emulator found — print hint
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  ℹ  No terminal emulator found for floating window. Install xterm: sudo apt install xterm"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  ℹ  Or run inside tmux for popup support. Live log: " + logFile))
 }
