@@ -1325,6 +1325,9 @@ func runUninstall() {
 			`C:\Windows\cybermind.exe`,
 			homedir + `\AppData\Local\Programs\cybermind\cybermind.exe`,
 			homedir + `\AppData\Local\Programs\cybermind\cbm.exe`,
+			homedir + `\.local\bin\cybermind.exe`,
+			homedir + `\.local\bin\cbm.exe`,
+			homedir + `\AppData\Roaming\cybermind\cybermind.exe`,
 			`C:\Program Files\cybermind\cybermind.exe`,
 			`C:\Program Files (x86)\cybermind\cybermind.exe`,
 		}
