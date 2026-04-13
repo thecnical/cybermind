@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -20,7 +21,6 @@ import (
 	"cybermind-cli/ui"
 	"cybermind-cli/utils"
 	"cybermind-cli/vibecoder"
-	vibetui "cybermind-cli/vibecoder/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -3354,8 +3354,7 @@ func runVibeCoder(args []string) {
 	// by setting it on the ToolEnv when the agent loop is created
 	_ = noExec
 
-	// Select theme (kept for future use)
-	_ = vibetui.ThemeByName(themeName)
+	// Theme selection (for future TUI use)
 	_ = themeName
 
 	// Get plan info for welcome screen — read from cached config, don't block on network
@@ -3812,38 +3811,411 @@ DO NOT write any code yet — just the plan.`, planTask)
 
 		chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: prompt})
 
-		// Always use direct chat — reliable, no loop issues
-		var fullResponse strings.Builder
-		_, responseErr := vibecoder.SendVibeChat(prompt, chatHistory[:len(chatHistory)-1], func(token string) {
-			// Filter out tool call artifacts from streaming
-			if !strings.Contains(token, "<tool_call>") && !strings.Contains(token, "</tool_call>") {
-				fmt.Print(token)
-				fullResponse.WriteString(token)
-			}
-		})
-
-		fmt.Println()
-		fmt.Println()
-
-		if responseErr != nil {
-			fmt.Println(red2.Render("  ✗ " + responseErr.Error()))
+		// ── REAL AGENT LOOP ────────────────────────────────────────────────
+		// Like Claude Code: generate → write → run → fix errors → repeat
+		agentErr := runAgentLoop(prompt, cwd, &chatHistory, green2, dim2, red2, yellow2, purple2, cyan2)
+		if agentErr != nil {
+			fmt.Println(red2.Render("  ✗ " + agentErr.Error()))
 			fmt.Println()
-		} else {
-			response := fullResponse.String()
-			chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: response})
+		}
+	}
+}
 
-			// ── Auto-write files from code blocks ──────────────────────────
-			written, editedFiles := writeCodeBlocksToFilesTracked(response, cwd, green2, dim2, red2)
-			if written > 0 {
-				fmt.Println(green2.Render(fmt.Sprintf("  ✓ %d file(s) written to disk", written)))
-				// Track created/modified files in session for multi-turn consistency
-				for _, f := range editedFiles {
-					trackFileInSession(f, cwd, &chatHistory)
+// ─── Real Agent Loop ──────────────────────────────────────────────────────────
+// Like Claude Code: generate → write files → run commands → fix errors → repeat
+
+// runAgentLoop implements the full autonomous agent cycle:
+// 1. Get AI response + write files
+// 2. Show diff preview before applying
+// 3. Run install + build commands
+// 4. Capture errors
+// 5. Feed errors back to AI for fixing
+// 6. Repeat until clean or max iterations
+func runAgentLoop(
+	prompt, cwd string,
+	chatHistory *[]vibecoder.APIMessage,
+	green, dim, red, yellow, purple, cyan lipgloss.Style,
+) error {
+	const maxIterations = 5
+
+	for iteration := 0; iteration < maxIterations; iteration++ {
+		if iteration > 0 {
+			fmt.Println()
+			fmt.Println(yellow.Render(fmt.Sprintf("  ↻ Iteration %d/%d — fixing errors...", iteration+1, maxIterations)))
+			fmt.Print(purple.Render("  ◆ CBM Code: "))
+		}
+
+		// ── Step 1: Get AI response ────────────────────────────────────────
+		var fullResponse strings.Builder
+		_, err := vibecoder.SendVibeChat(
+			(*chatHistory)[len(*chatHistory)-1].Content,
+			(*chatHistory)[:len(*chatHistory)-1],
+			func(token string) {
+				if !strings.Contains(token, "<tool_call>") && !strings.Contains(token, "</tool_call>") {
+					fmt.Print(token)
+					fullResponse.WriteString(token)
 				}
-				fmt.Println()
+			},
+		)
+		fmt.Println()
+		fmt.Println()
+
+		if err != nil {
+			return err
+		}
+
+		response := fullResponse.String()
+		*chatHistory = append(*chatHistory, vibecoder.APIMessage{Role: "assistant", Content: response})
+
+		// ── Step 2: Show diff preview + write files ────────────────────────
+		written, editedFiles := writeCodeBlocksToFilesWithDiff(response, cwd, green, dim, red)
+		if written == 0 && iteration == 0 {
+			// No files to write — pure chat response, done
+			return nil
+		}
+		if written > 0 {
+			fmt.Println(green.Render(fmt.Sprintf("  ✓ %d file(s) written", written)))
+			// Track files in session for cross-file consistency
+			for _, f := range editedFiles {
+				trackFileInSession(f, cwd, chatHistory)
+			}
+		}
+
+		// ── Step 3: Auto-run commands if applicable ────────────────────────
+		cmdOutput, cmdErr := autoRunProjectCommands(cwd, green, dim, yellow)
+
+		if cmdErr == "" {
+			// No errors — done!
+			if cmdOutput != "" {
+				fmt.Println(green.Render("  ✓ Build/install successful"))
+			}
+			fmt.Println()
+			return nil
+		}
+
+		// ── Step 4: Feed errors back to AI ────────────────────────────────
+		fmt.Println()
+		fmt.Println(red.Render("  ✗ Errors detected — asking AI to fix..."))
+		fmt.Println()
+
+		// Build all current file contents for cross-file consistency
+		allFilesCtx := buildAllProjectFilesContext(cwd, editedFiles)
+
+		fixPrompt := fmt.Sprintf(
+			"The code has errors. Fix ALL of them.\n\n"+
+				"ERRORS:\n%s\n\n"+
+				"CURRENT FILES:\n%s\n\n"+
+				"Fix every error. Show complete corrected files with **filename** prefix.",
+			cmdErr, allFilesCtx,
+		)
+
+		*chatHistory = append(*chatHistory, vibecoder.APIMessage{Role: "user", Content: fixPrompt})
+		fmt.Print(purple.Render("  ◆ CBM Code [fixing]: "))
+	}
+
+	return fmt.Errorf("max iterations reached — some errors may remain")
+}
+
+// writeCodeBlocksToFilesWithDiff shows a diff preview before writing files.
+func writeCodeBlocksToFilesWithDiff(response, workspaceRoot string, green, dim, red lipgloss.Style) (int, []string) {
+	// First pass: collect all files to write
+	type pendingFile struct {
+		path    string
+		content string
+		isNew   bool
+	}
+
+	var pending []pendingFile
+	lines := strings.Split(response, "\n")
+	var currentFile string
+	var inCodeBlock bool
+	var codeLines []string
+
+	extractFP := func(s string) string {
+		s = strings.TrimSpace(s)
+		for _, p := range []string{"###", "##", "#"} {
+			s = strings.TrimPrefix(s, p)
+		}
+		s = strings.TrimSpace(s)
+		s = strings.Trim(s, "*`")
+		s = strings.TrimSpace(s)
+		s = strings.TrimSuffix(s, ":")
+		s = strings.TrimSpace(s)
+		if looksLikeFilePath(s) {
+			return s
+		}
+		return ""
+	}
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inCodeBlock {
+			if strings.Contains(trimmed, "**") || strings.Contains(trimmed, "`") {
+				inner := trimmed
+				for _, p := range []string{"###", "##", "#"} {
+					inner = strings.TrimPrefix(inner, p)
+				}
+				inner = strings.TrimSpace(inner)
+				if strings.HasPrefix(inner, "**") && strings.HasSuffix(inner, "**") {
+					if fp := extractFP(strings.TrimPrefix(strings.TrimSuffix(inner, "**"), "**")); fp != "" {
+						currentFile = fp
+						continue
+					}
+				}
+				if strings.HasPrefix(inner, "`") && strings.HasSuffix(inner, "`") && !strings.HasPrefix(inner, "```") {
+					if fp := extractFP(strings.Trim(inner, "`")); fp != "" {
+						currentFile = fp
+						continue
+					}
+				}
+			}
+			for _, prefix := range []string{"File: ", "file: ", "Filename: ", "Path: "} {
+				if strings.HasPrefix(trimmed, prefix) {
+					if fp := extractFP(strings.TrimPrefix(trimmed, prefix)); fp != "" {
+						currentFile = fp
+					}
+				}
+			}
+			if strings.HasPrefix(trimmed, "```") {
+				inCodeBlock = true
+				codeLines = nil
+				if i+1 < len(lines) {
+					next := strings.TrimSpace(lines[i+1])
+					for _, cp := range []string{"// ", "# "} {
+						if strings.HasPrefix(next, cp) {
+							if fp := extractFP(strings.TrimPrefix(next, cp)); fp != "" {
+								currentFile = fp
+							}
+							break
+						}
+					}
+				}
+			}
+		} else {
+			if trimmed == "```" || (strings.HasPrefix(trimmed, "```") && len(trimmed) > 3) {
+				inCodeBlock = false
+				if currentFile != "" && len(codeLines) > 0 {
+					content := strings.Join(codeLines, "\n")
+					absPath := filepath.Join(workspaceRoot, currentFile)
+					_, statErr := os.Stat(absPath)
+					pending = append(pending, pendingFile{
+						path:    currentFile,
+						content: content,
+						isNew:   os.IsNotExist(statErr),
+					})
+					currentFile = ""
+				}
+				codeLines = nil
+			} else {
+				codeLines = append(codeLines, line)
 			}
 		}
 	}
+
+	if len(pending) == 0 {
+		return 0, nil
+	}
+
+	// Show diff preview
+	fmt.Println()
+	fmt.Println(dim.Render("  ┌─ Changes to apply ─────────────────────────────────"))
+	for _, pf := range pending {
+		if pf.isNew {
+			fmt.Println(green.Render(fmt.Sprintf("  │  + %s (new)", pf.path)))
+		} else {
+			fmt.Println(dim.Render(fmt.Sprintf("  │  ~ %s (modified)", pf.path)))
+		}
+	}
+	fmt.Println(dim.Render("  └────────────────────────────────────────────────────"))
+	fmt.Println()
+
+	// Write all files
+	written := 0
+	var writtenPaths []string
+	for _, pf := range pending {
+		absPath := filepath.Join(workspaceRoot, pf.path)
+		if mkErr := os.MkdirAll(filepath.Dir(absPath), 0755); mkErr == nil {
+			if writeErr := os.WriteFile(absPath, []byte(pf.content), 0644); writeErr == nil {
+				written++
+				writtenPaths = append(writtenPaths, pf.path)
+			} else {
+				fmt.Println(red.Render(fmt.Sprintf("  ✗ Failed: %s — %s", pf.path, writeErr.Error())))
+			}
+		}
+	}
+	return written, writtenPaths
+}
+
+// autoRunProjectCommands detects project type and runs appropriate commands.
+// Returns (output, errorOutput). errorOutput is empty if all commands succeeded.
+func autoRunProjectCommands(cwd string, green, dim, yellow lipgloss.Style) (string, string) {
+	var shell, flag string
+	if runtime.GOOS == "windows" {
+		shell, flag = "cmd", "/c"
+	} else {
+		shell, flag = "sh", "-c"
+	}
+
+	runCmd := func(cmd string, timeoutSecs int) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
+		defer cancel()
+		c := exec.CommandContext(ctx, shell, flag, cmd)
+		c.Dir = cwd
+		out, err := c.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+
+	// Detect project type
+	hasPackageJSON := fileExists(filepath.Join(cwd, "package.json"))
+	hasGoMod := fileExists(filepath.Join(cwd, "go.mod"))
+	hasPyProject := fileExists(filepath.Join(cwd, "requirements.txt")) || fileExists(filepath.Join(cwd, "pyproject.toml"))
+	hasNodeModules := fileExists(filepath.Join(cwd, "node_modules"))
+
+	var allOutput strings.Builder
+	var allErrors strings.Builder
+
+	if hasPackageJSON {
+		// Install dependencies if node_modules missing
+		if !hasNodeModules {
+			fmt.Println(dim.Render("  ⟳ Installing dependencies (npm install)..."))
+			out, err := runCmd("npm install --silent 2>&1", 120)
+			if err != nil {
+				allErrors.WriteString("npm install failed:\n" + out + "\n")
+				return allOutput.String(), allErrors.String()
+			}
+			fmt.Println(green.Render("  ✓ Dependencies installed"))
+			allOutput.WriteString(out)
+		}
+
+		// Try TypeScript check if tsconfig exists
+		if fileExists(filepath.Join(cwd, "tsconfig.json")) {
+			fmt.Println(dim.Render("  ⟳ Checking TypeScript..."))
+			out, err := runCmd("npx tsc --noEmit 2>&1", 60)
+			if err != nil && out != "" {
+				// Filter out noise, keep real errors
+				errors := filterTypeScriptErrors(out)
+				if errors != "" {
+					allErrors.WriteString("TypeScript errors:\n" + errors + "\n")
+					return allOutput.String(), allErrors.String()
+				}
+			}
+			if err == nil {
+				fmt.Println(green.Render("  ✓ TypeScript OK"))
+			}
+		}
+
+		// Try build if build script exists
+		pkgData, _ := os.ReadFile(filepath.Join(cwd, "package.json"))
+		if strings.Contains(string(pkgData), `"build"`) {
+			fmt.Println(dim.Render("  ⟳ Running build check..."))
+			out, err := runCmd("npm run build 2>&1", 120)
+			if err != nil && out != "" {
+				errors := filterBuildErrors(out)
+				if errors != "" {
+					allErrors.WriteString("Build errors:\n" + errors + "\n")
+					return allOutput.String(), allErrors.String()
+				}
+			}
+			if err == nil {
+				fmt.Println(green.Render("  ✓ Build successful"))
+				allOutput.WriteString(out)
+			}
+		}
+	}
+
+	if hasGoMod {
+		fmt.Println(dim.Render("  ⟳ Checking Go build..."))
+		out, err := runCmd("go build ./... 2>&1", 60)
+		if err != nil && out != "" {
+			allErrors.WriteString("Go build errors:\n" + out + "\n")
+			return allOutput.String(), allErrors.String()
+		}
+		if err == nil {
+			fmt.Println(green.Render("  ✓ Go build OK"))
+		}
+	}
+
+	if hasPyProject {
+		fmt.Println(dim.Render("  ⟳ Checking Python syntax..."))
+		out, err := runCmd("python -m py_compile *.py 2>&1", 30)
+		if err != nil && out != "" {
+			allErrors.WriteString("Python errors:\n" + out + "\n")
+			return allOutput.String(), allErrors.String()
+		}
+	}
+
+	return allOutput.String(), allErrors.String()
+}
+
+// buildAllProjectFilesContext reads all project files for cross-file consistency.
+func buildAllProjectFilesContext(cwd string, recentFiles []string) string {
+	var parts []string
+
+	// Include recently written files first
+	seen := make(map[string]bool)
+	for _, f := range recentFiles {
+		absPath := filepath.Join(cwd, f)
+		if data, err := os.ReadFile(absPath); err == nil && len(data) < 20000 {
+			parts = append(parts, fmt.Sprintf("[File: %s]\n```\n%s\n```", f, string(data)))
+			seen[f] = true
+		}
+	}
+
+	// Also include key project files
+	keyFiles := findKeyProjectFiles(cwd)
+	for _, absPath := range keyFiles {
+		rel, _ := filepath.Rel(cwd, absPath)
+		if seen[rel] {
+			continue
+		}
+		if data, err := os.ReadFile(absPath); err == nil && len(data) < 10000 {
+			parts = append(parts, fmt.Sprintf("[File: %s]\n```\n%s\n```", rel, string(data)))
+			seen[rel] = true
+		}
+		if len(parts) >= 8 { // limit to avoid context overflow
+			break
+		}
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
+// filterTypeScriptErrors extracts real errors from tsc output (ignores warnings).
+func filterTypeScriptErrors(output string) string {
+	var errors []string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "error TS") {
+			errors = append(errors, line)
+		}
+	}
+	if len(errors) > 20 {
+		errors = errors[:20]
+		errors = append(errors, "... (truncated)")
+	}
+	return strings.Join(errors, "\n")
+}
+
+// filterBuildErrors extracts real errors from build output.
+func filterBuildErrors(output string) string {
+	var errors []string
+	for _, line := range strings.Split(output, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "failed") {
+			if !strings.Contains(lower, "warning") && !strings.Contains(lower, "deprecated") {
+				errors = append(errors, line)
+			}
+		}
+	}
+	if len(errors) > 20 {
+		errors = errors[:20]
+	}
+	return strings.Join(errors, "\n")
+}
+
+// fileExists returns true if the path exists.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // writeCodeBlocksToFiles is a backward-compatible wrapper around writeCodeBlocksToFilesTracked.
@@ -3851,7 +4223,6 @@ func writeCodeBlocksToFiles(response, workspaceRoot string, green, dim, red lipg
 	n, _ := writeCodeBlocksToFilesTracked(response, workspaceRoot, green, dim, red)
 	return n
 }
-
 // ─── Context Awareness ────────────────────────────────────────────────────────
 
 // buildAutoContext scans the workspace and injects relevant file contents
