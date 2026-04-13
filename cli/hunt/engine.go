@@ -85,12 +85,13 @@ type HuntContext struct {
 
 // HuntToolSpec defines a hunt tool.
 type HuntToolSpec struct {
-	Name         string
-	Phase        int
-	Timeout      int
-	DomainOnly   bool
-	CascadeGroup string // only first available in group runs
-	BuildArgs    func(target string, ctx *HuntContext) []string
+	Name          string
+	Phase         int
+	Timeout       int
+	DomainOnly    bool
+	CascadeGroup  string // only first available in group runs
+	CascadeBackup bool   // if true, only runs if cascade primary produced no output
+	BuildArgs     func(target string, ctx *HuntContext) []string
 	// FallbackArgs: tried in order if primary returns empty output.
 	// Ensures 100% tool usage — exhaust every variant before giving up.
 	FallbackArgs []func(target string, ctx *HuntContext) []string
@@ -270,6 +271,7 @@ func detectHuntTools(requested []string) (available []HuntToolSpec, skipped []Hu
 	}
 
 	cascadeWinners := map[string]string{}
+	cascadeBackups := map[string][]HuntToolSpec{}
 
 	for _, spec := range huntRegistry {
 		// Filter by --tools flag
@@ -286,19 +288,24 @@ func detectHuntTools(requested []string) (available []HuntToolSpec, skipped []Hu
 			})
 			continue
 		}
-		// Cascade: only first available in group runs
+		// Cascade: only first available in group runs; backups run if primary fails
 		if spec.CascadeGroup != "" {
-			if winner, taken := cascadeWinners[spec.CascadeGroup]; taken {
-				skipped = append(skipped, HuntSkipped{
-					Tool:   spec.Name,
-					Reason: "cascade: " + winner + " used",
-				})
+			if _, taken := cascadeWinners[spec.CascadeGroup]; taken {
+				backup := spec
+				backup.CascadeBackup = true
+				cascadeBackups[spec.CascadeGroup] = append(cascadeBackups[spec.CascadeGroup], backup)
 				continue
 			}
 			cascadeWinners[spec.CascadeGroup] = spec.Name
 		}
 		available = append(available, spec)
 	}
+
+	// Append cascade backups after their primary
+	for _, backups := range cascadeBackups {
+		available = append(available, backups...)
+	}
+
 	return available, skipped, nil
 }
 
@@ -468,9 +475,23 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 	// runPhase executes all available tools for a given phase number.
 	// Mirrors recon's runPhase for consistency.
 	runPhase := func(phase int) {
+		// Track which cascade groups produced output (primary succeeded)
+		cascadeGroupSuccess := map[string]bool{}
+
 		for _, spec := range available {
 			if spec.Phase != phase {
 				continue
+			}
+			// Skip cascade backup if primary already produced output
+			if spec.CascadeBackup {
+				if cascadeGroupSuccess[spec.CascadeGroup] {
+					result.Skipped = append(result.Skipped, HuntSkipped{
+						Tool:   spec.Name,
+						Reason: "cascade: primary succeeded",
+					})
+					progress(HuntStatus{Tool: spec.Name, Kind: HuntKindSkipped, Reason: "cascade: primary succeeded"})
+					continue
+				}
 			}
 			// Skip domain-only tools for IP targets
 			if spec.DomainOnly && ctx.TargetType == "ip" {
@@ -501,6 +522,11 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 				kind = HuntDone
 			}
 			progress(HuntStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
+
+			// Mark cascade group as succeeded if this tool produced output
+			if spec.CascadeGroup != "" && last.Output != "" {
+				cascadeGroupSuccess[spec.CascadeGroup] = true
+			}
 		}
 	}
 

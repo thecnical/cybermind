@@ -105,6 +105,8 @@ type ToolSpec struct {
 	Timeout      int
 	DomainOnly   bool
 	CascadeGroup string
+	// CascadeBackup: if true, this tool only runs if the cascade primary produced no output
+	CascadeBackup bool
 	BuildArgs    func(target string, ctx *ReconContext) []string
 	// FallbackArgs: if primary run returns empty output, try these args instead.
 	// This ensures 100% tool usage — we exhaust every option before giving up.
@@ -136,7 +138,10 @@ func detectTools(requested []string) (available []ToolSpec, skipped []SkippedToo
 		}
 	}
 
+	// cascadeWinners: first installed tool per group (primary)
+	// cascadeBackups: remaining installed tools per group (run only if primary fails)
 	cascadeWinners := map[string]string{}
+	cascadeBackups := map[string][]ToolSpec{}
 
 	for _, spec := range toolRegistry {
 		if requested != nil && !containsStr(requested, spec.Name) {
@@ -157,14 +162,23 @@ func detectTools(requested []string) (available []ToolSpec, skipped []SkippedToo
 			}
 		}
 		if spec.CascadeGroup != "" {
-			if winner, taken := cascadeWinners[spec.CascadeGroup]; taken {
-				skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "cascade: " + winner + " used"})
+			if _, taken := cascadeWinners[spec.CascadeGroup]; taken {
+				// Mark as backup — will run if primary produces no output
+				backup := spec
+				backup.CascadeBackup = true
+				cascadeBackups[spec.CascadeGroup] = append(cascadeBackups[spec.CascadeGroup], backup)
 				continue
 			}
 			cascadeWinners[spec.CascadeGroup] = spec.Name
 		}
 		available = append(available, spec)
 	}
+
+	// Append cascade backups after their primary (skipped unless primary fails)
+	for _, backups := range cascadeBackups {
+		available = append(available, backups...)
+	}
+
 	return available, skipped, nil
 }
 
@@ -353,9 +367,20 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 
 	// runPhase executes all tools for a phase — each tool runs exhaustively
 	runPhase := func(phase int) {
+		// Track which cascade groups produced output (primary succeeded)
+		cascadeGroupSuccess := map[string]bool{}
+
 		for _, spec := range available {
 			if spec.Phase != phase {
 				continue
+			}
+			// Skip cascade backup if primary already produced output
+			if spec.CascadeBackup {
+				if cascadeGroupSuccess[spec.CascadeGroup] {
+					result.Skipped = append(result.Skipped, SkippedTool{Tool: spec.Name, Reason: "cascade: primary succeeded"})
+					progress(ToolStatus{Tool: spec.Name, Kind: StatusSkipped, Reason: "cascade: primary succeeded"})
+					continue
+				}
 			}
 			if spec.DomainOnly && ctx.TargetType == "ip" {
 				result.Skipped = append(result.Skipped, SkippedTool{Tool: spec.Name, Reason: "domain-only tool"})
@@ -383,6 +408,11 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 				kind = StatusDone
 			}
 			progress(ToolStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
+
+			// Mark cascade group as succeeded if this tool produced output
+			if spec.CascadeGroup != "" && last.Output != "" {
+				cascadeGroupSuccess[spec.CascadeGroup] = true
+			}
 		}
 	}
 
