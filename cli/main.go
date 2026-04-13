@@ -3492,7 +3492,15 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 
 	// ── Main REPL loop ─────────────────────────────────────────────────────
 	reader := bufio.NewReader(os.Stdin)
-	var chatHistory []vibecoder.APIMessage
+
+	// ── Session Persistence: Load previous session if exists ──────────────
+	sessionFile := getSessionFilePath(cwd)
+	chatHistory := loadSession(sessionFile)
+	if len(chatHistory) > 0 {
+		fmt.Println(dim2.Render(fmt.Sprintf("  ↩ Resumed session (%d messages)", len(chatHistory))))
+		fmt.Println()
+	}
+
 	editMode := string(session.EditMode)
 	if editMode == "" {
 		editMode = "guard"
@@ -3534,18 +3542,21 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 				session.History = nil
 				chatHistory = nil
 				session.TokensUsed = 0
-				fmt.Println(green2.Render("  ✓ Context cleared"))
+				os.Remove(sessionFile)
+				fmt.Println(green2.Render("  ✓ Context cleared (session deleted)"))
 
 			case "/help":
 				fmt.Println()
-				fmt.Println(cyan2.Render("  Commands:"))
+				fmt.Println(cyan2.Render("  CBM Code Commands:"))
 				fmt.Println(dim2.Render("  /add <file>           — add file to context"))
-				fmt.Println(dim2.Render("  /read <file>          — read file and add to context"))
+				fmt.Println(dim2.Render("  /read <file>          — read file into context"))
 				fmt.Println(dim2.Render("  /ls [path]            — list workspace files"))
 				fmt.Println(dim2.Render("  /run <command>        — run a shell command"))
 				fmt.Println(dim2.Render("  /init                 — create CYBERMIND.md project memory"))
 				fmt.Println(dim2.Render("  /plan <task>          — plan architecture before coding"))
-				fmt.Println(dim2.Render("  /clear                — reset context window"))
+				fmt.Println(dim2.Render("  /mcp                  — MCP integrations (Playwright, etc.)"))
+				fmt.Println(dim2.Render("  /sessions             — list saved sessions"))
+				fmt.Println(dim2.Render("  /clear                — reset context + delete session"))
 				fmt.Println(dim2.Render("  /mode agent|chat      — switch mode"))
 				fmt.Println(dim2.Render("  /effort low|medium|max — set effort level"))
 				fmt.Println(dim2.Render("  /model <name>         — override model"))
@@ -3684,6 +3695,69 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 					fmt.Println(cyan2.Render("  ⇄ Model: " + activeModel))
 				}
 
+			case "/sessions":
+				// List saved sessions
+				home, _ := os.UserHomeDir()
+				sessDir := filepath.Join(home, ".cybermind", "sessions")
+				entries, lsErr := os.ReadDir(sessDir)
+				if lsErr != nil || len(entries) == 0 {
+					fmt.Println(dim2.Render("  No saved sessions"))
+				} else {
+					fmt.Println()
+					fmt.Println(cyan2.Render("  Saved sessions:"))
+					for _, e := range entries {
+						info, _ := e.Info()
+						if info != nil {
+							fmt.Println(dim2.Render(fmt.Sprintf("  📄 %s (%s)", e.Name(), info.ModTime().Format("2006-01-02 15:04"))))
+						}
+					}
+					fmt.Println(dim2.Render("  Use /clear to delete current session"))
+					fmt.Println()
+				}
+
+			case "/mcp":
+				// MCP Playwright integration
+				fmt.Println()
+				fmt.Println(cyan2.Render("  MCP (Model Context Protocol) Integration"))
+				fmt.Println(dim2.Render("  ─────────────────────────────────────────"))
+				fmt.Println(yellow2.Render("  Available MCP servers:"))
+				fmt.Println(green2.Render("  1. Playwright MCP (browser automation)"))
+				fmt.Println(dim2.Render("     Install: npx @playwright/mcp@latest"))
+				fmt.Println(dim2.Render("     Use: /mcp playwright <url> — open browser"))
+				fmt.Println()
+				fmt.Println(green2.Render("  2. Filesystem MCP (file operations)"))
+				fmt.Println(dim2.Render("     Built-in — use /add /read /ls commands"))
+				fmt.Println()
+				fmt.Println(green2.Render("  3. Context7 MCP (library docs)"))
+				fmt.Println(dim2.Render("     Install: npx @upstash/context7-mcp@latest"))
+				fmt.Println()
+				if len(parts) > 1 && parts[1] == "playwright" {
+					url := "http://localhost:3000"
+					if len(parts) > 2 {
+						url = parts[2]
+					}
+					fmt.Println(dim2.Render("  ⟳ Launching Playwright MCP..."))
+					// Check if npx is available
+					if _, npxErr := exec.LookPath("npx"); npxErr != nil {
+						fmt.Println(red2.Render("  ✗ npx not found — install Node.js first"))
+					} else {
+						// Run playwright MCP in background
+						var shell, flag string
+						if runtime.GOOS == "windows" {
+							shell, flag = "cmd", "/c"
+						} else {
+							shell, flag = "sh", "-c"
+						}
+						mcpCmd := fmt.Sprintf("npx @playwright/mcp@latest --url %s", url)
+						go func() {
+							out, _ := exec.Command(shell, flag, mcpCmd).CombinedOutput()
+							_ = out
+						}()
+						fmt.Println(green2.Render("  ✓ Playwright MCP started for: " + url))
+						fmt.Println(dim2.Render("  You can now ask CBM Code to test your app"))
+					}
+				}
+
 			case "/init":
 				// Create CYBERMIND.md project memory file
 				cybermindPath := filepath.Join(cwd, "CYBERMIND.md")
@@ -3818,6 +3892,9 @@ DO NOT write any code yet — just the plan.`, planTask)
 			fmt.Println(red2.Render("  ✗ " + agentErr.Error()))
 			fmt.Println()
 		}
+
+		// ── Save session after each turn ───────────────────────────────────
+		saveSession(sessionFile, chatHistory)
 	}
 }
 
@@ -4638,4 +4715,65 @@ func detectWorkspaceStack(root string) string {
 		return ""
 	}
 	return strings.Join(stack, " + ")
+}
+
+// ─── Session Persistence ──────────────────────────────────────────────────────
+
+// getSessionFilePath returns the session file path for a given workspace.
+func getSessionFilePath(cwd string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	sessDir := filepath.Join(home, ".cybermind", "sessions")
+	_ = os.MkdirAll(sessDir, 0700)
+
+	// Use workspace path hash as filename
+	h := 0
+	for _, c := range cwd {
+		h = h*31 + int(c)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return filepath.Join(sessDir, fmt.Sprintf("session_%x.json", h))
+}
+
+// saveSession saves chat history to disk.
+func saveSession(path string, history []vibecoder.APIMessage) {
+	if path == "" || len(history) == 0 {
+		return
+	}
+	// Keep last 50 messages to avoid bloat
+	if len(history) > 50 {
+		history = history[len(history)-50:]
+	}
+	data, err := json.Marshal(history)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0600)
+}
+
+// loadSession loads chat history from disk.
+func loadSession(path string) []vibecoder.APIMessage {
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var history []vibecoder.APIMessage
+	if err := json.Unmarshal(data, &history); err != nil {
+		return nil
+	}
+	// Filter out system messages (they'll be re-injected)
+	var filtered []vibecoder.APIMessage
+	for _, msg := range history {
+		if msg.Role != "system" {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
 }

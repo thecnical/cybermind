@@ -294,7 +294,7 @@ func sendVibeChatInternal(prompt string, history []chatMsg, onToken func(string)
 	}
 	backendURL = strings.TrimRight(backendURL, "/")
 
-	// Get API key
+	// Get API key with clear error messages
 	apiKey := os.Getenv("CYBERMIND_KEY")
 	if apiKey == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -308,14 +308,20 @@ func sendVibeChatInternal(prompt string, history []chatMsg, onToken func(string)
 			}
 		}
 	}
+	if apiKey == "" {
+		return "", fmt.Errorf("no API key set — run: cybermind --key cp_live_xxxxx\nGet your key at: https://cybermindcli1.vercel.app/dashboard")
+	}
+	if apiKey == "cp_live_xxx" || len(apiKey) < 20 {
+		return "", fmt.Errorf("invalid API key format — run: cybermind --key cp_live_xxxxx\nGet your key at: https://cybermindcli1.vercel.app/dashboard")
+	}
 
 	// Build messages with unlimited brain system prompt
 	sysPrompt := buildVibeSystemPrompt()
 
 	body := map[string]interface{}{
 		"prompt":        prompt,
-		"messages":      history, // history without system (backend handles system separately)
-		"system_prompt": sysPrompt, // pass as dedicated field so backend uses it
+		"messages":      history,
+		"system_prompt": sysPrompt,
 		"effort_level":  "max",
 		"edit_mode":     "agent",
 	}
@@ -324,88 +330,164 @@ func sendVibeChatInternal(prompt string, history []chatMsg, onToken func(string)
 		return "", fmt.Errorf("marshal: %w", err)
 	}
 
-	// Try streaming first via /api/vibe/chat/stream
-	streamReq, err := http.NewRequest("POST", backendURL+"/api/vibe/chat/stream", bytes.NewReader(payload))
-	if err == nil {
-		streamReq.Header.Set("Content-Type", "application/json")
-		streamReq.Header.Set("Accept", "text/event-stream")
-		if apiKey != "" {
-			streamReq.Header.Set("X-API-Key", apiKey)
-		}
-
-		client := &http.Client{Timeout: 300 * time.Second}
-		resp, err := client.Do(streamReq)
-		if err == nil && resp.StatusCode == 200 {
-			defer resp.Body.Close()
-			var full strings.Builder
-			scanner := bufio.NewScanner(resp.Body)
-			scanner.Buffer(make([]byte, 128*1024), 128*1024)
-			for scanner.Scan() {
-				line := scanner.Text()
-				if !strings.HasPrefix(line, "data: ") {
-					continue
-				}
-				data := strings.TrimPrefix(line, "data: ")
-				if data == "" || data == "[DONE]" {
-					continue
-				}
-				var event struct {
-					Token string `json:"token"`
-					Done  bool   `json:"done"`
-					Error string `json:"error"`
-				}
-				if json.Unmarshal([]byte(data), &event) == nil {
-					if event.Error != "" {
-						return "", fmt.Errorf("%s", event.Error)
-					}
-					if event.Done {
-						break
-					}
-					if event.Token != "" {
-						if !strings.Contains(event.Token, "<tool_call>") &&
-							!strings.Contains(event.Token, "</tool_call>") {
-							full.WriteString(event.Token)
-							if onToken != nil {
-								onToken(event.Token)
-							}
-						}
-					}
-				}
-			}
-			result := full.String()
-			if result != "" {
-				return result, nil
-			}
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
+	// ── Priority 1: Try /api/vibe/chat/stream (real-time streaming) ───────
+	result, streamErr := tryStreamingEndpoint(backendURL, apiKey, payload, onToken)
+	if streamErr == nil && result != "" {
+		return result, nil
 	}
 
-	// Fallback: /chat endpoint (non-streaming) — inject system prompt into messages
-	chatHistory := append([]chatMsg{
-		{Role: "system", Content: sysPrompt},
-	}, history...)
-	chatBody := map[string]interface{}{
-		"prompt":   prompt,
-		"messages": chatHistory,
+	// ── Priority 2: Try /api/vibe/chat (non-streaming with agent loop) ────
+	result, vibeErr := tryVibeEndpoint(backendURL, apiKey, payload, onToken)
+	if vibeErr == nil && result != "" {
+		return result, nil
 	}
+
+	// ── Priority 3: Fallback to /chat with system prompt in messages ──────
+	chatHistory := append([]chatMsg{{Role: "system", Content: sysPrompt}}, history...)
+	chatBody := map[string]interface{}{"prompt": prompt, "messages": chatHistory}
 	chatPayload, _ := json.Marshal(chatBody)
-	chatReq, err := http.NewRequest("POST", backendURL+"/chat", bytes.NewReader(chatPayload))
+	return tryChatEndpoint(backendURL, apiKey, chatPayload, onToken)
+}
+
+// tryStreamingEndpoint attempts real-time SSE streaming from /api/vibe/chat/stream
+func tryStreamingEndpoint(backendURL, apiKey string, payload []byte, onToken func(string)) (string, error) {
+	req, err := http.NewRequest("POST", backendURL+"/api/vibe/chat/stream", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("X-API-Key", apiKey)
+
+	client := &http.Client{Timeout: 300 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("stream connect failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Better error messages for auth failures
+	switch resp.StatusCode {
+	case 401, 403:
+		return "", fmt.Errorf("API key invalid or expired — run: cybermind --key cp_live_xxxxx\nGet a new key at: https://cybermindcli1.vercel.app/dashboard")
+	case 429:
+		return "", fmt.Errorf("rate limit reached — upgrade your plan at: https://cybermindcli1.vercel.app/plans")
+	case 402:
+		return "", fmt.Errorf("plan limit reached — upgrade at: https://cybermindcli1.vercel.app/plans")
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("stream HTTP %d", resp.StatusCode)
+	}
+
+	var full strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 128*1024), 128*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Token string `json:"token"`
+			Done  bool   `json:"done"`
+			Error string `json:"error"`
+		}
+		if json.Unmarshal([]byte(data), &event) == nil {
+			if event.Error != "" {
+				return "", fmt.Errorf("%s", event.Error)
+			}
+			if event.Done {
+				break
+			}
+			if event.Token != "" && !strings.Contains(event.Token, "<tool_call>") {
+				full.WriteString(event.Token)
+				if onToken != nil {
+					onToken(event.Token)
+				}
+			}
+		}
+	}
+	result := full.String()
+	if result == "" {
+		return "", fmt.Errorf("empty stream response")
+	}
+	return result, nil
+}
+
+// tryVibeEndpoint tries /api/vibe/chat (non-streaming but uses agent loop on backend)
+func tryVibeEndpoint(backendURL, apiKey string, payload []byte, onToken func(string)) (string, error) {
+	req, err := http.NewRequest("POST", backendURL+"/api/vibe/chat", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
+
+	client := &http.Client{Timeout: 300 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("vibe connect failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case 401, 403:
+		return "", fmt.Errorf("API key invalid — run: cybermind --key cp_live_xxxxx")
+	case 429:
+		return "", fmt.Errorf("rate limit — upgrade at: https://cybermindcli1.vercel.app/plans")
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("vibe HTTP %d", resp.StatusCode)
+	}
+
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	var result struct {
+		Success  bool   `json:"success"`
+		Response string `json:"response"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("parse: %w", err)
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	// Simulate streaming for consistent UX
+	if onToken != nil {
+		words := strings.Fields(result.Response)
+		for _, w := range words {
+			onToken(w + " ")
+		}
+	}
+	return result.Response, nil
+}
+
+// tryChatEndpoint is the final fallback using /chat
+func tryChatEndpoint(backendURL, apiKey string, payload []byte, onToken func(string)) (string, error) {
+	req, err := http.NewRequest("POST", backendURL+"/chat", bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
-	chatReq.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		chatReq.Header.Set("X-API-Key", apiKey)
-	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
 
 	client := &http.Client{Timeout: 300 * time.Second}
-	resp, err := client.Do(chatReq)
+	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
+		return "", fmt.Errorf("backend unreachable — check your internet connection")
 	}
 	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case 401, 403:
+		return "", fmt.Errorf("API key invalid or revoked\nGet a new key: https://cybermindcli1.vercel.app/dashboard\nSet it: cybermind --key cp_live_xxxxx")
+	case 429:
+		return "", fmt.Errorf("daily limit reached — upgrade at: https://cybermindcli1.vercel.app/plans")
+	}
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	var result struct {
@@ -417,9 +499,12 @@ func sendVibeChatInternal(prompt string, history []chatMsg, onToken func(string)
 		return "", fmt.Errorf("parse response: %w", err)
 	}
 	if !result.Success {
-		return "", fmt.Errorf("%s", result.Error)
+		errMsg := result.Error
+		if strings.Contains(errMsg, "Invalid") || strings.Contains(errMsg, "revoked") {
+			errMsg += "\nGet a new key: https://cybermindcli1.vercel.app/dashboard"
+		}
+		return "", fmt.Errorf("%s", errMsg)
 	}
-
 	if onToken != nil {
 		words := strings.Fields(result.Response)
 		for _, w := range words {
