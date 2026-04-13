@@ -3356,8 +3356,40 @@ func runVibeCoder(args []string) {
 	// Select theme
 	theme := vibetui.ThemeByName(themeName)
 
+	// Get plan info for welcome screen
+	tier := "Free"
+	activeModel := "mistralai/mistral-7b-instruct"
+	userName := ""
+	if mainKey := api.GetAPIKey(); mainKey != "" {
+		// Quick non-blocking plan check from cached validate response
+		if planRaw, err := api.ValidateKey(mainKey); err == nil {
+			parts := strings.SplitN(planRaw, "|NAME|", 2)
+			switch strings.ToLower(parts[0]) {
+			case "elite":
+				tier = "Elite ⚡"
+				activeModel = "deepseek/deepseek-r1"
+			case "pro":
+				tier = "Pro"
+				activeModel = "qwen/qwen3-coder"
+			case "starter":
+				tier = "Starter"
+				activeModel = "mistralai/mistral-7b-instruct"
+			default:
+				tier = strings.ToUpper(parts[0])
+			}
+			if len(parts) > 1 {
+				userName = parts[1]
+			}
+		}
+	}
+
 	// Create and run TUI
-	model := vibetui.NewVibeModel(session, theme)
+	model := vibetui.NewVibeModelWithInfo(session, theme, vibetui.WelcomeInfo{
+		Tier:      tier,
+		Model:     activeModel,
+		Workspace: cwd,
+		UserName:  userName,
+	})
 
 	// ── Wire the full backend ──────────────────────────────────────────────
 	// Build provider chain (CyberMind backend → direct provider keys)
@@ -3411,8 +3443,8 @@ func runVibeCoder(args []string) {
 		indexer.Start(nil) // background goroutine, no progress callback needed at startup
 	}
 
-	// Create the bubbletea program
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	// Create the bubbletea program — NO AltScreen so terminal stays stable like Claude Code
+	p := tea.NewProgram(model, tea.WithMouseCellMotion())
 
 	// Give the model a reference to the program so agent loop callbacks
 	// can send messages back into the event loop via p.Send()

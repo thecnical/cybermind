@@ -144,10 +144,12 @@ func (m VibeModel) submitInput() (tea.Model, tea.Cmd) {
 	// Display user message
 	m.appendLine("▶ You: "+prompt, m.theme.User)
 
-	// If no backend wired, show a helpful message
+	// If no backend wired, try direct chat via main API as fallback
 	if m.backend == nil || m.backend.AgentLoop == nil {
-		m.appendLine("⚠ No AI provider configured. Run: cybermind --key cp_live_xxxxx", m.theme.Yellow)
-		return m, nil
+		m.mode = UIModeRunning
+		m.statusBar.Running = true
+		m.startAssistantLine()
+		return m, m.runDirectChatCmd(prompt)
 	}
 
 	// Add user message to session history
@@ -205,6 +207,33 @@ func (m *VibeModel) cancelAgentLoop() {
 	if m.backend != nil && m.backend.cancelLoop != nil {
 		m.backend.cancelLoop()
 		m.backend.cancelLoop = nil
+	}
+}
+
+// runDirectChatCmd is a fallback when the full backend isn't wired.
+// It calls the main CyberMind /chat endpoint directly (same as cybermind chat).
+func (m VibeModel) runDirectChatCmd(prompt string) tea.Cmd {
+	if m.program == nil {
+		return nil
+	}
+	prog := m.program
+
+	// Build history from session
+	history := make([]vibecoder.APIMessage, 0, len(m.session.History))
+	for _, msg := range m.session.History {
+		if msg.Role == vibecoder.RoleUser || msg.Role == vibecoder.RoleAssistant {
+			history = append(history, vibecoder.APIMessage{
+				Role:    string(msg.Role),
+				Content: msg.Content,
+			})
+		}
+	}
+
+	return func() tea.Msg {
+		_, err := vibecoder.SendVibeChat(prompt, history, func(token string) {
+			prog.Send(TokenMsg{Token: token})
+		})
+		return AgentDoneMsg{Err: err}
 	}
 }
 

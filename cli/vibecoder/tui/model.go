@@ -108,6 +108,9 @@ type VibeModel struct {
 	scrollOffset int
 	chatLines    []RenderedLine
 
+	// welcome screen info
+	welcomeInfo WelcomeInfo
+
 	// backend (set via SetBackend after construction)
 	backend *Backend
 
@@ -211,7 +214,7 @@ func (m VibeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m VibeModel) View() string {
 	switch m.mode {
 	case UIModeWelcome:
-		return RenderWelcome(m.width, m.theme)
+		return RenderWelcomeWithInfo(m.width, m.theme, m.welcomeInfo)
 	case UIModeSlashMenu:
 		return m.renderSession() + "\n" + m.slashMenu.Render(m.width, m.theme)
 	default:
@@ -223,19 +226,31 @@ func (m VibeModel) View() string {
 
 // NewVibeModel creates a new VibeModel with defaults.
 func NewVibeModel(session *vibecoder.Session, theme Theme) VibeModel {
-	return VibeModel{
+	return NewVibeModelWithInfo(session, theme, WelcomeInfo{
+		Tier:      "Free",
+		Model:     "mistralai/mistral-7b-instruct",
+		Workspace: session.WorkspaceRoot,
+	})
+}
+
+// NewVibeModelWithInfo creates a new VibeModel with user info for the welcome screen.
+func NewVibeModelWithInfo(session *vibecoder.Session, theme Theme, info WelcomeInfo) VibeModel {
+	m := VibeModel{
 		session:      session,
 		mode:         UIModeWelcome,
 		inputHistory: []string{},
 		historyIdx:   -1,
 		theme:        theme,
+		welcomeInfo:  info,
 		statusBar: StatusBarState{
 			InteractMode:  string(session.InteractMode),
 			EditMode:      string(session.EditMode),
 			EffortLevel:   string(session.EffortLevel),
+			Model:         info.Model,
 			PermIndicator: vibecoder.PermissionIndicator(session.EditMode),
 		},
 	}
+	return m
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
