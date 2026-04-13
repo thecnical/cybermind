@@ -3478,15 +3478,14 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 
 	fmt.Println()
 	fmt.Println(dim2.Render("  ─────────────────────────────────────────────────────"))
-	fmt.Println(yellow2.Render("  Tips:"))
-	fmt.Println(green2.Render("  Type your task and press Enter to get AI response"))
-	fmt.Println(green2.Render("  /add <file>  — add file to context"))
-	fmt.Println(green2.Render("  /ls          — list workspace files"))
-	fmt.Println(green2.Render("  /read <file> — read file into context"))
-	fmt.Println(green2.Render("  /run <cmd>   — run a command"))
-	fmt.Println(green2.Render("  /clear       — reset context"))
-	fmt.Println(green2.Render("  /help        — show all commands"))
-	fmt.Println(green2.Render("  /exit        — quit"))
+	fmt.Println(yellow2.Render("  Quick commands:"))
+	fmt.Println(green2.Render("  /help        — all commands"))
+	fmt.Println(green2.Render("  /preview     — start dev server + open browser"))
+	fmt.Println(green2.Render("  /git commit  — AI commit message + push"))
+	fmt.Println(green2.Render("  /deploy      — deploy to Vercel/Netlify/Railway"))
+	fmt.Println(green2.Render("  /review      — AI code review"))
+	fmt.Println(green2.Render("  /template    — project templates"))
+	fmt.Println(green2.Render("  /grok        — analyze full codebase (Zencoder-style)"))
 	fmt.Println(dim2.Render("  ─────────────────────────────────────────────────────"))
 	fmt.Println()
 
@@ -3547,20 +3546,53 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 
 			case "/help":
 				fmt.Println()
-				fmt.Println(cyan2.Render("  CBM Code Commands:"))
+				fmt.Println(cyan2.Render("  CBM Code — All Commands"))
+				fmt.Println(dim2.Render("  ─────────────────────────────────────────────────────"))
+				fmt.Println(yellow2.Render("  FILE OPERATIONS:"))
 				fmt.Println(dim2.Render("  /add <file>           — add file to context"))
 				fmt.Println(dim2.Render("  /read <file>          — read file into context"))
 				fmt.Println(dim2.Render("  /ls [path]            — list workspace files"))
 				fmt.Println(dim2.Render("  /run <command>        — run a shell command"))
+				fmt.Println(dim2.Render("  /undo                 — undo last file change"))
+				fmt.Println()
+				fmt.Println(yellow2.Render("  PROJECT:"))
 				fmt.Println(dim2.Render("  /init                 — create CYBERMIND.md project memory"))
 				fmt.Println(dim2.Render("  /plan <task>          — plan architecture before coding"))
-				fmt.Println(dim2.Render("  /mcp                  — MCP integrations (Playwright, etc.)"))
+				fmt.Println(dim2.Render("  /grok                 — analyze full codebase (Zencoder-style)"))
+				fmt.Println(dim2.Render("  /preview [port]       — start dev server + show URL"))
+				fmt.Println(dim2.Render("  /template <type>      — project templates (saas/blog/api/ecom)"))
+				fmt.Println(dim2.Render("  /refactor <type>      — refactor codebase (ts/tailwind/nextjs)"))
+				fmt.Println()
+				fmt.Println(yellow2.Render("  CODE QUALITY:"))
+				fmt.Println(dim2.Render("  /review               — AI code review (Cursor-style)"))
+				fmt.Println(dim2.Render("  /security             — security vulnerability scan"))
+				fmt.Println(dim2.Render("  /optimize             — performance optimization suggestions"))
+				fmt.Println(dim2.Render("  /test                 — generate tests for current project"))
+				fmt.Println()
+				fmt.Println(yellow2.Render("  GIT & DEPLOY:"))
+				fmt.Println(dim2.Render("  /git init             — initialize git repo"))
+				fmt.Println(dim2.Render("  /git commit           — AI commit message + commit"))
+				fmt.Println(dim2.Render("  /git push             — push to remote"))
+				fmt.Println(dim2.Render("  /git pr               — create pull request"))
+				fmt.Println(dim2.Render("  /deploy vercel        — deploy to Vercel"))
+				fmt.Println(dim2.Render("  /deploy netlify       — deploy to Netlify"))
+				fmt.Println(dim2.Render("  /deploy railway       — deploy to Railway"))
+				fmt.Println()
+				fmt.Println(yellow2.Render("  DATABASE:"))
+				fmt.Println(dim2.Render("  /db schema <models>   — generate Prisma schema"))
+				fmt.Println(dim2.Render("  /db migrate           — run database migration"))
+				fmt.Println(dim2.Render("  /db seed              — generate seed data"))
+				fmt.Println()
+				fmt.Println(yellow2.Render("  MCP & INTEGRATIONS:"))
+				fmt.Println(dim2.Render("  /mcp playwright [url] — browser automation (auto-download)"))
+				fmt.Println(dim2.Render("  /mcp context7         — library docs (auto-download)"))
+				fmt.Println()
+				fmt.Println(yellow2.Render("  SESSION:"))
 				fmt.Println(dim2.Render("  /sessions             — list saved sessions"))
 				fmt.Println(dim2.Render("  /clear                — reset context + delete session"))
 				fmt.Println(dim2.Render("  /mode agent|chat      — switch mode"))
 				fmt.Println(dim2.Render("  /effort low|medium|max — set effort level"))
 				fmt.Println(dim2.Render("  /model <name>         — override model"))
-				fmt.Println(dim2.Render("  /undo                 — undo last file change"))
 				fmt.Println(dim2.Render("  /debug                — toggle debug mode"))
 				fmt.Println(dim2.Render("  /exit                 — quit"))
 				fmt.Println()
@@ -3693,6 +3725,412 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 				if len(parts) > 1 {
 					activeModel = strings.Join(parts[1:], " ")
 					fmt.Println(cyan2.Render("  ⇄ Model: " + activeModel))
+				}
+
+			// ── Web Preview ────────────────────────────────────────────────
+			case "/preview":
+				port := "3000"
+				if len(parts) > 1 {
+					port = parts[1]
+				}
+				fmt.Println(dim2.Render("  ⟳ Starting dev server..."))
+				pkgData, _ := os.ReadFile(filepath.Join(cwd, "package.json"))
+				var devCmd string
+				switch {
+				case strings.Contains(string(pkgData), `"dev"`):
+					devCmd = "npm run dev"
+				case strings.Contains(string(pkgData), `"start"`):
+					devCmd = "npm start"
+				default:
+					devCmd = "npm run dev"
+				}
+				var shell, flag string
+				if runtime.GOOS == "windows" {
+					shell, flag = "cmd", "/c"
+				} else {
+					shell, flag = "sh", "-c"
+				}
+				go func() {
+					_ = exec.Command(shell, flag, devCmd).Run()
+				}()
+				fmt.Println(green2.Render("  ✓ Dev server starting: http://localhost:" + port))
+				fmt.Println(dim2.Render("  Opening in browser..."))
+				// Open browser
+				var openCmd string
+				switch runtime.GOOS {
+				case "windows":
+					openCmd = "start http://localhost:" + port
+				case "darwin":
+					openCmd = "open http://localhost:" + port
+				default:
+					openCmd = "xdg-open http://localhost:" + port
+				}
+				go func() { _ = exec.Command(shell, flag, openCmd).Run() }()
+
+			// ── Git Integration ────────────────────────────────────────────
+			case "/git":
+				if len(parts) < 2 {
+					fmt.Println(dim2.Render("  Usage: /git init|commit|push|pr"))
+				} else {
+					switch parts[1] {
+					case "init":
+						out, err := exec.Command("git", "init").CombinedOutput()
+						if err == nil {
+							fmt.Println(green2.Render("  ✓ Git initialized"))
+							// Create .gitignore
+							gitignore := "node_modules/\n.env\n.env.local\ndist/\nbuild/\n.next/\n*.log\n"
+							_ = os.WriteFile(filepath.Join(cwd, ".gitignore"), []byte(gitignore), 0644)
+							fmt.Println(green2.Render("  ✓ Created .gitignore"))
+						} else {
+							fmt.Println(red2.Render("  ✗ " + strings.TrimSpace(string(out))))
+						}
+
+					case "commit":
+						// AI-generated commit message
+						fmt.Println(dim2.Render("  ⟳ Generating commit message..."))
+						// Get git diff
+						diffOut, _ := exec.Command("git", "diff", "--staged", "--stat").CombinedOutput()
+						if len(diffOut) == 0 {
+							// Stage all changes first
+							exec.Command("git", "add", "-A").Run()
+							diffOut, _ = exec.Command("git", "diff", "--staged", "--stat").CombinedOutput()
+						}
+						commitPrompt := fmt.Sprintf("Generate a concise git commit message (max 72 chars) for these changes:\n%s\nFormat: type(scope): description\nTypes: feat/fix/docs/style/refactor/test/chore", string(diffOut))
+						var commitMsg strings.Builder
+						vibecoder.SendVibeChat(commitPrompt, nil, func(t string) { commitMsg.WriteString(t) })
+						msg := strings.TrimSpace(commitMsg.String())
+						msg = strings.Trim(msg, `"`)
+						if msg == "" {
+							msg = "feat: update code"
+						}
+						exec.Command("git", "add", "-A").Run()
+						out, err := exec.Command("git", "commit", "-m", msg).CombinedOutput()
+						if err == nil {
+							fmt.Println(green2.Render("  ✓ Committed: " + msg))
+						} else {
+							fmt.Println(red2.Render("  ✗ " + strings.TrimSpace(string(out))))
+						}
+
+					case "push":
+						out, err := exec.Command("git", "push").CombinedOutput()
+						if err == nil {
+							fmt.Println(green2.Render("  ✓ Pushed to remote"))
+						} else {
+							fmt.Println(red2.Render("  ✗ " + strings.TrimSpace(string(out))))
+						}
+
+					case "pr":
+						fmt.Println(dim2.Render("  ⟳ Creating PR via GitHub CLI..."))
+						if _, ghErr := exec.LookPath("gh"); ghErr != nil {
+							fmt.Println(yellow2.Render("  Install GitHub CLI: https://cli.github.com"))
+						} else {
+							out, err := exec.Command("gh", "pr", "create", "--fill").CombinedOutput()
+							if err == nil {
+								fmt.Println(green2.Render("  ✓ PR created"))
+							} else {
+								fmt.Println(red2.Render("  ✗ " + strings.TrimSpace(string(out))))
+							}
+						}
+					}
+				}
+
+			// ── Deploy ─────────────────────────────────────────────────────
+			case "/deploy":
+				platform := "vercel"
+				if len(parts) > 1 {
+					platform = parts[1]
+				}
+				var shell, flag string
+				if runtime.GOOS == "windows" {
+					shell, flag = "cmd", "/c"
+				} else {
+					shell, flag = "sh", "-c"
+				}
+				switch platform {
+				case "vercel":
+					fmt.Println(dim2.Render("  ⟳ Deploying to Vercel (auto-downloading CLI)..."))
+					out, err := exec.Command(shell, flag, "npx --yes vercel --prod 2>&1").CombinedOutput()
+					if err == nil {
+						fmt.Println(green2.Render("  ✓ Deployed to Vercel"))
+					} else {
+						fmt.Println(string(out))
+					}
+				case "netlify":
+					fmt.Println(dim2.Render("  ⟳ Deploying to Netlify (auto-downloading CLI)..."))
+					out, err := exec.Command(shell, flag, "npx --yes netlify-cli deploy --prod 2>&1").CombinedOutput()
+					if err == nil {
+						fmt.Println(green2.Render("  ✓ Deployed to Netlify"))
+					} else {
+						fmt.Println(string(out))
+					}
+				case "railway":
+					fmt.Println(dim2.Render("  ⟳ Deploying to Railway..."))
+					fmt.Println(yellow2.Render("  Install Railway CLI: npm install -g @railway/cli"))
+					fmt.Println(dim2.Render("  Then run: railway up"))
+				default:
+					fmt.Println(red2.Render("  Usage: /deploy vercel|netlify|railway"))
+				}
+
+			// ── Code Review (Cursor-style) ─────────────────────────────────
+			case "/review":
+				fmt.Println()
+				fmt.Print(purple2.Render("  ◆ CBM Code [Review]: "))
+				allFiles := buildAllProjectFilesContext(cwd, nil)
+				reviewPrompt := fmt.Sprintf("Do a thorough code review of this project. Check for:\n1. Bugs and logic errors\n2. Code quality and best practices\n3. Performance issues\n4. Missing error handling\n5. TypeScript type issues\n6. Unused imports/variables\n\nProject files:\n%s\n\nProvide specific, actionable feedback with file:line references.", allFiles)
+				chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: reviewPrompt})
+				var reviewResp strings.Builder
+				_, reviewErr := vibecoder.SendVibeChat(reviewPrompt, chatHistory[:len(chatHistory)-1], func(t string) {
+					fmt.Print(t)
+					reviewResp.WriteString(t)
+				})
+				fmt.Println()
+				fmt.Println()
+				if reviewErr != nil {
+					fmt.Println(red2.Render("  ✗ " + reviewErr.Error()))
+				} else {
+					chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: reviewResp.String()})
+				}
+
+			case "/security":
+				fmt.Println()
+				fmt.Print(purple2.Render("  ◆ CBM Code [Security Scan]: "))
+				allFiles := buildAllProjectFilesContext(cwd, nil)
+				secPrompt := fmt.Sprintf("Perform a security audit of this codebase. Check for OWASP Top 10:\n1. SQL/NoSQL injection\n2. XSS vulnerabilities\n3. CSRF issues\n4. Broken authentication\n5. Sensitive data exposure\n6. Hardcoded secrets/API keys\n7. Insecure dependencies\n8. Missing input validation\n9. CORS misconfigurations\n10. Rate limiting issues\n\nFiles:\n%s\n\nList each vulnerability with severity (Critical/High/Medium/Low) and exact fix.", allFiles)
+				chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: secPrompt})
+				var secResp strings.Builder
+				_, secErr := vibecoder.SendVibeChat(secPrompt, chatHistory[:len(chatHistory)-1], func(t string) {
+					fmt.Print(t)
+					secResp.WriteString(t)
+				})
+				fmt.Println()
+				fmt.Println()
+				if secErr != nil {
+					fmt.Println(red2.Render("  ✗ " + secErr.Error()))
+				} else {
+					chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: secResp.String()})
+				}
+
+			case "/optimize":
+				fmt.Println()
+				fmt.Print(purple2.Render("  ◆ CBM Code [Optimize]: "))
+				allFiles := buildAllProjectFilesContext(cwd, nil)
+				optPrompt := fmt.Sprintf("Analyze this codebase for performance optimizations:\n1. Bundle size reduction\n2. Lazy loading opportunities\n3. Memoization (useMemo, useCallback, React.memo)\n4. Database query optimization\n5. Caching strategies\n6. Image optimization\n7. Code splitting\n8. Unnecessary re-renders\n\nFiles:\n%s\n\nProvide specific optimizations with before/after code examples.", allFiles)
+				chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: optPrompt})
+				var optResp strings.Builder
+				_, optErr := vibecoder.SendVibeChat(optPrompt, chatHistory[:len(chatHistory)-1], func(t string) {
+					fmt.Print(t)
+					optResp.WriteString(t)
+				})
+				fmt.Println()
+				fmt.Println()
+				if optErr != nil {
+					fmt.Println(red2.Render("  ✗ " + optErr.Error()))
+				} else {
+					chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: optResp.String()})
+				}
+
+			case "/test":
+				fmt.Println()
+				fmt.Print(purple2.Render("  ◆ CBM Code [Test Generator]: "))
+				allFiles := buildAllProjectFilesContext(cwd, nil)
+				testPrompt := fmt.Sprintf("Generate comprehensive tests for this project:\n1. Unit tests for all functions/components\n2. Integration tests for API endpoints\n3. E2E tests with Playwright for critical user flows\n4. Edge cases and error scenarios\n\nFiles:\n%s\n\nCreate test files with **filename** prefix. Use Vitest/Jest for unit, Playwright for E2E.", allFiles)
+				chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: testPrompt})
+				var testResp strings.Builder
+				_, testErr := vibecoder.SendVibeChat(testPrompt, chatHistory[:len(chatHistory)-1], func(t string) {
+					fmt.Print(t)
+					testResp.WriteString(t)
+				})
+				fmt.Println()
+				fmt.Println()
+				if testErr != nil {
+					fmt.Println(red2.Render("  ✗ " + testErr.Error()))
+				} else {
+					response := testResp.String()
+					chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: response})
+					written, editedFiles := writeCodeBlocksToFilesTracked(response, cwd, green2, dim2, red2)
+					if written > 0 {
+						fmt.Println(green2.Render(fmt.Sprintf("  ✓ %d test file(s) created", written)))
+						for _, f := range editedFiles {
+							trackFileInSession(f, cwd, &chatHistory)
+						}
+					}
+				}
+
+			// ── Template Library ───────────────────────────────────────────
+			case "/template":
+				templateType := "saas"
+				if len(parts) > 1 {
+					templateType = parts[1]
+				}
+				templates := map[string]string{
+					"saas":    "Complete SaaS app: Next.js 14, TypeScript, Tailwind, shadcn/ui, Supabase auth, Stripe billing, dashboard, landing page",
+					"blog":    "Blog with MDX: Next.js 14, TypeScript, Tailwind, MDX, categories, tags, search, RSS feed, SEO",
+					"api":     "REST API: Express.js, TypeScript, Prisma, PostgreSQL, JWT auth, rate limiting, Swagger docs",
+					"ecom":    "E-commerce: Next.js 14, TypeScript, Tailwind, Stripe, product grid, cart, checkout, order management",
+					"mobile":  "Mobile app: React Native, Expo, NativeWind, TypeScript, navigation, auth, API integration",
+					"landing": "Landing page: Next.js 14, TypeScript, Tailwind, Framer Motion, hero, features, pricing, testimonials",
+					"admin":   "Admin panel: Next.js 14, TypeScript, Tailwind, shadcn/ui, CRUD tables, charts, auth, permissions",
+					"cli":     "CLI tool: Go, Cobra, colored output, config file, cross-platform",
+				}
+				desc, ok := templates[templateType]
+				if !ok {
+					fmt.Println(yellow2.Render("  Available templates: saas, blog, api, ecom, mobile, landing, admin, cli"))
+				} else {
+					fmt.Println()
+					fmt.Print(purple2.Render("  ◆ CBM Code [Template]: "))
+					tplPrompt := fmt.Sprintf("Create a complete, production-ready %s template:\n%s\n\nCreate ALL files needed to run immediately. Include package.json, all components, pages, config files. Use Pollinations.ai for images.", templateType, desc)
+					chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: tplPrompt})
+					agentErr := runAgentLoop(tplPrompt, cwd, &chatHistory, green2, dim2, red2, yellow2, purple2, cyan2)
+					if agentErr != nil {
+						fmt.Println(red2.Render("  ✗ " + agentErr.Error()))
+					}
+				}
+
+			// ── Refactoring ────────────────────────────────────────────────
+			case "/refactor":
+				refType := ""
+				if len(parts) > 1 {
+					refType = parts[1]
+				}
+				refTypes := map[string]string{
+					"typescript": "Convert all JavaScript files to TypeScript with strict types",
+					"tailwind":   "Convert all CSS/styled-components to Tailwind CSS utility classes",
+					"nextjs":     "Migrate React app to Next.js 14 App Router with Server Components",
+					"prisma":     "Add Prisma ORM with PostgreSQL schema based on existing data models",
+					"tests":      "Add comprehensive test coverage with Vitest and Playwright",
+				}
+				if refType == "" {
+					fmt.Println(yellow2.Render("  Available: /refactor typescript|tailwind|nextjs|prisma|tests"))
+				} else if desc, ok := refTypes[refType]; ok {
+					fmt.Println()
+					fmt.Print(purple2.Render("  ◆ CBM Code [Refactor]: "))
+					allFiles := buildAllProjectFilesContext(cwd, nil)
+					refPrompt := fmt.Sprintf("%s\n\nCurrent codebase:\n%s\n\nRefactor ALL files. Show complete updated files with **filename** prefix.", desc, allFiles)
+					chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: refPrompt})
+					agentErr := runAgentLoop(refPrompt, cwd, &chatHistory, green2, dim2, red2, yellow2, purple2, cyan2)
+					if agentErr != nil {
+						fmt.Println(red2.Render("  ✗ " + agentErr.Error()))
+					}
+				} else {
+					fmt.Println(red2.Render("  Unknown refactor type: " + refType))
+				}
+
+			// ── Database Schema Generator ──────────────────────────────────
+			case "/db":
+				if len(parts) < 2 {
+					fmt.Println(dim2.Render("  Usage: /db schema <models> | /db migrate | /db seed"))
+				} else {
+					switch parts[1] {
+					case "schema":
+						models := strings.Join(parts[2:], " ")
+						if models == "" {
+							models = "User, Post, Comment"
+						}
+						fmt.Println()
+						fmt.Print(purple2.Render("  ◆ CBM Code [DB Schema]: "))
+						dbPrompt := fmt.Sprintf("Generate a complete Prisma schema for these models: %s\n\nInclude:\n1. All fields with proper types\n2. Relations between models\n3. Indexes for performance\n4. Timestamps (createdAt, updatedAt)\n5. Enums where appropriate\n\nAlso generate:\n- Migration command\n- Seed file with sample data\n- TypeScript types\n\nCreate files: **prisma/schema.prisma**, **prisma/seed.ts**", models)
+						chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: dbPrompt})
+						agentErr := runAgentLoop(dbPrompt, cwd, &chatHistory, green2, dim2, red2, yellow2, purple2, cyan2)
+						if agentErr != nil {
+							fmt.Println(red2.Render("  ✗ " + agentErr.Error()))
+						}
+
+					case "migrate":
+						fmt.Println(dim2.Render("  ⟳ Running Prisma migration..."))
+						out, err := exec.Command("npx", "prisma", "migrate", "dev").CombinedOutput()
+						if err == nil {
+							fmt.Println(green2.Render("  ✓ Migration complete"))
+						} else {
+							fmt.Println(string(out))
+						}
+
+					case "seed":
+						fmt.Println(dim2.Render("  ⟳ Running database seed..."))
+						out, err := exec.Command("npx", "prisma", "db", "seed").CombinedOutput()
+						if err == nil {
+							fmt.Println(green2.Render("  ✓ Database seeded"))
+						} else {
+							fmt.Println(string(out))
+						}
+					}
+				}
+
+			// ── Repo Grokking (Zencoder-style full codebase analysis) ──────
+			case "/grok":
+				fmt.Println()
+				fmt.Println(cyan2.Render("  ◆ CBM Code [Repo Grokking] — Analyzing full codebase..."))
+				fmt.Println(dim2.Render("  (Like Zencoder's Repo Grokking™ — deep codebase understanding)"))
+				fmt.Println()
+
+				// Walk entire workspace and collect file info
+				var fileList []string
+				var totalLines int
+				_ = filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
+					if err != nil || info.IsDir() {
+						return nil
+					}
+					name := info.Name()
+					if strings.HasPrefix(name, ".") {
+						return nil
+					}
+					for _, skip := range []string{"node_modules", ".git", "dist", "build", ".next", "vendor"} {
+						if strings.Contains(path, skip) {
+							return nil
+						}
+					}
+					rel, _ := filepath.Rel(cwd, path)
+					data, readErr := os.ReadFile(path)
+					if readErr == nil {
+						lines := strings.Count(string(data), "\n")
+						totalLines += lines
+						fileList = append(fileList, fmt.Sprintf("%s (%d lines)", rel, lines))
+					}
+					return nil
+				})
+
+				fmt.Println(dim2.Render(fmt.Sprintf("  Found %d files, %d total lines", len(fileList), totalLines)))
+				fmt.Println()
+
+				// Build context and analyze
+				allFiles := buildAllProjectFilesContext(cwd, nil)
+				grokPrompt := fmt.Sprintf(`Analyze this codebase deeply (Repo Grokking):
+
+FILES FOUND:
+%s
+
+CODEBASE:
+%s
+
+Provide:
+1. ARCHITECTURE OVERVIEW — what this project does, how it's structured
+2. TECH STACK — all technologies detected
+3. KEY COMPONENTS — most important files and their roles
+4. DATA FLOW — how data moves through the system
+5. DEPENDENCIES — key external dependencies
+6. POTENTIAL ISSUES — bugs, tech debt, missing features
+7. IMPROVEMENT ROADMAP — prioritized list of improvements
+8. QUICK WINS — 3 things that can be improved in < 1 hour`,
+					strings.Join(fileList, "\n"), allFiles)
+
+				chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "user", Content: grokPrompt})
+				var grokResp strings.Builder
+				fmt.Print(purple2.Render("  ◆ Analysis: "))
+				_, grokErr := vibecoder.SendVibeChat(grokPrompt, chatHistory[:len(chatHistory)-1], func(t string) {
+					fmt.Print(t)
+					grokResp.WriteString(t)
+				})
+				fmt.Println()
+				fmt.Println()
+				if grokErr != nil {
+					fmt.Println(red2.Render("  ✗ " + grokErr.Error()))
+				} else {
+					chatHistory = append(chatHistory, vibecoder.APIMessage{Role: "assistant", Content: grokResp.String()})
+					// Save grok result to CYBERMIND.md
+					grokFile := filepath.Join(cwd, "CYBERMIND.md")
+					grokContent := fmt.Sprintf("# CYBERMIND.md — Project Memory\n\n## Repo Analysis (CBM Code Grok)\n\n%s\n", grokResp.String())
+					if writeErr := os.WriteFile(grokFile, []byte(grokContent), 0644); writeErr == nil {
+						fmt.Println(green2.Render("  ✓ Analysis saved to CYBERMIND.md"))
+					}
 				}
 
 			case "/sessions":
@@ -3917,6 +4355,10 @@ DO NOT write any code yet — just the plan.`, planTask)
 
 		// ── Save session after each turn ───────────────────────────────────
 		saveSession(sessionFile, chatHistory)
+
+		// ── Auto-Dependency Detection ──────────────────────────────────────
+		// After files are written, check for new imports and auto-install
+		autoInstallDependencies(cwd, dim2, green2)
 	}
 }
 
@@ -4798,4 +5240,135 @@ func loadSession(path string) []vibecoder.APIMessage {
 		}
 	}
 	return filtered
+}
+
+// ─── Auto-Dependency Detection ────────────────────────────────────────────────
+// Scans newly written files for imports and auto-installs missing packages.
+
+func autoInstallDependencies(cwd string, dim, green lipgloss.Style) {
+	// Only for Node.js projects
+	pkgPath := filepath.Join(cwd, "package.json")
+	if _, err := os.Stat(pkgPath); err != nil {
+		return
+	}
+
+	// Read package.json to get existing deps
+	pkgData, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return
+	}
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	json.Unmarshal(pkgData, &pkg)
+
+	existing := make(map[string]bool)
+	for k := range pkg.Dependencies {
+		existing[k] = true
+	}
+	for k := range pkg.DevDependencies {
+		existing[k] = true
+	}
+
+	// Scan all JS/TS files for imports
+	var missing []string
+	seen := make(map[string]bool)
+
+	_ = filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		// Skip node_modules and hidden dirs
+		for _, skip := range []string{"node_modules", ".git", "dist", "build", ".next"} {
+			if strings.Contains(path, skip) {
+				return nil
+			}
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".ts" && ext != ".tsx" && ext != ".js" && ext != ".jsx" {
+			return nil
+		}
+
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+
+		// Extract import statements
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			var pkg string
+			if strings.HasPrefix(line, "import ") && strings.Contains(line, "from '") {
+				parts := strings.Split(line, "from '")
+				if len(parts) > 1 {
+					pkg = strings.Trim(strings.Split(parts[1], "'")[0], `"'`)
+				}
+			} else if strings.HasPrefix(line, "import ") && strings.Contains(line, `from "`) {
+				parts := strings.Split(line, `from "`)
+				if len(parts) > 1 {
+					pkg = strings.Trim(strings.Split(parts[1], `"`)[0], `"'`)
+				}
+			} else if strings.HasPrefix(line, "require('") || strings.HasPrefix(line, `require("`) {
+				pkg = strings.Trim(strings.TrimPrefix(strings.TrimPrefix(line, "require('"), `require("`), `"')`)
+				pkg = strings.Split(pkg, "'")[0]
+				pkg = strings.Split(pkg, `"`)[0]
+			}
+
+			if pkg == "" || strings.HasPrefix(pkg, ".") || strings.HasPrefix(pkg, "/") {
+				continue
+			}
+			// Get package name (handle @scope/package)
+			pkgName := pkg
+			if strings.HasPrefix(pkg, "@") {
+				parts := strings.SplitN(pkg, "/", 3)
+				if len(parts) >= 2 {
+					pkgName = parts[0] + "/" + parts[1]
+				}
+			} else {
+				pkgName = strings.SplitN(pkg, "/", 2)[0]
+			}
+
+			if !existing[pkgName] && !seen[pkgName] && pkgName != "" {
+				seen[pkgName] = true
+				missing = append(missing, pkgName)
+			}
+		}
+		return nil
+	})
+
+	if len(missing) == 0 {
+		return
+	}
+
+	// Filter out built-in Node.js modules
+	builtins := map[string]bool{
+		"fs": true, "path": true, "os": true, "http": true, "https": true,
+		"crypto": true, "stream": true, "util": true, "events": true,
+		"child_process": true, "readline": true, "url": true, "net": true,
+	}
+	var toInstall []string
+	for _, pkg := range missing {
+		if !builtins[pkg] {
+			toInstall = append(toInstall, pkg)
+		}
+	}
+
+	if len(toInstall) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println(dim.Render(fmt.Sprintf("  ⟳ Auto-installing %d missing packages: %s", len(toInstall), strings.Join(toInstall, ", "))))
+
+	args := append([]string{"install"}, toInstall...)
+	cmd := exec.Command("npm", args...)
+	cmd.Dir = cwd
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		fmt.Println(green.Render(fmt.Sprintf("  ✓ Installed: %s", strings.Join(toInstall, ", "))))
+	} else {
+		// Silent fail — don't interrupt the flow
+		_ = out
+	}
 }
