@@ -3716,46 +3716,68 @@ func runVibeCoderCLI(session *vibecoder.Session, cwd, tier, activeModel, userNam
 				}
 
 			case "/mcp":
-				// MCP Playwright integration
+				// MCP Playwright integration — auto-downloads via npx, no install needed
 				fmt.Println()
 				fmt.Println(cyan2.Render("  MCP (Model Context Protocol) Integration"))
 				fmt.Println(dim2.Render("  ─────────────────────────────────────────"))
-				fmt.Println(yellow2.Render("  Available MCP servers:"))
-				fmt.Println(green2.Render("  1. Playwright MCP (browser automation)"))
-				fmt.Println(dim2.Render("     Install: npx @playwright/mcp@latest"))
-				fmt.Println(dim2.Render("     Use: /mcp playwright <url> — open browser"))
-				fmt.Println()
-				fmt.Println(green2.Render("  2. Filesystem MCP (file operations)"))
-				fmt.Println(dim2.Render("     Built-in — use /add /read /ls commands"))
-				fmt.Println()
-				fmt.Println(green2.Render("  3. Context7 MCP (library docs)"))
-				fmt.Println(dim2.Render("     Install: npx @upstash/context7-mcp@latest"))
-				fmt.Println()
+
 				if len(parts) > 1 && parts[1] == "playwright" {
 					url := "http://localhost:3000"
 					if len(parts) > 2 {
 						url = parts[2]
 					}
-					fmt.Println(dim2.Render("  ⟳ Launching Playwright MCP..."))
 					// Check if npx is available
 					if _, npxErr := exec.LookPath("npx"); npxErr != nil {
-						fmt.Println(red2.Render("  ✗ npx not found — install Node.js first"))
+						fmt.Println(red2.Render("  ✗ Node.js not found"))
+						fmt.Println(dim2.Render("  Install Node.js from: https://nodejs.org"))
 					} else {
-						// Run playwright MCP in background
+						fmt.Println(dim2.Render("  ⟳ Starting Playwright MCP (auto-downloading if needed)..."))
 						var shell, flag string
 						if runtime.GOOS == "windows" {
 							shell, flag = "cmd", "/c"
 						} else {
 							shell, flag = "sh", "-c"
 						}
-						mcpCmd := fmt.Sprintf("npx @playwright/mcp@latest --url %s", url)
+						// npx auto-downloads @playwright/mcp without global install
+						mcpCmd := fmt.Sprintf("npx --yes @playwright/mcp@latest --url %s", url)
 						go func() {
-							out, _ := exec.Command(shell, flag, mcpCmd).CombinedOutput()
-							_ = out
+							_ = exec.Command(shell, flag, mcpCmd).Run()
 						}()
 						fmt.Println(green2.Render("  ✓ Playwright MCP started for: " + url))
-						fmt.Println(dim2.Render("  You can now ask CBM Code to test your app"))
+						fmt.Println(dim2.Render("  Browser automation ready — ask CBM Code to test your app"))
+						fmt.Println(dim2.Render("  Example: 'test the login form on my app'"))
 					}
+				} else if len(parts) > 1 && parts[1] == "context7" {
+					if _, npxErr := exec.LookPath("npx"); npxErr != nil {
+						fmt.Println(red2.Render("  ✗ Node.js not found — install from https://nodejs.org"))
+					} else {
+						fmt.Println(dim2.Render("  ⟳ Starting Context7 MCP (auto-downloading)..."))
+						var shell, flag string
+						if runtime.GOOS == "windows" {
+							shell, flag = "cmd", "/c"
+						} else {
+							shell, flag = "sh", "-c"
+						}
+						go func() {
+							_ = exec.Command(shell, flag, "npx --yes @upstash/context7-mcp@latest").Run()
+						}()
+						fmt.Println(green2.Render("  ✓ Context7 MCP started"))
+						fmt.Println(dim2.Render("  Now CBM Code has access to up-to-date library docs"))
+					}
+				} else {
+					fmt.Println(yellow2.Render("  Available MCP servers (auto-download via npx):"))
+					fmt.Println()
+					fmt.Println(green2.Render("  Playwright (browser automation):"))
+					fmt.Println(dim2.Render("  /mcp playwright [url]"))
+					fmt.Println(dim2.Render("  → Opens browser, takes screenshots, tests UI"))
+					fmt.Println(dim2.Render("  → No install needed — npx downloads automatically"))
+					fmt.Println()
+					fmt.Println(green2.Render("  Filesystem (built-in):"))
+					fmt.Println(dim2.Render("  /add /read /ls /run — already available"))
+					fmt.Println()
+					fmt.Println(green2.Render("  Context7 (library docs):"))
+					fmt.Println(dim2.Render("  /mcp context7 — up-to-date library documentation"))
+					fmt.Println()
 				}
 
 			case "/init":
