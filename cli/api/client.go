@@ -166,6 +166,53 @@ func saveUserName(name string) {
 	os.WriteFile(configPath, updated, 0600)
 }
 
+// GetCachedPlan returns the cached plan from config file (set after last key validation).
+func GetCachedPlan() string {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(homedir + "/.cybermind/config.json")
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Plan string `json:"plan"`
+	}
+	if json.Unmarshal(data, &cfg) == nil {
+		return cfg.Plan
+	}
+	return ""
+}
+
+// GetCachedUserName returns the cached user name from config file.
+func GetCachedUserName() string {
+	return getUserName()
+}
+
+// savePlan saves the plan to config file for fast startup reads.
+func savePlan(plan string) {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	configPath := homedir + "/.cybermind/config.json"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return
+	}
+	cfg["plan"] = plan
+	updated, err := json.Marshal(cfg)
+	if err != nil {
+		return
+	}
+	os.WriteFile(configPath, updated, 0600)
+}
+
 // isValidKey checks if a key has the correct prefix (both old and new format)
 func isValidKey(key string) bool {
 	return strings.HasPrefix(key, "cp_live_") || strings.HasPrefix(key, "sk_live_cm_")
@@ -515,6 +562,10 @@ func ValidateKey(key string) (string, error) {
 	// Save user name for personalized welcome
 	if result.UserName != "" {
 		saveUserName(result.UserName)
+	}
+	// Cache plan for fast startup reads
+	if result.Plan != "" {
+		savePlan(result.Plan)
 	}
 	// Return plan + username info
 	planInfo := result.Plan

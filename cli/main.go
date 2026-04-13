@@ -3356,15 +3356,14 @@ func runVibeCoder(args []string) {
 	// Select theme
 	theme := vibetui.ThemeByName(themeName)
 
-	// Get plan info for welcome screen
+	// Get plan info for welcome screen — read from cached config, don't block on network
 	tier := "Free"
 	activeModel := "mistralai/mistral-7b-instruct"
 	userName := ""
 	if mainKey := api.GetAPIKey(); mainKey != "" {
-		// Quick non-blocking plan check from cached validate response
-		if planRaw, err := api.ValidateKey(mainKey); err == nil {
-			parts := strings.SplitN(planRaw, "|NAME|", 2)
-			switch strings.ToLower(parts[0]) {
+		// Read cached plan from config file (set during last --key or whoami)
+		if cachedPlan := api.GetCachedPlan(); cachedPlan != "" {
+			switch strings.ToLower(cachedPlan) {
 			case "elite":
 				tier = "Elite ⚡"
 				activeModel = "deepseek/deepseek-r1"
@@ -3375,12 +3374,10 @@ func runVibeCoder(args []string) {
 				tier = "Starter"
 				activeModel = "mistralai/mistral-7b-instruct"
 			default:
-				tier = strings.ToUpper(parts[0])
-			}
-			if len(parts) > 1 {
-				userName = parts[1]
+				tier = strings.ToUpper(cachedPlan)
 			}
 		}
+		userName = api.GetCachedUserName()
 	}
 
 	// Create and run TUI
@@ -3443,8 +3440,19 @@ func runVibeCoder(args []string) {
 		indexer.Start(nil) // background goroutine, no progress callback needed at startup
 	}
 
-	// Create the bubbletea program — NO AltScreen so terminal stays stable like Claude Code
-	p := tea.NewProgram(model, tea.WithMouseCellMotion())
+	// Create the bubbletea program
+	// On Windows: bubbletea needs a real console handle — use AltScreen for proper rendering
+	// WithInput(os.Stdin) ensures we get the real console, not a pipe
+	opts := []tea.ProgramOption{
+		tea.WithInput(os.Stdin),
+		tea.WithOutput(os.Stdout),
+	}
+	// AltScreen gives Claude Code-style full-screen experience on real terminals
+	if runtime.GOOS != "windows" {
+		// On Linux/macOS: AltScreen works perfectly
+		opts = append(opts, tea.WithAltScreen())
+	}
+	p := tea.NewProgram(model, opts...)
 
 	// Give the model a reference to the program so agent loop callbacks
 	// can send messages back into the event loop via p.Send()
