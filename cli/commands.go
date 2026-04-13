@@ -770,6 +770,32 @@ func runOmegaPlan(target string, localMode bool) {
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
 
+	// ── STEP 0: Root user check ───────────────────────────────────────────
+	// Many tools (masscan, rustscan raw sockets, nmap -sS) require root.
+	// Running as root also prevents permission issues with tool installation.
+	if os.Getuid() != 0 {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  ⚠  ROOT REQUIRED FOR OMEGA MODE"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Many tools (masscan, rustscan, nmap -sS, naabu) require root for raw socket access."))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Running as non-root causes port scan tools to skip or produce incomplete results."))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  Run as root:"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  sudo cybermind /plan " + target))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Or: sudo -E cybermind /plan " + target + "  (preserves env vars)"))
+		fmt.Println()
+		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Continue anyway as non-root? (some tools may fail) [y/N] → "))
+		var rootAns string
+		fmt.Scanln(&rootAns)
+		if strings.ToLower(strings.TrimSpace(rootAns)) != "y" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Cancelled. Re-run as root for best results."))
+			return
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  ⚠  Continuing as non-root — some tools may produce incomplete results"))
+		fmt.Println()
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ Running as root — full tool access enabled"))
+		fmt.Println()
+	}
+
 	// ── STEP 1: System resource check ────────────────────────────────────
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ Checking system resources..."))
 	sysRes := omega.CheckSystemResources()

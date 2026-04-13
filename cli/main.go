@@ -2112,12 +2112,20 @@ func main() {
 			{"wafw00f", "recon", "pip3 install wafw00f --break-system-packages", false, false},
 			// ── Recon Phase 5 — Directory Discovery ────────────────────────────
 			{"ffuf", "recon", "sudo apt install -y ffuf", false, false},
-			{"feroxbuster", "recon", "sudo apt install -y feroxbuster", false, false},
+			{"feroxbuster", "recon", "sudo apt install -y feroxbuster", false, false}, // apt install — one command, fully sets up
 			{"gobuster", "recon", "sudo apt install -y gobuster", false, false},
 			// ── Recon Phase 6 — Vulnerability Scanning ─────────────────────────
 			{"nuclei", "recon", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false},
 			{"nikto", "recon", "sudo apt install -y nikto", false, false},
 			{"katana", "recon", "go install github.com/projectdiscovery/katana/cmd/katana@latest", true, false},
+			// ── NEW 2025-2026 Kali Tools — Recon ───────────────────────────────
+			{"crlfuzz", "recon", "sudo apt install -y crlfuzz", false, false},           // CRLF vuln scanner (Kali 2025.2)
+			{"tinja", "recon", "sudo apt install -y tinja", false, false},               // Template injection CLI (Kali 2025.2)
+			{"sstimap", "recon", "sudo apt install -y sstimap", false, false},           // SSTI auto-detect (Kali 2026.1)
+			{"wpprobe", "recon", "sudo apt install -y wpprobe", false, false},           // WordPress plugin enum (Kali 2026.1)
+			{"xsstrike", "recon", "sudo apt install -y xsstrike", false, false},         // Advanced XSS scanner (Kali 2026.1)
+			{"gitxray", "recon", "sudo apt install -y gitxray", false, false},           // GitHub repo scanner (Kali 2025.2)
+			{"binwalk3", "recon", "sudo apt install -y binwalk3", false, false},         // Firmware analysis (Kali 2025.2)
 			// ── Hunt Phase 1 — URL Collection ──────────────────────────────────
 			{"waymore", "hunt", "pip3 install waymore --break-system-packages", false, false},
 			{"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false},
@@ -2184,6 +2192,14 @@ func main() {
 			{"ligolo-ng", "exploit", "go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest", true, false},
 			{"iodine", "exploit", "sudo apt install -y iodine", false, false},
 			{"evilginx2", "exploit", "go install github.com/kgretzky/evilginx2@latest", true, false},
+			// ── NEW 2025-2026 Kali Tools — Exploit/Post-Exploit ────────────────
+			{"adaptixc2", "exploit", "sudo apt install -y adaptixc2", false, false},     // Post-exploit C2 framework (Kali 2026.1)
+			{"atomic-operator", "exploit", "sudo apt install -y atomic-operator", false, false}, // Atomic Red Team tests (Kali 2026.1)
+			{"fluxion", "exploit", "sudo apt install -y fluxion", false, false},         // Social-engineering/evil-twin (Kali 2026.1)
+			{"rubeus", "exploit", "sudo apt install -y rubeus", false, false},           // Kerberos attacks (Kali 2025.2)
+			{"ldeep", "exploit", "sudo apt install -y ldeep", false, false},             // LDAP enumeration (Kali 2025.2)
+			{"donut-shellcode", "exploit", "sudo apt install -y donut-shellcode", false, false}, // Shellcode gen (Kali 2025.2)
+			{"bopscrk", "exploit", "sudo apt install -y bopscrk", false, false},         // Smart wordlist gen (Kali 2025.2)
 		}
 
 		var missing []toolEntry

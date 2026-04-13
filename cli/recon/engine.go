@@ -434,11 +434,17 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 		available = ensureToolQueued("tlsx", available, toolRegistry)
 	}
 
-	// Adaptive: skip phases 4/5/6 if no open ports found
-	if len(ctx.OpenPorts) == 0 {
+	// Adaptive: skip phases 4/5/6 if no open ports found AND target is an IP
+	// For domain targets: always continue — port scan may have failed but HTTP probing
+	// can still find live services (especially as root where raw socket output differs)
+	if len(ctx.OpenPorts) == 0 && ctx.TargetType == "ip" {
 		buildCombined(&result)
 		result.Context = ctx
 		return result
+	}
+	// For domain targets with no ports: inject common web ports so httpx still runs
+	if len(ctx.OpenPorts) == 0 && ctx.TargetType == "domain" {
+		ctx.OpenPorts = []int{80, 443, 8080, 8443}
 	}
 
 	// Phase 4 — HTTP Probe → populate ctx.LiveURLs

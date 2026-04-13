@@ -174,26 +174,37 @@ var toolRegistry = []ToolSpec{
 	{
 		Name:        "reconftw",
 		Phase:       2,
-		Timeout:     14400, // 4 hours max — reconftw is thorough, we wait
+		Timeout:     21600, // 6 hours max — full exhaustive mode, no shortcuts
 		DomainOnly:  true,
 		InstallHint: "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh && sudo tee /usr/local/bin/reconftw > /dev/null << 'EOF'\n#!/bin/bash\ncd /opt/reconftw && bash reconftw.sh \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/reconftw",
-		// PRIMARY: Full recon mode with deep scanning + parallel execution
-		// -r = full recon (subdomains + web probing + vuln checks, no active attacks)
-		// --deep = enable deep scanning (more thorough, slower)
-		// --parallel = run independent functions in parallel (faster)
-		// -o = output directory for structured results
+		// PRIMARY: ALL mode — runs EVERY reconftw function exhaustively
+		// -a = all (subdomains + web + vuln + osint + fuzzing + screenshots)
+		// --deep = maximum depth on every scan
+		// --parallel = parallel execution
+		// No time limit — we wait as long as it takes
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			outDir := "/tmp/cybermind_reconftw_" + target
 			return []string{
 				"-d", target,
-				"-r",          // full recon mode
+				"-a",          // ALL mode — every function enabled
 				"--deep",      // deep scanning — no shortcuts
-				"--parallel",  // parallel execution for speed
-				"-o", outDir,  // structured output directory
+				"--parallel",  // parallel execution
+				"-o", outDir,
 			}
 		},
-		// Fallback 1: full recon without --deep (faster, still comprehensive)
+		// Fallback 1: full recon (-r) with deep — still very comprehensive
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				outDir := "/tmp/cybermind_reconftw_" + target
+				return []string{
+					"-d", target,
+					"-r",          // full recon mode
+					"--deep",
+					"--parallel",
+					"-o", outDir,
+				}
+			},
+			// Fallback 2: full recon without --deep
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
 				return []string{
@@ -203,22 +214,22 @@ var toolRegistry = []ToolSpec{
 					"-o", outDir,
 				}
 			},
-			// Fallback 2: subdomain-only mode (-s) — fastest, still very thorough
+			// Fallback 3: subdomain + web only (-s) — fast but thorough
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
 				return []string{
 					"-d", target,
-					"-s",         // subdomain enumeration only
+					"-s",
 					"--parallel",
 					"-o", outDir,
 				}
 			},
-			// Fallback 3: passive only (-p) — no active probing, stealthy
+			// Fallback 4: passive only (-p) — stealthy, no active probing
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
 				return []string{
 					"-d", target,
-					"-p",         // passive only
+					"-p",
 					"-o", outDir,
 				}
 			},
