@@ -1391,49 +1391,107 @@ func saveAPIKey(key string) error {
 	return os.WriteFile(dir+"/config.json", []byte(data), 0600)
 }
 
-// installPythonPipTool installs a Python tool via pipx (Kali 2024.4+) with pip3 fallback.
-// Kali 2024.4+ recommends pipx over pip3 for external packages.
-func installPythonPipTool(name string) error {
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Installing %s via pipx...", name)))
+// pipPackageName maps binary name → pip package name (when they differ)
+var pipPackageName = map[string]string{
+	"certipy":          "certipy-ad",
+	"bloodhound-python": "bloodhound",
+	"bloodyAD":         "bloodyad",
+	"netexec":          "netexec",
+	"coercer":          "coercer",
+	"mitm6":            "mitm6",
+	"sprayhound":       "sprayhound",
+	"wafw00f":          "wafw00f",
+	"waymore":          "waymore",
+	"arjun":            "arjun",
+	"graphw00f":        "graphw00f",
+	"routersploit":     "routersploit",
+	"poshc2":           "poshc2",
+	"shodan":           "shodan",
+	"h8mail":           "h8mail",
+}
 
-	// Ensure pipx is installed
+// ensurePipx installs pipx if missing and ensures /usr/local/bin is in pipx path.
+func ensurePipx() {
 	if _, err := exec.LookPath("pipx"); err != nil {
-		exec.Command("sudo", "apt", "install", "-y", "pipx").Run()
-		exec.Command("pipx", "ensurepath").Run()
+		exec.Command("sudo", "apt", "install", "-y", "pipx", "python3-venv").Run()
+	}
+	// Set PIPX_BIN_DIR so binaries land in /usr/local/bin (accessible system-wide)
+	os.Setenv("PIPX_BIN_DIR", "/usr/local/bin")
+	os.Setenv("PIPX_HOME", "/opt/pipx")
+}
+
+// installPythonPipTool installs a Python CLI tool using the best available method.
+// Priority: pipx (isolated) → venv → pip3 --break-system-packages
+func installPythonPipTool(name string) error {
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Installing %s (isolated env)...", name)))
+
+	// Resolve pip package name
+	pkgName := name
+	if mapped, ok := pipPackageName[name]; ok {
+		pkgName = mapped
 	}
 
-	// Method 1: pipx install (recommended for Kali 2024.4+)
-	cmd := exec.Command("pipx", "install", name)
+	ensurePipx()
+
+	// Method 1: pipx with PIPX_BIN_DIR=/usr/local/bin
+	pipxEnv := append(os.Environ(),
+		"PIPX_BIN_DIR=/usr/local/bin",
+		"PIPX_HOME=/opt/pipx",
+	)
+	cmd := exec.Command("pipx", "install", "--force", pkgName)
+	cmd.Env = pipxEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err == nil {
-		// Symlink from ~/.local/bin to /usr/local/bin
-		homedir, _ := os.UserHomeDir()
-		binPath := homedir + "/.local/bin/" + name
-		if _, err2 := os.Stat(binPath); err2 == nil {
-			exec.Command("sudo", "ln", "-sf", binPath, "/usr/local/bin/"+name).Run()
+		// Verify binary landed somewhere accessible
+		if _, e := exec.LookPath(name); e == nil {
+			return nil
+		}
+		// Try symlinking from common pipx locations
+		for _, searchDir := range []string{
+			"/usr/local/bin/" + name,
+			"/opt/pipx/venvs/" + pkgName + "/bin/" + name,
+			os.Getenv("HOME") + "/.local/bin/" + name,
+			"/root/.local/bin/" + name,
+		} {
+			if _, e := os.Stat(searchDir); e == nil {
+				exec.Command("sudo", "ln", "-sf", searchDir, "/usr/local/bin/"+name).Run()
+				return nil
+			}
 		}
 		return nil
 	}
 
-	// Method 2: pip3 with --break-system-packages
-	cmd2 := exec.Command("pip3", "install", name, "--break-system-packages")
-	cmd2.Stdout = os.Stdout
-	cmd2.Stderr = os.Stderr
-	if err := cmd2.Run(); err == nil {
-		return nil
+	// Method 2: venv in /opt/<name>-venv
+	venvDir := "/opt/" + name + "-venv"
+	exec.Command("python3", "-m", "venv", venvDir).Run()
+	venvPip := venvDir + "/bin/pip"
+	venvBin := venvDir + "/bin/" + name
+
+	installCmd := exec.Command(venvPip, "install", pkgName, "-q")
+	installCmd.Stdout = os.Stdout
+	installCmd.Stderr = os.Stderr
+	if err := installCmd.Run(); err == nil {
+		if _, e := os.Stat(venvBin); e == nil {
+			exec.Command("sudo", "ln", "-sf", venvBin, "/usr/local/bin/"+name).Run()
+			return nil
+		}
 	}
 
-	// Method 3: pip3 in user space
-	cmd3 := exec.Command("pip3", "install", "--user", name)
+	// Method 3: pip3 --break-system-packages (last resort)
+	cmd3 := exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q")
 	cmd3.Stdout = os.Stdout
 	cmd3.Stderr = os.Stderr
 	return cmd3.Run()
 }
 
-// installPythonGitTool installs a Python tool from git using pipx or venv.
+// installPythonGitTool installs a Python tool from git using venv isolation.
+// Creates /opt/<name>/.venv, installs deps, creates wrapper at /usr/local/bin/<name>
 func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Cloning %s from GitHub...", name)))
+
+	// Ensure python3-venv is available
+	exec.Command("sudo", "apt", "install", "-y", "python3-venv", "python3-pip", "git").Run()
 
 	exec.Command("sudo", "rm", "-rf", installDir).Run()
 	cloneCmd := exec.Command("git", "clone", "--depth=1", repoURL, installDir)
@@ -1443,25 +1501,21 @@ func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 		return fmt.Errorf("git clone failed: %v", err)
 	}
 
-	// Method 1: pipx install from local dir (best for Kali 2024.4+)
-	if _, err := exec.LookPath("pipx"); err == nil {
-		pipxCmd := exec.Command("pipx", "install", installDir)
-		pipxCmd.Stdout = os.Stdout
-		pipxCmd.Stderr = os.Stderr
-		if pipxCmd.Run() == nil {
-			homedir, _ := os.UserHomeDir()
-			binPath := homedir + "/.local/bin/" + name
-			if _, err2 := os.Stat(binPath); err2 == nil {
-				exec.Command("sudo", "ln", "-sf", binPath, "/usr/local/bin/"+name).Run()
-				return nil
-			}
-		}
+	// Create isolated venv inside the tool dir
+	venvDir := installDir + "/.venv"
+	if err := exec.Command("python3", "-m", "venv", venvDir).Run(); err != nil {
+		// fallback: system venv
+		exec.Command("sudo", "apt", "install", "-y", "python3-venv").Run()
+		exec.Command("python3", "-m", "venv", venvDir).Run()
 	}
 
-	// Method 2: venv + pip install
-	venvDir := installDir + "/.venv"
-	exec.Command("python3", "-m", "venv", venvDir).Run()
 	venvPip := venvDir + "/bin/pip"
+	venvPython := venvDir + "/bin/python3"
+
+	// Upgrade pip inside venv first
+	exec.Command(venvPip, "install", "--upgrade", "pip", "-q").Run()
+
+	// Install requirements if present
 	reqFile := installDir + "/requirements.txt"
 	if _, err := os.Stat(reqFile); err == nil {
 		pipCmd := exec.Command(venvPip, "install", "-r", reqFile, "-q")
@@ -1469,31 +1523,39 @@ func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 		pipCmd.Stderr = os.Stderr
 		pipCmd.Run()
 	}
-	// Install the package itself
-	exec.Command(venvPip, "install", "-e", installDir, "-q").Run()
 
-	// Create wrapper that uses venv python
-	scriptPath := installDir + "/" + mainScript
-	venvPython := venvDir + "/bin/python3"
-	wrapper := fmt.Sprintf("#!/bin/bash\n%s %s \"$@\"\n", venvPython, scriptPath)
-	wrapperPath := "/usr/local/bin/" + name
-	teeCmd := exec.Command("sudo", "tee", wrapperPath)
-	teeCmd.Stdin = strings.NewReader(wrapper)
-	teeCmd.Run()
-	exec.Command("sudo", "chmod", "+x", wrapperPath).Run()
-
-	// Method 3: pip3 with --break-system-packages as last resort
-	if _, err := exec.LookPath(name); err != nil {
-		reqFile := installDir + "/requirements.txt"
-		if _, err2 := os.Stat(reqFile); err2 == nil {
-			exec.Command("pip3", "install", "-r", reqFile, "--break-system-packages", "-q").Run()
+	// Try pip install -e . if setup.py or pyproject.toml exists
+	for _, setupFile := range []string{installDir + "/setup.py", installDir + "/pyproject.toml"} {
+		if _, err := os.Stat(setupFile); err == nil {
+			exec.Command(venvPip, "install", "-e", installDir, "-q").Run()
+			break
 		}
 	}
 
+	// Create wrapper script using venv python
+	scriptPath := installDir + "/" + mainScript
+	wrapper := fmt.Sprintf("#!/bin/bash\nexec %s %s \"$@\"\n", venvPython, scriptPath)
+	wrapperPath := "/usr/local/bin/" + name
+
+	teeCmd := exec.Command("sudo", "tee", wrapperPath)
+	teeCmd.Stdin = strings.NewReader(wrapper)
+	if err := teeCmd.Run(); err != nil {
+		// fallback: write directly
+		os.WriteFile(wrapperPath, []byte(wrapper), 0755)
+	}
+	exec.Command("sudo", "chmod", "+x", wrapperPath).Run()
+
+	// Verify
 	if _, err := os.Stat(scriptPath); err == nil {
 		return nil
 	}
-	return fmt.Errorf("%s install incomplete", name)
+	// Check if binary was installed into venv bin
+	venvToolBin := venvDir + "/bin/" + name
+	if _, err := os.Stat(venvToolBin); err == nil {
+		exec.Command("sudo", "ln", "-sf", venvToolBin, "/usr/local/bin/"+name).Run()
+		return nil
+	}
+	return fmt.Errorf("%s: main script not found at %s", name, scriptPath)
 }
 
 // installReconftw installs reconftw via git clone — must run as root.
@@ -2365,10 +2427,7 @@ func main() {
 				case "sprayhound":
 					installErr = installPythonPipTool("sprayhound")
 				case "certipy":
-					cmd2 := exec.Command("pip3", "install", "certipy-ad", "--break-system-packages", "-q")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					installErr = cmd2.Run()
+					installErr = installPythonPipTool("certipy") // maps to certipy-ad via pipPackageName
 				case "bloodyAD":
 					installErr = installPythonPipTool("bloodyAD")
 				case "netexec":
@@ -2416,29 +2475,10 @@ func main() {
 					cmd2.Stderr = os.Stderr
 					installErr = cmd2.Run()
 				case "waymore":
-					cmd2 := exec.Command("pip3", "install", "waymore", "--break-system-packages", "-q")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					if err := cmd2.Run(); err == nil {
-						for _, p := range []string{"/usr/local/bin/waymore", "/usr/bin/waymore"} {
-							if _, e := os.Stat(p); e == nil {
-								break
-							}
-						}
-					} else {
-						exec.Command("sudo", "rm", "-rf", "/opt/waymore").Run()
-						cloneCmd := exec.Command("git", "clone", "--depth=1", "https://github.com/xnl-h4ck3r/waymore.git", "/opt/waymore")
-						cloneCmd.Stdout = os.Stdout
-						cloneCmd.Stderr = os.Stderr
-						if err2 := cloneCmd.Run(); err2 != nil {
-							installErr = err2
-						} else {
-							exec.Command("pip3", "install", "-r", "/opt/waymore/requirements.txt", "--break-system-packages", "-q").Run()
-							teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/waymore")
-							teeCmd.Stdin = strings.NewReader("#!/bin/bash\npython3 /opt/waymore/waymore.py \"$@\"\n")
-							teeCmd.Run()
-							exec.Command("sudo", "chmod", "+x", "/usr/local/bin/waymore").Run()
-						}
+					// waymore: try pipx first, then venv git clone
+					installErr = installPythonPipTool("waymore")
+					if installErr != nil {
+						installErr = installPythonGitTool("waymore", "https://github.com/xnl-h4ck3r/waymore.git", "/opt/waymore", "waymore.py")
 					}
 				case "gf":
 					cmd2 := exec.Command("go", "install", "github.com/tomnomnom/gf@latest")
@@ -2467,7 +2507,7 @@ func main() {
 					cmd2.Stderr = os.Stderr
 					installErr = cmd2.Run()
 				case "bloodhound-python":
-					exec.Command("pip3", "install", "bloodhound", "--break-system-packages", "-q").Run()
+					installErr = installPythonPipTool("bloodhound-python") // maps to bloodhound pkg
 					exec.Command("sudo", "apt", "install", "-y", "neo4j").Run()
 				case "evil-winrm":
 					exec.Command("sudo", "apt", "install", "-y", "ruby", "ruby-dev").Run()
