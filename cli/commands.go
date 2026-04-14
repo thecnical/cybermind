@@ -26,6 +26,55 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// omegaLogFile is the path to the floating terminal log file for the current OMEGA run.
+var omegaLogFile string
+
+// omegaLog appends a message to the OMEGA log file (stripping ANSI codes).
+func omegaLog(msg string) {
+	if omegaLogFile == "" {
+		return
+	}
+	f, err := os.OpenFile(omegaLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	ansiStrip := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	clean := ansiStrip.ReplaceAllString(msg, "")
+	fmt.Fprintln(f, clean)
+}
+
+// readWithTimeout reads a line from stdin with a timeout.
+// If timeout expires, returns the defaultVal.
+func readWithTimeout(prompt string, defaultVal string, timeoutSec int) string {
+	fmt.Print(prompt)
+	type result struct{ val string }
+	ch := make(chan result, 1)
+	go func() {
+		var s string
+		fmt.Scanln(&s)
+		ch <- result{s}
+	}()
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	remaining := timeoutSec
+	for {
+		select {
+		case r := <-ch:
+			fmt.Println()
+			return strings.TrimSpace(r.val)
+		case <-ticker.C:
+			remaining--
+			fmt.Printf("\r%s [auto-%s in %ds] ", prompt, defaultVal, remaining)
+			if remaining <= 0 {
+				fmt.Printf("\r%s → %s (auto)\n", prompt, defaultVal)
+				return defaultVal
+			}
+		}
+	}
+}
+
 // ─── Feature 2: Windows Native Recon ─────────────────────────────────────────
 
 // runNativeScan performs native network scanning using PowerShell + Go net.
@@ -833,9 +882,9 @@ func runOmegaPlan(target string, localMode bool) {
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  ⚠  " + w))
 		}
 		fmt.Println()
-		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Continue anyway? [Y/n] → "))
-		var ans string
-		fmt.Scanln(&ans)
+		ans := readWithTimeout(
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Continue anyway? [Y/n] → "),
+			"y", 20)
 		if strings.ToLower(strings.TrimSpace(ans)) == "n" {
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Cancelled."))
 			return
@@ -874,11 +923,10 @@ func runOmegaPlan(target string, localMode bool) {
 	fmt.Println()
 
 	// ── STEP 3: Ask permission to start planning ──────────────────────────
-	fmt.Print(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
-		"  Start OMEGA planning for " + target + "? [Y/n] → "))
-	var startAns string
-	fmt.Scanln(&startAns)
-	if strings.ToLower(strings.TrimSpace(startAns)) == "n" {
+	startAns := readWithTimeout(
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  Start OMEGA planning for "+target+"? [Y/n] → "),
+		"y", 20)
+	if strings.ToLower(startAns) == "n" {
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Cancelled."))
 		return
 	}
@@ -971,11 +1019,10 @@ func runOmegaPlan(target string, localMode bool) {
 
 	// ── STEP 8: Ask to execute ────────────────────────────────────────────
 	fmt.Println()
-	fmt.Print(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
-		"  Execute this plan? [Y/n] → "))
-	var execAns string
-	fmt.Scanln(&execAns)
-	if strings.ToLower(strings.TrimSpace(execAns)) == "n" {
+	execAns := readWithTimeout(
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  Execute this plan? [Y/n] → "),
+		"y", 20)
+	if strings.ToLower(execAns) == "n" {
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
 			"  Plan saved. Run /recon to start manually."))
 		return
@@ -989,6 +1036,7 @@ func runOmegaPlan(target string, localMode bool) {
 
 	// Launch floating terminal if tmux available
 	launchFloatingTerminal(target)
+	omegaLogFile = fmt.Sprintf("/tmp/cybermind_omega_%s.log", strings.ReplaceAll(target, ".", "_"))
 
 	// Build skip set from plan phases
 	skipTools := make(map[string]bool)
@@ -1020,6 +1068,7 @@ func runOmegaPlan(target string, localMode bool) {
 	// ── PHASE 1: RECON (plan-aware) ──────────────────────────────────────
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
 		"  ═══ PHASE 1: RECON ═══"))
+	omegaLog("\n═══ PHASE 1: RECON ═══\nTarget: " + target)
 	if plan != nil && len(skipTools) > 0 {
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
 			fmt.Sprintf("  ℹ  Plan-aware: skipping %d tools, focusing on AI-recommended tools", len(skipTools))))
@@ -1033,6 +1082,7 @@ func runOmegaPlan(target string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
 		"  ═══ PHASE 2: HUNT ═══"))
+	omegaLog("\n═══ PHASE 2: HUNT ═══")
 
 	// Build hunt context from recon results — this is the key fix
 	// Hunt now knows: live URLs, open ports, WAF, subdomains from recon
@@ -1114,6 +1164,7 @@ func runOmegaPlan(target string, localMode bool) {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
 			fmt.Sprintf("  🐛 BUGS FOUND: %d total (Critical:%d High:%d Medium:%d)",
 				len(allBugs), critCount, highCount, medCount)))
+		omegaLog(fmt.Sprintf("🐛 BUGS FOUND: %d", len(allBugs)))
 		fmt.Println()
 
 		// Show each bug
@@ -1189,6 +1240,7 @@ func runOmegaPlan(target string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
 		"  ═══ PHASE 3: ABHIMANYU ═══"))
+	omegaLog("\n═══ PHASE 3: ABHIMANYU ═══")
 
 	// Build abhimanyu context from hunt results — full context chain
 	var huntCtx hunt.HuntContext
@@ -1305,9 +1357,11 @@ func launchFloatingTerminal(target string) {
 	os.WriteFile(logFile, []byte(fmt.Sprintf("⚡ CyberMind OMEGA — %s\n\n", target)), 0644)
 
 	watchCmd := fmt.Sprintf(
-		`echo "⚡ CyberMind OMEGA — %s"; echo ""; `+
-			`tail -f %s 2>/dev/null || `+
-			`watch -n 1 'ls -lt /tmp/cybermind_* 2>/dev/null | head -20'`,
+		`clear; echo "╔══════════════════════════════════════════════════╗"; `+
+			`echo "║  ⚡ CyberMind OMEGA Live Monitor — %s"; `+
+			`echo "╚══════════════════════════════════════════════════╝"; `+
+			`echo ""; `+
+			`tail -f %s 2>/dev/null`,
 		target, logFile,
 	)
 

@@ -434,20 +434,24 @@ func runAutoReconSilent(target string, requested []string) recon.ReconResult {
 	result := recon.RunAutoRecon(target, requested, func(status recon.ToolStatus) {
 		switch status.Kind {
 		case recon.StatusRunning:
-			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
-				fmt.Sprintf("  ⟳ %-16s running...", status.Tool)))
+			line := fmt.Sprintf("  ⟳ %-16s running...", status.Tool)
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(line))
+			omegaLog("[RECON] " + line)
 		case recon.StatusDone:
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
-				fmt.Sprintf("  ✓ %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+			line := fmt.Sprintf("  ✓ %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(line))
+			omegaLog("[RECON] " + line)
 		case recon.StatusPartial:
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
 				fmt.Sprintf("  ⚡ %-16s partial output kept", status.Tool)))
 		case recon.StatusFailed:
-			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
-				fmt.Sprintf("  ✗ %-16s failed — %s", status.Tool, status.Reason)))
+			line := fmt.Sprintf("  ✗ %-16s failed — %s", status.Tool, status.Reason)
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(line))
+			omegaLog("[RECON] " + line)
 		case recon.StatusSkipped:
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)))
+			line := fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(line))
+			omegaLog("[RECON] " + line)
 		case recon.StatusRetry:
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
 				fmt.Sprintf("  ↻ %-16s %s", status.Tool, status.Reason)))
@@ -538,20 +542,24 @@ func runHuntSilent(target string, reconCtx *hunt.HuntContext, requested []string
 	result := hunt.RunHunt(target, reconCtx, requested, func(status hunt.HuntStatus) {
 		switch status.Kind {
 		case hunt.HuntRunning:
-			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
-				fmt.Sprintf("  ⟳ %-16s running...", status.Tool)))
+			line := fmt.Sprintf("  ⟳ %-16s running...", status.Tool)
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(line))
+			omegaLog("[HUNT] " + line)
 		case hunt.HuntDone:
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
-				fmt.Sprintf("  ✓ %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+			line := fmt.Sprintf("  ✓ %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(line))
+			omegaLog("[HUNT] " + line)
 		case hunt.HuntPartial:
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
 				fmt.Sprintf("  ⚡ %-16s partial output kept", status.Tool)))
 		case hunt.HuntFailed:
-			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
-				fmt.Sprintf("  ✗ %-16s failed — %s", status.Tool, status.Reason)))
+			line := fmt.Sprintf("  ✗ %-16s failed — %s", status.Tool, status.Reason)
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render(line))
+			omegaLog("[HUNT] " + line)
 		case hunt.HuntKindSkipped:
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)))
+			line := fmt.Sprintf("  - %-16s skipped — %s", status.Tool, status.Reason)
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(line))
+			omegaLog("[HUNT] " + line)
 		case hunt.HuntRetry:
 			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
 				fmt.Sprintf("  ↻ %-16s %s", status.Tool, status.Reason)))

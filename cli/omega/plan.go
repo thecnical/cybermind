@@ -749,10 +749,64 @@ fmt.Println(s(dim, "    Why:     ") + s(lipgloss.Color("#AAAAAA"), phase.Why))
 if phase.ExpectedFindings != "" {
 fmt.Println(s(dim, "    Expect:  ") + s(orange, phase.ExpectedFindings))
 }
+// Show specific commands that will run
+if len(phase.ToolsRun) > 0 {
+fmt.Println(s(dim, "    Commands:"))
+for _, tool := range phase.ToolsRun {
+cmd := getToolCommand(tool, target)
+if cmd != "" {
+fmt.Println(s(lipgloss.Color("#555555"), "      $ "+cmd))
+}
+}
+}
 }
 
 fmt.Println()
 fmt.Println(s(lipgloss.Color("#333333"), "  "+strings.Repeat("─", 60)))
+
+fmt.Println()
+fmt.Println(bold(lipgloss.Color("#FF6600"), "  🧠 HACKER BRAIN — 6-ANGLE ATTACK ANALYSIS:"))
+fmt.Println(s(lipgloss.Color("#333333"), "  "+strings.Repeat("─", 60)))
+fmt.Println()
+angles := []struct{ icon, angle, desc string }{
+{"🔍", "Recon Angle", "Map full attack surface: subdomains, endpoints, params, JS files"},
+{"🔐", "Auth Angle", "Test login flows, JWT, OAuth, session fixation, password reset"},
+{"💉", "Injection Angle", "SQLi, XSS, SSTI, XXE, SSRF on all input vectors"},
+{"🔑", "Access Control", "IDOR, privilege escalation, horizontal/vertical auth bypass"},
+{"⚙️", "Business Logic", "Race conditions, price manipulation, workflow bypass"},
+{"🌐", "Infrastructure", "Exposed APIs, misconfigs, CVEs, subdomain takeover"},
+}
+for _, a := range angles {
+fmt.Println(s(cyan, fmt.Sprintf("  %s %s:", a.icon, a.angle)))
+fmt.Println(s(lipgloss.Color("#AAAAAA"), "    → "+a.desc))
+fmt.Println()
+}
+}
+
+// getToolCommand returns a representative command string for a given tool and target.
+func getToolCommand(tool, target string) string {
+cmds := map[string]string{
+"subfinder":   "subfinder -d " + target + " -silent -all",
+"amass":       "amass enum -passive -d " + target,
+"reconftw":    "reconftw.sh -d " + target + " -s",
+"nmap":        "nmap -sV -sC -T4 --top-ports 1000 " + target,
+"rustscan":    "rustscan -a " + target + " --ulimit 5000 -- -sV",
+"httpx":       "httpx -l subdomains.txt -title -tech-detect -status-code",
+"nuclei":      "nuclei -u " + target + " -t cves/ -t exposures/ -severity critical,high,medium",
+"dalfox":      "dalfox url https://" + target + " --deep-domxss",
+"sqlmap":      "sqlmap -u https://" + target + " --batch --level=3 --risk=2",
+"gau":         "gau " + target + " | tee urls.txt",
+"waybackurls": "waybackurls " + target + " | tee wayback.txt",
+"paramspider": "paramspider -d " + target,
+"ffuf":        "ffuf -u https://" + target + "/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt",
+"katana":      "katana -u https://" + target + " -d 5 -jc",
+"trufflehog":  "trufflehog git https://github.com/" + target,
+"shodan":      "shodan host " + target,
+}
+if cmd, ok := cmds[tool]; ok {
+return cmd
+}
+return ""
 }
 
 // DisplayPlanRaw renders a raw text plan (when JSON parsing failed)
