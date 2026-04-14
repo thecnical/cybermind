@@ -2198,22 +2198,19 @@ func main() {
 			{"ligolo-ng", "exploit", "go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest", true, false},
 			{"iodine", "exploit", "sudo apt install -y iodine", false, false},
 			{"evilginx2", "exploit", "go install github.com/kgretzky/evilginx2@latest", true, false},
-			// ── NEW 2025-2026 Kali Tools — Exploit/Post-Exploit ────────────────
-			{"adaptixc2", "exploit", "sudo apt install -y adaptixc2", false, false},     // Post-exploit C2 framework (Kali 2026.1)
-			{"atomic-operator", "exploit", "sudo apt install -y atomic-operator", false, false}, // Atomic Red Team tests (Kali 2026.1)
-			{"fluxion", "exploit", "sudo apt install -y fluxion", false, false},         // Social-engineering/evil-twin (Kali 2026.1)
-			{"rubeus", "exploit", "sudo apt install -y rubeus", false, false},           // Kerberos attacks (Kali 2025.2)
-			{"ldeep", "exploit", "sudo apt install -y ldeep", false, false},             // LDAP enumeration (Kali 2025.2)
-			{"donut-shellcode", "exploit", "sudo apt install -y donut-shellcode", false, false}, // Shellcode gen (Kali 2025.2)
-			{"bopscrk", "exploit", "sudo apt install -y bopscrk", false, false},         // Smart wordlist gen (Kali 2025.2)
 			// ── Exploit Phase — C2 + Post-Exploit ──────────────────────────────
 			{"routersploit", "exploit", "pip3 install routersploit --break-system-packages", false, false}, // Router/IoT exploiter
 			{"empire", "exploit", "sudo apt install -y powershell-empire", false, false},                   // PowerShell C2 (Kali)
 			{"sliver", "exploit", "go install github.com/BishopFox/sliver/client@latest", true, false},     // Cross-platform C2
 			{"poshc2", "exploit", "pip3 install poshc2 --break-system-packages", false, false},             // PowerShell C2
-			// ── Web Exploit Tools ───────────────────────────────────────────────
-			{"commix", "exploit", "sudo apt install -y commix", false, false},           // Command injection exploiter
-			{"routersploit", "exploit", "pip3 install routersploit --break-system-packages", false, false}, // Router exploiter
+			// ── NEW 2025-2026 Kali Tools — Exploit/Post-Exploit ────────────────
+			{"adaptixc2", "exploit", "sudo apt install -y adaptixc2", false, false},
+			{"atomic-operator", "exploit", "sudo apt install -y atomic-operator", false, false},
+			{"fluxion", "exploit", "sudo apt install -y fluxion", false, false},
+			{"rubeus", "exploit", "sudo apt install -y rubeus", false, false},
+			{"ldeep", "exploit", "sudo apt install -y ldeep", false, false},
+			{"donut-shellcode", "exploit", "sudo apt install -y donut-shellcode", false, false},
+			{"bopscrk", "exploit", "sudo apt install -y bopscrk", false, false},
 		}
 
 		var missing []toolEntry
@@ -2483,6 +2480,67 @@ func main() {
 						cmd3.Stdout = os.Stdout
 						cmd3.Stderr = os.Stderr
 						installErr = cmd3.Run()
+					}
+				case "routersploit":
+					cmd2 := exec.Command("pip3", "install", "routersploit", "--break-system-packages", "-q")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					if err := cmd2.Run(); err != nil {
+						// fallback: git clone
+						exec.Command("sudo", "rm", "-rf", "/opt/routersploit").Run()
+						cloneCmd := exec.Command("git", "clone", "--depth=1", "https://github.com/threat9/routersploit", "/opt/routersploit")
+						cloneCmd.Stdout = os.Stdout
+						cloneCmd.Stderr = os.Stderr
+						if err2 := cloneCmd.Run(); err2 == nil {
+							exec.Command("pip3", "install", "-r", "/opt/routersploit/requirements.txt", "--break-system-packages", "-q").Run()
+							teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/routersploit")
+							teeCmd.Stdin = strings.NewReader("#!/bin/bash\npython3 /opt/routersploit/rsf.py \"$@\"\n")
+							teeCmd.Run()
+							exec.Command("sudo", "chmod", "+x", "/usr/local/bin/routersploit").Run()
+						} else {
+							installErr = err2
+						}
+					}
+				case "empire":
+					// Try apt first (Kali has powershell-empire)
+					cmd2 := exec.Command("sudo", "apt", "install", "-y", "powershell-empire")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					if err := cmd2.Run(); err != nil {
+						// fallback: pip3
+						cmd3 := exec.Command("pip3", "install", "empire-cli", "--break-system-packages", "-q")
+						cmd3.Stdout = os.Stdout
+						cmd3.Stderr = os.Stderr
+						installErr = cmd3.Run()
+					}
+				case "sliver":
+					// Install sliver C2 client via Go
+					cmd2 := exec.Command("go", "install", "github.com/BishopFox/sliver/client@latest")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					if err := cmd2.Run(); err != nil {
+						// fallback: download prebuilt binary
+						dlCmd := exec.Command("bash", "-c",
+							`SLIVER_URL=$(curl -s https://api.github.com/repos/BishopFox/sliver/releases/latest | grep browser_download_url | grep linux_amd64 | grep -v server | cut -d'"' -f4 | head -1) && `+
+								`curl -fsSL "$SLIVER_URL" -o /tmp/sliver-client && `+
+								`chmod +x /tmp/sliver-client && sudo mv /tmp/sliver-client /usr/local/bin/sliver`)
+						dlCmd.Stdout = os.Stdout
+						dlCmd.Stderr = os.Stderr
+						installErr = dlCmd.Run()
+					} else {
+						symlinkGoTool("sliver")
+					}
+				case "poshc2":
+					cmd2 := exec.Command("pip3", "install", "poshc2", "--break-system-packages", "-q")
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					if err := cmd2.Run(); err != nil {
+						// fallback: curl installer
+						dlCmd := exec.Command("bash", "-c",
+							"curl -sSL https://raw.githubusercontent.com/nettitude/PoshC2/master/Install.sh | bash")
+						dlCmd.Stdout = os.Stdout
+						dlCmd.Stderr = os.Stderr
+						installErr = dlCmd.Run()
 					}
 				default:
 					if t.isCargo {
