@@ -15,6 +15,7 @@ import (
 
 	"cybermind-cli/abhimanyu"
 	"cybermind-cli/api"
+	"cybermind-cli/brain"
 	"cybermind-cli/hunt"
 	"cybermind-cli/recon"
 	"cybermind-cli/storage"
@@ -166,7 +167,10 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /payload <os> <arch>") + d.Render("  → AI payload generator (no msfvenom)"))
 	fmt.Println(g.Render("  cybermind /cve <CVE-ID>") + d.Render("         → CVE intelligence from NVD"))
 	fmt.Println(g.Render("  cybermind /cve --latest") + d.Render("         → latest critical CVEs (7 days)"))
-	fmt.Println(g.Render("  cybermind /wordlist <target>") + d.Render("    → custom wordlist generator"))
+	fmt.Println(g.Render("  cybermind /wordlist <target>") + d.Render("    → smart target-aware wordlist generator"))
+	fmt.Println(g.Render("  cybermind /platform --setup") + d.Render("     → save HackerOne/Bugcrowd credentials"))
+	fmt.Println(g.Render("  cybermind /brain --target <t>") + d.Render("   → view memory + learned patterns"))
+	fmt.Println(g.Render("  cybermind /novel <target>") + d.Render("       → novel attack engine (cache poison, smuggling, race)"))
 	fmt.Println(g.Render("  cybermind /doctor") + d.Render("               → update CLI + check/install tools"))
 	fmt.Println(g.Render("  cybermind report") + d.Render("                → generate pentest report from history"))
 	fmt.Println(g.Render("  cybermind --local") + d.Render("               → use local Ollama AI (CYBERMIND_LOCAL=true)"))
@@ -523,6 +527,31 @@ func runAutoReconSilent(target string, requested []string) recon.ReconResult {
 		clean := utils.StripMarkdown(analysis)
 		printResult("Recon Analysis → "+target, clean)
 		_ = storage.AddEntry("/recon "+target, clean)
+	}
+
+	// ── Save to brain memory ──────────────────────────────────────────────
+	brain.RecordRun(target, technologies, ctx.WAFVendor, ctx.WAFDetected,
+		ctx.Subdomains, liveURLs, openPorts)
+
+	// ── JS Intelligence — scan JS files for secrets + endpoints ──────────
+	if len(liveURLs) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ JS Intelligence — scanning for secrets + hidden endpoints..."))
+		jsResult := brain.AnalyzeJSFiles(target, liveURLs)
+		if len(jsResult.Findings) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+				fmt.Sprintf("  🔑 JS Intelligence: %d findings (%d secrets, %d endpoints)",
+					len(jsResult.Findings), len(jsResult.Secrets), len(jsResult.Endpoints))))
+			for _, f := range jsResult.Findings {
+				if f.Type == "secret" {
+					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+						fmt.Sprintf("  [SECRET] %s in %s", f.Value, f.Source)))
+				}
+			}
+			// Add discovered endpoints to context for hunt phase
+			if result.Context != nil {
+				result.Context.LiveURLs = append(result.Context.LiveURLs, jsResult.Endpoints...)
+			}
+		}
 	}
 
 	return result
@@ -1972,6 +2001,7 @@ func main() {
 			"scan": true, "portscan": true, "osint": true,
 			"payload": true, "cve": true, "wordlist": true,
 			"doctor": true, "uninstall": true,
+			"platform": true, "brain": true, // platform creds + memory work everywhere
 		}
 		if linuxOnlyCmds[normalized] || (strings.HasPrefix(cmd, "/") && !crossPlatformSlashCmds[normalized]) {
 			printError("This command is only available on Linux/Kali.")
@@ -3135,11 +3165,16 @@ rm -f /tmp/evilginx2.tar.gz`)
 			os.Exit(1)
 		}
 
-		// ── Parse flags: --auto-target, --focus, --skill ──────────────────
+		// ── Parse flags ───────────────────────────────────────────────────
 		autoTarget := false
 		focusTypes := ""
 		skillLevel := "intermediate"
 		planTarget := ""
+		execMode := "deep"       // quick | deep | overnight
+		continuous := false      // --continuous: loop forever
+		platformHandle := ""     // --platform hackerone:handle
+		autoSubmit := false      // --auto-submit: submit bugs automatically
+		novelAttacks := true     // --no-novel: skip novel attack engine
 
 		for i := 1; i < len(args); i++ {
 			switch args[i] {
@@ -3155,12 +3190,35 @@ rm -f /tmp/evilginx2.tar.gz`)
 					skillLevel = args[i+1]
 					i++
 				}
+			case "--mode":
+				if i+1 < len(args) {
+					execMode = args[i+1]
+					i++
+				}
+			case "--continuous":
+				continuous = true
+			case "--platform":
+				if i+1 < len(args) {
+					platformHandle = args[i+1]
+					i++
+				}
+			case "--auto-submit":
+				autoSubmit = true
+			case "--no-novel":
+				novelAttacks = false
 			default:
 				if !strings.HasPrefix(args[i], "--") && planTarget == "" {
 					planTarget = args[i]
 				}
 			}
 		}
+
+		// Set execution mode env vars for all tools to read
+		brain.SetModeEnv(brain.ExecutionMode(execMode))
+		if focusTypes != "" {
+			os.Setenv("CYBERMIND_FOCUS_BUGS", focusTypes)
+		}
+		_ = novelAttacks // used in runOmegaPlan
 
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
@@ -3222,17 +3280,21 @@ rm -f /tmp/evilginx2.tar.gz`)
 			}
 		}
 
-		if planTarget == "" {
+		if planTarget == "" && !continuous {
 			printError("Usage: cybermind /plan <target>")
 			printError("       cybermind /plan --auto-target")
 			printError("       cybermind /plan example.com --focus xss,idor")
 			printError("       cybermind /plan --auto-target --skill beginner --focus xss")
+			printError("       cybermind /plan --auto-target --mode overnight --continuous")
+			printError("       cybermind /plan --auto-target --auto-submit --platform hackerone:shopify")
 			os.Exit(1)
 		}
 
-		if err := recon.ValidateTarget(planTarget); err != nil {
-			printError(err.Error())
-			os.Exit(1)
+		if planTarget != "" {
+			if err := recon.ValidateTarget(planTarget); err != nil {
+				printError(err.Error())
+				os.Exit(1)
+			}
 		}
 
 		// Pass focus types via env for plan mode to use
@@ -3240,6 +3302,91 @@ rm -f /tmp/evilginx2.tar.gz`)
 			os.Setenv("CYBERMIND_FOCUS_BUGS", focusTypes)
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
 				fmt.Sprintf("  🎯 Focus: %s vulnerabilities", focusTypes)))
+		}
+
+		// Show memory summary for this target
+		if planTarget != "" {
+			summary := brain.GetMemorySummary(planTarget)
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(summary))
+		}
+
+		// Show WAF bypass strategy if we have prior memory
+		if planTarget != "" {
+			mem := brain.LoadTarget(planTarget)
+			if mem.WAFDetected && mem.WAFVendor != "" {
+				strategy := brain.GetWAFBypassStrategy(mem.WAFVendor)
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+					brain.FormatWAFBypassReport(strategy)))
+			}
+		}
+
+		// ── Continuous loop mode ──────────────────────────────────────────
+		if continuous {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(
+				fmt.Sprintf("  🔄 CONTINUOUS MODE — Mode: %s | Auto-submit: %v", execMode, autoSubmit)))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Press Ctrl+C to stop. Results saved to ~/.cybermind/brain/"))
+			fmt.Println()
+
+			cfg := brain.ExecutionConfig{
+				Mode:           brain.ExecutionMode(execMode),
+				Target:         planTarget,
+				AutoSubmit:     autoSubmit,
+				FocusTypes:     strings.Split(focusTypes, ","),
+				SkillLevel:     skillLevel,
+				ContinuousLoop: true,
+				MaxTargets:     0, // unlimited
+			}
+			if platformHandle != "" {
+				parts := strings.SplitN(platformHandle, ":", 2)
+				if len(parts) == 2 {
+					cfg.Platform = parts[0]
+					cfg.ProgramHandle = parts[1]
+				} else {
+					cfg.Platform = "hackerone"
+					cfg.ProgramHandle = platformHandle
+				}
+			}
+
+			session := brain.NewContinuousSession(cfg)
+			session.Running = true
+			var testedTargets []string
+
+			for session.ShouldContinue() {
+				// Pick next target
+				nextTarget := brain.GetNextTarget(cfg, testedTargets)
+				if nextTarget == "" {
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+						"  All known targets tested. Waiting 1 hour before retry..."))
+					time.Sleep(1 * time.Hour)
+					testedTargets = []string{} // reset
+					continue
+				}
+
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(
+					fmt.Sprintf("  ⚡ [Run %d] Target: %s", session.TotalRuns+1, nextTarget)))
+				session.Log(fmt.Sprintf("Starting run %d on %s", session.TotalRuns+1, nextTarget))
+
+				runOmegaPlan(nextTarget, localMode)
+				testedTargets = append(testedTargets, nextTarget)
+				session.TotalRuns++
+				session.TargetsDone = append(session.TargetsDone, nextTarget)
+
+				// Wait between targets
+				waitTime := 5 * time.Minute
+				if execMode == "overnight" {
+					waitTime = 30 * time.Minute
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+					fmt.Sprintf("  ⏱  Waiting %s before next target...", waitTime)))
+				time.Sleep(waitTime)
+			}
+
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
+				session.PrintSessionSummary()))
+			return
 		}
 
 		runOmegaPlan(planTarget, localMode)
@@ -3348,20 +3495,20 @@ rm -f /tmp/evilginx2.tar.gz`)
 		}
 
 	case "/wordlist":
-		// Wordlist generator — works on all OS
+		// Smart target-aware wordlist generator
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
 		}
 		if !localMode && !requireAPIKey() {
 			os.Exit(1)
 		}
-		target := ""
-		wordlistType := "passwords"
+		wlTarget := ""
+		wordlistType := "dirs"
 		for i := 1; i < len(args); i++ {
 			switch args[i] {
 			case "--target":
 				if i+1 < len(args) {
-					target = args[i+1]
+					wlTarget = args[i+1]
 					i++
 				}
 			case "--type":
@@ -3369,13 +3516,273 @@ rm -f /tmp/evilginx2.tar.gz`)
 					wordlistType = args[i+1]
 					i++
 				}
+			default:
+				if !strings.HasPrefix(args[i], "--") && wlTarget == "" {
+					wlTarget = args[i]
+				}
 			}
 		}
-		if target == "" {
-			printError("Usage: cybermind /wordlist --target <domain> [--type passwords|usernames|subdomains]")
+		if wlTarget == "" {
+			printError("Usage: cybermind /wordlist <target> [--type dirs|params|subdomains|passwords|api-endpoints]")
 			os.Exit(1)
 		}
-		runWordlist(target, wordlistType, localMode)
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render("  📝 SMART WORDLIST GENERATOR — " + wlTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Type: %s | Target-aware: tech stack + company mutations + patterns", wordlistType)))
+		fmt.Println()
+
+		// Use brain smart wordlist (target-aware)
+		outFile, err := brain.GenerateTargetWordlistFile(wlTarget, wordlistType)
+		if err != nil {
+			printError("Smart wordlist failed: " + err.Error())
+			// Fallback to AI wordlist
+			runWordlist(wlTarget, wordlistType, localMode)
+		} else {
+			// Count words
+			data, _ := os.ReadFile(outFile)
+			wordCount := strings.Count(string(data), "\n") + 1
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
+				fmt.Sprintf("  ✓ Smart wordlist saved: %s (%d words)", outFile, wordCount)))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Generated from: tech stack + company mutations + type patterns + date mutations"))
+
+			// Also generate AI wordlist and merge
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Enhancing with AI-generated words..."))
+			runWordlist(wlTarget, wordlistType, localMode)
+		}
+
+	case "/platform":
+		// Platform credentials management (HackerOne / Bugcrowd)
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🎯 PLATFORM CREDENTIALS — HackerOne / Bugcrowd"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		subCmd := ""
+		if len(args) > 1 {
+			subCmd = args[1]
+		}
+
+		switch subCmd {
+		case "--setup":
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Setting up platform credentials..."))
+			fmt.Println()
+
+			var creds brain.PlatformCredentials
+
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  HackerOne username: "))
+			fmt.Scanln(&creds.H1Username)
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  HackerOne API token: "))
+			fmt.Scanln(&creds.H1Token)
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Bugcrowd email (optional): "))
+			fmt.Scanln(&creds.BCEmail)
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Bugcrowd API token (optional): "))
+			fmt.Scanln(&creds.BCToken)
+
+			if err := brain.SaveCredentials(creds); err != nil {
+				printError("Failed to save credentials: " + err.Error())
+				os.Exit(1)
+			}
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Credentials saved to ~/.cybermind/platform_creds.json"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Now run: cybermind /platform --programs"))
+
+		case "--programs":
+			creds, err := brain.LoadCredentials()
+			if err != nil {
+				printError("No credentials — run: cybermind /platform --setup")
+				os.Exit(1)
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Fetching HackerOne programs..."))
+			programs, err := brain.FetchH1Programs(creds)
+			if err != nil {
+				printError("Failed to fetch programs: " + err.Error())
+				os.Exit(1)
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Found %d programs:", len(programs))))
+			fmt.Println()
+			for i, p := range programs {
+				if i >= 20 {
+					break
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(fmt.Sprintf("  %d. %s (%s)", i+1, p.Name, p.Handle)))
+			}
+
+		case "--scope":
+			if len(args) < 3 {
+				printError("Usage: cybermind /platform --scope <program-handle>")
+				os.Exit(1)
+			}
+			handle := args[2]
+			creds, err := brain.LoadCredentials()
+			if err != nil {
+				printError("No credentials — run: cybermind /platform --setup")
+				os.Exit(1)
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Fetching scope for " + handle + "..."))
+			scope, err := brain.FetchH1ProgramScope(creds, handle)
+			if err != nil {
+				printError("Failed to fetch scope: " + err.Error())
+				os.Exit(1)
+			}
+			brain.SaveScope(scope)
+			expanded := brain.ExpandScope(scope, []string{})
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				brain.FormatScopeReport(scope, expanded)))
+
+		default:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Commands:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --setup              → save H1/BC credentials"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --programs           → list your programs"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --scope <handle>     → fetch program scope"))
+			fmt.Println()
+			if brain.HasCredentials() {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Credentials configured"))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  No credentials — run: cybermind /platform --setup"))
+			}
+		}
+
+	case "/brain":
+		// Memory system — view what CyberMind has learned
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).Render("  🧠 CYBERMIND BRAIN — Memory & Learning"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		subCmd := ""
+		brainTarget := ""
+		if len(args) > 1 {
+			subCmd = args[1]
+		}
+		if len(args) > 2 {
+			brainTarget = args[2]
+		}
+
+		switch subCmd {
+		case "--target":
+			if brainTarget == "" {
+				printError("Usage: cybermind /brain --target <domain>")
+				os.Exit(1)
+			}
+			mem := brain.LoadTarget(brainTarget)
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(brain.GetMemorySummary(brainTarget)))
+			fmt.Println()
+			if len(mem.BugsFound) > 0 {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(fmt.Sprintf("  Bugs found (%d):", len(mem.BugsFound))))
+				for _, b := range mem.BugsFound {
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Render(
+						fmt.Sprintf("  [%s] %s — %s", strings.ToUpper(b.Severity), b.Title, b.URL)))
+				}
+			}
+			if len(mem.PatternsWorked) > 0 {
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(fmt.Sprintf("  Patterns that worked (%d):", len(mem.PatternsWorked))))
+				for _, p := range mem.PatternsWorked {
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+						fmt.Sprintf("  [%.0f%%] %s: %s", p.SuccessRate*100, p.Type, p.Description)))
+				}
+			}
+
+		case "--global":
+			g := brain.LoadGlobal()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(fmt.Sprintf("  Total bugs found: %d", g.TotalBugsFound)))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(fmt.Sprintf("  Targets tested:   %d", g.TotalTargetsTested)))
+			if len(g.TargetStats) > 0 {
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  Top targets by bugs:"))
+				for target, count := range g.TargetStats {
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+						fmt.Sprintf("  %s: %d bugs", target, count)))
+				}
+			}
+
+		case "--clear":
+			if brainTarget == "" {
+				printError("Usage: cybermind /brain --clear <domain>")
+				os.Exit(1)
+			}
+			// Clear memory for a target
+			home, _ := os.UserHomeDir()
+			safe := strings.ReplaceAll(strings.ReplaceAll(brainTarget, ".", "_"), "/", "_")
+			memFile := home + "/.cybermind/brain/targets/" + safe + ".json"
+			if err := os.Remove(memFile); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Memory cleared for " + brainTarget))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  No memory found for " + brainTarget))
+			}
+
+		default:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Commands:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /brain --target <domain>  → view memory for target"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /brain --global           → global stats"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /brain --clear <domain>   → clear target memory"))
+		}
+
+	case "/novel":
+		// Novel attack engine — attacks that most tools miss
+		if runtime.GOOS != "linux" {
+			printError("/novel is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /novel <target>")
+			os.Exit(1)
+		}
+		novelTarget := args[1]
+		if err := recon.ValidateTarget(novelTarget); err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚡ NOVEL ATTACK ENGINE — " + novelTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Running attacks that most automated tools miss..."))
+		fmt.Println()
+
+		mem := brain.LoadTarget(novelTarget)
+		foundCount := 0
+
+		brain.RunNovelAttacks(novelTarget, mem.LiveURLs, func(result brain.NovelAttackResult) {
+			foundCount++
+			color := yellow
+			if result.Severity == "critical" {
+				color = red
+			} else if result.Severity == "high" {
+				color = lipgloss.Color("#FF6600")
+			}
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(color).Render(
+				fmt.Sprintf("  🎯 [%s] %s", strings.ToUpper(result.Severity), result.AttackType)))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  URL: " + result.URL))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("  Evidence: " + result.Evidence))
+			if result.PoC != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  PoC:"))
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA")).MarginLeft(4).Render(result.PoC))
+			}
+			fmt.Println()
+
+			// Save to brain memory
+			brain.RecordBug(novelTarget, brain.Bug{
+				Title:    result.AttackType,
+				Type:     strings.ToLower(strings.ReplaceAll(result.AttackType, " ", "-")),
+				URL:      result.URL,
+				Severity: result.Severity,
+				Evidence: result.Evidence,
+				PoC:      result.PoC,
+				Tool:     "novel-engine",
+				Verified: true,
+			})
+		})
+
+		if foundCount == 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  No novel vulnerabilities found on this target."))
+		} else {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
+				fmt.Sprintf("  ✓ Found %d novel vulnerabilities!", foundCount)))
+		}
+		fmt.Println()
 
 	case "report":
 		// Report writer — works on all OS
