@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/install.sh",                  "destination": "/api/install-sh" },
+    { "source": "/install.ps1",                 "destination": "/api/install-ps1" },
+    { "source": "/cybermind-linux-amd64",       "destination": "/api/binary?file=cybermind-linux-amd64" },
+    { "source": "/cybermind-linux-arm64",       "destination": "/api/binary?file=cybermind-linux-arm64" },
+    { "source": "/cybermind-darwin-amd64",      "destination": "/api/binary?file=cybermind-darwin-amd64" },
+    { "source": "/cybermind-darwin-arm64",      "destination": "/api/binary?file=cybermind-darwin-arm64" },
+    { "source": "/cybermind-windows-amd64.exe", "destination": "/api/binary?file=cybermind-windows-amd64.exe" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    }
+  ]
+}
