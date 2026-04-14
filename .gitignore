@@ -8,13 +8,11 @@ backend.env
 *.env
 
 # Build artifacts
-*.exe
 *.out
 dist/
 build/
-cybermind
-cybermind-linux-amd64
-cybermind-windows-amd64.exe
+# local dev binary only (not the release binaries)
+cli/cybermind
 
 # Local history
 .cybermind/
