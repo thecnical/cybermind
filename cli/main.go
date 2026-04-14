@@ -1085,29 +1085,33 @@ func runSelfUpdate() {
 	red2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444"))
 	yellow2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
 
+	// GitHub raw content — always latest from main branch (no Vercel cache)
+	const ghRaw = "https://raw.githubusercontent.com/thecnical/cybermind/main/cli/"
+
 	// Determine download URL based on OS/arch
 	var binaryURL string
 	switch runtime.GOOS {
 	case "linux":
 		if runtime.GOARCH == "arm64" {
-			binaryURL = "https://cybermindcli1.vercel.app/cybermind-linux-arm64"
+			binaryURL = ghRaw + "cybermind-linux-arm64"
 		} else {
-			binaryURL = "https://cybermindcli1.vercel.app/cybermind-linux-amd64"
+			binaryURL = ghRaw + "cybermind-linux-amd64"
 		}
 	case "darwin":
 		if runtime.GOARCH == "arm64" {
-			binaryURL = "https://cybermindcli1.vercel.app/cybermind-darwin-arm64"
+			binaryURL = ghRaw + "cybermind-darwin-arm64"
 		} else {
-			binaryURL = "https://cybermindcli1.vercel.app/cybermind-darwin-amd64"
+			binaryURL = ghRaw + "cybermind-darwin-amd64"
 		}
 	case "windows":
-		binaryURL = "https://cybermindcli1.vercel.app/cybermind-windows-amd64.exe"
+		binaryURL = ghRaw + "cybermind-windows-amd64.exe"
 	default:
 		fmt.Println(dim2.Render("  Self-update not supported on " + runtime.GOOS))
 		return
 	}
 
-	fmt.Println(dim2.Render("  Downloading latest CyberMind CLI..."))
+	fmt.Println(dim2.Render("  Downloading latest CyberMind CLI from GitHub..."))
+	fmt.Println(dim2.Render("  Source: " + binaryURL))
 
 	// Get current executable path
 	exePath, err := os.Executable()
