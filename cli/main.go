@@ -1396,11 +1396,14 @@ func aptInstall(packages ...string) error {
 	args := append([]string{"apt-get", "install", "-y", "-qq",
 		"-o", "Dpkg::Options::=--force-confdef",
 		"-o", "Dpkg::Options::=--force-confold",
+		"-o", "Dpkg::Options::=--force-confnew",
 	}, packages...)
 	cmd := exec.Command("sudo", args...)
 	cmd.Env = append(os.Environ(),
 		"DEBIAN_FRONTEND=noninteractive",
 		"DEBCONF_NONINTERACTIVE_SEEN=true",
+		"DEBCONF_FRONTEND=noninteractive",
+		"APT_LISTCHANGES_FRONTEND=none",
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1650,24 +1653,62 @@ x8 --version`)
 }
 
 // installRustscan installs rustscan via .deb release (most reliable on Kali).
+// Uses bee-san/RustScan 2.4.1 (latest stable) with fallback to latest release.
 func installRustscan() error {
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Downloading rustscan .deb from GitHub releases..."))
-	dlCmd := exec.Command("bash", "-c",
-		`LATEST=$(curl -s https://api.github.com/repos/RustScan/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4) && `+
-			`if [ -n "$LATEST" ]; then curl -sL "$LATEST" -o /tmp/rustscan.deb && sudo dpkg -i /tmp/rustscan.deb; `+
-			`else echo "No .deb found"; exit 1; fi`)
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Downloading RustScan 2.4.1 .deb..."))
+
+	// Method 1: Direct 2.4.1 .deb (known good URL)
+	knownURL := "https://github.com/bee-san/RustScan/releases/download/2.4.1/rustscan_2.4.1_amd64.deb"
+	dlCmd := exec.Command("bash", "-c", fmt.Sprintf(
+		`set -e
+DEBIAN_FRONTEND=noninteractive
+curl -fsSL "%s" -o /tmp/rustscan.deb 2>/dev/null || wget -q "%s" -O /tmp/rustscan.deb
+DEBIAN_FRONTEND=noninteractive sudo dpkg -i /tmp/rustscan.deb
+sudo apt-get install -f -y -qq -o Dpkg::Options::=--force-confdef 2>/dev/null || true
+rm -f /tmp/rustscan.deb`, knownURL, knownURL))
+	dlCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 	dlCmd.Stdout = os.Stdout
 	dlCmd.Stderr = os.Stderr
 	if err := dlCmd.Run(); err == nil {
+		if _, e := exec.LookPath("rustscan"); e == nil {
+			return nil
+		}
+	}
+
+	// Method 2: Latest release .deb from GitHub API
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Trying latest RustScan release..."))
+	latestCmd := exec.Command("bash", "-c",
+		`set -e
+DEBIAN_FRONTEND=noninteractive
+LATEST=$(curl -s https://api.github.com/repos/bee-san/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4 | head -1)
+if [ -z "$LATEST" ]; then
+  LATEST=$(curl -s https://api.github.com/repos/RustScan/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4 | head -1)
+fi
+if [ -n "$LATEST" ]; then
+  curl -fsSL "$LATEST" -o /tmp/rustscan.deb
+  DEBIAN_FRONTEND=noninteractive sudo dpkg -i /tmp/rustscan.deb
+  sudo apt-get install -f -y -qq 2>/dev/null || true
+  rm -f /tmp/rustscan.deb
+fi`)
+	latestCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+	latestCmd.Stdout = os.Stdout
+	latestCmd.Stderr = os.Stderr
+	if err := latestCmd.Run(); err == nil {
 		return nil
 	}
-	// Fallback: cargo install
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ .deb failed, trying cargo install rustscan..."))
-	aptInstall("libssl-dev", "pkg-config", "cargo")
-	cargoCmd := exec.Command("cargo", "install", "rustscan")
-	cargoCmd.Stdout = os.Stdout
-	cargoCmd.Stderr = os.Stderr
-	return cargoCmd.Run()
+
+	// Method 3: snap install (no compilation needed)
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Trying snap install rustscan..."))
+	snapCmd := exec.Command("bash", "-c", "sudo snap install rustscan 2>/dev/null && sudo ln -sf /snap/bin/rustscan /usr/local/bin/rustscan 2>/dev/null || true")
+	snapCmd.Stdout = os.Stdout
+	snapCmd.Stderr = os.Stderr
+	if err := snapCmd.Run(); err == nil {
+		if _, e := exec.LookPath("rustscan"); e == nil {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("rustscan install failed — try manually: sudo dpkg -i /tmp/rustscan.deb")
 }
 
 // updateAllTools silently updates all installed tools to latest versions.
@@ -2139,9 +2180,21 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ② Checking recon + hunt tools..."))
 		fmt.Println()
 
-		// Set non-interactive mode for ALL apt/dpkg operations — no dialogs ever
+		// ── Pre-seed ALL debconf dialogs so NOTHING ever prompts ─────────────
+		// This handles krb5-config, postfix, tzdata, neo4j, etc.
 		os.Setenv("DEBIAN_FRONTEND", "noninteractive")
 		os.Setenv("DEBCONF_NONINTERACTIVE_SEEN", "true")
+		preseedCmd := exec.Command("bash", "-c", `
+			export DEBIAN_FRONTEND=noninteractive
+			echo "krb5-config krb5-config/default_realm string CYBERMIND.LOCAL" | debconf-set-selections 2>/dev/null || true
+			echo "krb5-config krb5-config/kerberos_servers string localhost" | debconf-set-selections 2>/dev/null || true
+			echo "krb5-config krb5-config/admin_server string localhost" | debconf-set-selections 2>/dev/null || true
+			echo "postfix postfix/mailname string cybermind.local" | debconf-set-selections 2>/dev/null || true
+			echo "postfix postfix/main_mailer_type string 'No configuration'" | debconf-set-selections 2>/dev/null || true
+			echo "tzdata tzdata/Areas select Etc" | debconf-set-selections 2>/dev/null || true
+			echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections 2>/dev/null || true
+		`)
+		preseedCmd.Run() // ignore errors — debconf-set-selections may not exist on all systems
 
 		type toolEntry struct {
 			name    string
