@@ -1922,7 +1922,7 @@ func main() {
 		crossPlatformSlashCmds := map[string]bool{
 			"scan": true, "portscan": true, "osint": true,
 			"payload": true, "cve": true, "wordlist": true,
-			"doctor": true, // /doctor runs self-update on all platforms
+			"doctor": true, "uninstall": true,
 		}
 		if linuxOnlyCmds[normalized] || (strings.HasPrefix(cmd, "/") && !crossPlatformSlashCmds[normalized]) {
 			printError("This command is only available on Linux/Kali.")
