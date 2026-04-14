@@ -1410,10 +1410,26 @@ var pipPackageName = map[string]string{
 	"h8mail":           "h8mail",
 }
 
+// aptInstall runs apt-get install non-interactively — no debconf dialogs ever.
+func aptInstall(packages ...string) error {
+	args := append([]string{"apt-get", "install", "-y", "-qq",
+		"-o", "Dpkg::Options::=--force-confdef",
+		"-o", "Dpkg::Options::=--force-confold",
+	}, packages...)
+	cmd := exec.Command("sudo", args...)
+	cmd.Env = append(os.Environ(),
+		"DEBIAN_FRONTEND=noninteractive",
+		"DEBCONF_NONINTERACTIVE_SEEN=true",
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // ensurePipx installs pipx if missing and ensures /usr/local/bin is in pipx path.
 func ensurePipx() {
 	if _, err := exec.LookPath("pipx"); err != nil {
-		exec.Command("sudo", "apt", "install", "-y", "pipx", "python3-venv").Run()
+		aptInstall("pipx", "python3-venv")
 	}
 	// Set PIPX_BIN_DIR so binaries land in /usr/local/bin (accessible system-wide)
 	os.Setenv("PIPX_BIN_DIR", "/usr/local/bin")
@@ -1491,7 +1507,7 @@ func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Cloning %s from GitHub...", name)))
 
 	// Ensure python3-venv is available
-	exec.Command("sudo", "apt", "install", "-y", "python3-venv", "python3-pip", "git").Run()
+	aptInstall("python3-venv", "python3-pip", "git")
 
 	exec.Command("sudo", "rm", "-rf", installDir).Run()
 	cloneCmd := exec.Command("git", "clone", "--depth=1", repoURL, installDir)
@@ -1505,7 +1521,7 @@ func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 	venvDir := installDir + "/.venv"
 	if err := exec.Command("python3", "-m", "venv", venvDir).Run(); err != nil {
 		// fallback: system venv
-		exec.Command("sudo", "apt", "install", "-y", "python3-venv").Run()
+		aptInstall("python3-venv")
 		exec.Command("python3", "-m", "venv", venvDir).Run()
 	}
 
@@ -1671,7 +1687,7 @@ func installRustscan() error {
 	}
 	// Fallback: cargo install
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ .deb failed, trying cargo install rustscan..."))
-	exec.Command("sudo", "apt", "install", "-y", "libssl-dev", "pkg-config", "cargo").Run()
+	aptInstall("libssl-dev", "pkg-config", "cargo")
 	cargoCmd := exec.Command("cargo", "install", "rustscan")
 	cargoCmd.Stdout = os.Stdout
 	cargoCmd.Stderr = os.Stderr
@@ -2147,6 +2163,10 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ② Checking recon + hunt tools..."))
 		fmt.Println()
 
+		// Set non-interactive mode for ALL apt/dpkg operations — no dialogs ever
+		os.Setenv("DEBIAN_FRONTEND", "noninteractive")
+		os.Setenv("DEBCONF_NONINTERACTIVE_SEEN", "true")
+
 		type toolEntry struct {
 			name    string
 			mode    string
@@ -2384,7 +2404,7 @@ func main() {
 				case "rustscan":
 					installErr = installRustscan()
 				case "naabu":
-					exec.Command("sudo", "apt", "install", "-y", "libpcap-dev").Run()
+					aptInstall("libpcap-dev")
 					cmd2 := exec.Command("go", "install", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest")
 					cmd2.Stdout = os.Stdout
 					cmd2.Stderr = os.Stderr
@@ -2405,25 +2425,13 @@ func main() {
 				case "h8mail":
 					installErr = installPythonPipTool("h8mail")
 				case "exiftool":
-					cmd2 := exec.Command("sudo", "apt", "install", "-y", "libimage-exiftool-perl")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					installErr = cmd2.Run()
+					installErr = aptInstall("libimage-exiftool-perl")
 				case "metagoofil":
-					cmd2 := exec.Command("sudo", "apt", "install", "-y", "metagoofil")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					installErr = cmd2.Run()
+					installErr = aptInstall("metagoofil")
 				case "spiderfoot":
-					cmd2 := exec.Command("sudo", "apt", "install", "-y", "spiderfoot")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					installErr = cmd2.Run()
+					installErr = aptInstall("spiderfoot")
 				case "recon-ng":
-					cmd2 := exec.Command("sudo", "apt", "install", "-y", "recon-ng")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					installErr = cmd2.Run()
+					installErr = aptInstall("recon-ng")
 				case "sprayhound":
 					installErr = installPythonPipTool("sprayhound")
 				case "certipy":
@@ -2462,7 +2470,7 @@ func main() {
 					if err := cloneCmd.Run(); err != nil {
 						installErr = err
 					} else {
-						exec.Command("sudo", "apt", "install", "-y", "ruby").Run()
+						aptInstall("ruby")
 						teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/xxeinjector")
 						teeCmd.Stdin = strings.NewReader("#!/bin/bash\nruby /opt/xxeinjector/XXEinjector.rb \"$@\"\n")
 						teeCmd.Run()
@@ -2508,18 +2516,15 @@ func main() {
 					installErr = cmd2.Run()
 				case "bloodhound-python":
 					installErr = installPythonPipTool("bloodhound-python") // maps to bloodhound pkg
-					exec.Command("sudo", "apt", "install", "-y", "neo4j").Run()
+					aptInstall("neo4j")
 				case "evil-winrm":
-					exec.Command("sudo", "apt", "install", "-y", "ruby", "ruby-dev").Run()
+					aptInstall("ruby", "ruby-dev")
 					cmd2 := exec.Command("sudo", "gem", "install", "evil-winrm")
 					cmd2.Stdout = os.Stdout
 					cmd2.Stderr = os.Stderr
 					installErr = cmd2.Run()
 				case "impacket-secretsdump":
-					cmd2 := exec.Command("sudo", "apt", "install", "-y", "python3-impacket")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					if err := cmd2.Run(); err != nil {
+					if err := aptInstall("python3-impacket"); err != nil {
 						cmd3 := exec.Command("pip3", "install", "impacket", "--break-system-packages", "-q")
 						cmd3.Stdout = os.Stdout
 						cmd3.Stderr = os.Stderr
@@ -2547,10 +2552,7 @@ func main() {
 					}
 				case "empire":
 					// Try apt first (Kali has powershell-empire)
-					cmd2 := exec.Command("sudo", "apt", "install", "-y", "powershell-empire")
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					if err := cmd2.Run(); err != nil {
+					if err := aptInstall("powershell-empire"); err != nil {
 						// fallback: pip3
 						cmd3 := exec.Command("pip3", "install", "empire-cli", "--break-system-packages", "-q")
 						cmd3.Stdout = os.Stdout
@@ -2588,9 +2590,9 @@ func main() {
 					}
 				default:
 					if t.isCargo {
-						exec.Command("sudo", "apt", "install", "-y", "libssl-dev", "pkg-config").Run()
+						aptInstall("libssl-dev", "pkg-config")
 						if _, cargoErr := exec.LookPath("cargo"); cargoErr != nil {
-							exec.Command("sudo", "apt", "install", "-y", "cargo").Run()
+							aptInstall("cargo")
 						}
 						cmd2 := exec.Command("cargo", "install", t.name)
 						cmd2.Stdout = os.Stdout
@@ -2613,10 +2615,28 @@ func main() {
 							symlinkGoTool(t.name)
 						}
 					} else {
-						cmd2 := exec.Command("bash", "-c", t.install)
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						installErr = cmd2.Run()
+						// For apt-based tools, use aptInstall (non-interactive)
+						// For others (curl, git), use bash -c
+						if strings.HasPrefix(t.install, "sudo apt") {
+							// Extract package name from install string
+							parts := strings.Fields(t.install)
+							// parts: ["sudo","apt","install","-y","<pkg>"]
+							if len(parts) >= 5 {
+								installErr = aptInstall(parts[4:]...)
+							} else {
+								cmd2 := exec.Command("bash", "-c", t.install)
+								cmd2.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+								cmd2.Stdout = os.Stdout
+								cmd2.Stderr = os.Stderr
+								installErr = cmd2.Run()
+							}
+						} else {
+							cmd2 := exec.Command("bash", "-c", t.install)
+							cmd2.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+							cmd2.Stdout = os.Stdout
+							cmd2.Stderr = os.Stderr
+							installErr = cmd2.Run()
+						}
 					}
 				}
 
