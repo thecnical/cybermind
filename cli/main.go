@@ -2258,7 +2258,7 @@ func main() {
 			{"cariddi", "hunt", "go:github.com/edoardottt/cariddi/cmd/cariddi@latest", true, false},
 			{"subjs", "hunt", "go:github.com/lc/subjs@latest", true, false},
 			{"trufflehog", "hunt", "special:trufflehog", false, false},
-			{"mantra", "hunt", "go:github.com/MrEmpy/mantra@latest", true, false},
+			{"mantra", "hunt", "go:github.com/Brosck/mantra@latest", true, false},
 			// ── Hunt Phase 3 — Parameter Discovery ─────────────────────────────
 			{"paramspider", "hunt", "venv:https://github.com/devanshbatham/ParamSpider:/opt/ParamSpider:paramspider.py", false, false},
 			{"arjun", "hunt", "pipx:arjun", false, false},
@@ -2270,7 +2270,7 @@ func main() {
 			{"xsstrike", "hunt", "venv:https://github.com/s0md3v/XSStrike:/opt/XSStrike:xsstrike.py", false, false},
 			{"dalfox", "hunt", "go:github.com/hahwul/dalfox/v2@latest", true, false},
 			{"kxss", "hunt", "go:github.com/Emoe/kxss@latest", true, false},
-			{"bxss", "hunt", "go:github.com/ethicalhackingplayground/bxss@latest", true, false},
+			{"bxss", "hunt", "go:github.com/ethicalhackingplayground/bxss/v2/cmd/bxss@latest", true, false},
 			{"corsy", "hunt", "venv:https://github.com/s0md3v/Corsy:/opt/corsy:corsy.py", false, false},
 			{"beef-xss", "hunt", "apt:beef-xss", false, false},
 			// ── Hunt Phase 5 — Deep Vuln Scan ──────────────────────────────────
@@ -2300,6 +2300,7 @@ func main() {
 			{"bloodhound-python", "exploit", "pipx:bloodhound", false, false},
 			{"certipy", "exploit", "pipx:certipy-ad", false, false},
 			{"bloodyAD", "exploit", "pipx:bloodyad", false, false},
+			{"pywhisker", "exploit", "venv:https://github.com/ShutdownRepo/pywhisker:/opt/pywhisker:pywhisker.py", false, false},
 			// ── Lateral Movement ────────────────────────────────────────────────
 			{"crackmapexec", "exploit", "apt:crackmapexec", false, false},
 			{"netexec", "exploit", "pipx:netexec", false, false},
