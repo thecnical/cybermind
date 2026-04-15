@@ -1835,3 +1835,74 @@ func SendManualGuide(req ManualGuideRequest) (string, error) {
 	}
 	return result.Guide, nil
 }
+
+// ─── Full Attack Chain Planner ────────────────────────────────────────────────
+
+// AttackStep represents one step in the full attack chain
+type AttackStep struct {
+	StepNumber       int      `json:"step_number"`
+	Action           string   `json:"action"`
+	Tool             string   `json:"tool"`
+	Args             []string `json:"args"`
+	VulnFocus        string   `json:"vuln_focus"`
+	SuccessCondition string   `json:"success_condition"`
+	SkipCondition    string   `json:"skip_condition"`
+	FallbackTool     string   `json:"fallback_tool"`
+	Reason           string   `json:"reason"`
+	EstimatedMinutes int      `json:"estimated_minutes"`
+}
+
+// PlanStepsRequest asks AI to plan the full attack chain upfront
+type PlanStepsRequest struct {
+	Target        string   `json:"target"`
+	TechStack     []string `json:"tech_stack"`
+	OpenPorts     []int    `json:"open_ports"`
+	WAFDetected   bool     `json:"waf_detected"`
+	WAFVendor     string   `json:"waf_vendor"`
+	Subdomains    []string `json:"subdomains"`
+	LiveURLs      []string `json:"live_urls"`
+	SkillLevel    string   `json:"skill_level"`
+	FocusBugs     string   `json:"focus_bugs"`
+	Mode          string   `json:"mode"`
+	MemoryContext string   `json:"memory_context"`
+}
+
+// SendPlanSteps gets the full attack chain plan from AI
+func SendPlanSteps(req PlanStepsRequest) ([]AttackStep, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/plan-steps", bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("_backend_down: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+
+	var result struct {
+		Success    bool         `json:"success"`
+		Steps      []AttackStep `json:"steps"`
+		TotalSteps int          `json:"total_steps"`
+		Fallback   bool         `json:"fallback"`
+		Error      string       `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("%s", result.Error)
+	}
+	return result.Steps, nil
+}

@@ -921,6 +921,41 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	}
 	fmt.Println()
 
+	// ── REAL MULTI-STEP PLANNING: Get full attack chain upfront ──────────
+	var attackPlan []api.AttackStep
+	if !localMode {
+		agentThink("Planning full attack chain (5-10 steps ahead)...")
+		mem := brain.LoadTarget(target)
+		planReq := api.PlanStepsRequest{
+			Target:        target,
+			TechStack:     mem.TechStack,
+			OpenPorts:     mem.OpenPorts,
+			WAFDetected:   mem.WAFDetected,
+			WAFVendor:     mem.WAFVendor,
+			Subdomains:    mem.SubdomainsFound,
+			LiveURLs:      mem.LiveURLs,
+			SkillLevel:    skillLevel,
+			FocusBugs:     focusBugs,
+			Mode:          mode,
+			MemoryContext: memContext,
+		}
+		if steps, planErr := api.SendPlanSteps(planReq); planErr == nil && len(steps) > 0 {
+			attackPlan = steps
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  ✓ Full attack plan: %d steps planned", len(steps))))
+			for _, s := range steps {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+					fmt.Sprintf("    Step %d: [%s] %s — %s (~%dm)",
+						s.StepNumber, s.Action, s.Tool, s.VulnFocus, s.EstimatedMinutes)))
+			}
+			fmt.Println()
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+				"  ℹ  Using reactive planning (plan-steps unavailable)"))
+		}
+	}
+	planStepIdx := 0 // current position in attack plan
+
 	// Accumulated context across all phases
 	var allBugs []bugdetect.Bug
 	var reconResult recon.ReconResult
@@ -950,21 +985,59 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		var decision *api.AgentDecision
 		var decErr error
 
-		if !localMode {
-			decision, decErr = api.SendAgentDecision(state)
-		}
+		// ── Use pre-planned steps if available (real multi-step planning) ─
+		if len(attackPlan) > 0 && planStepIdx < len(attackPlan) {
+			plannedStep := attackPlan[planStepIdx]
 
-		// Fallback: local decision logic if AI unavailable
-		if localMode || decErr != nil || decision == nil {
-			decision = localAgentDecision(state)
-			if decErr != nil {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
-					fmt.Sprintf("  ℹ  AI brain offline (%v) — using local logic", decErr)))
+			// Check skip condition
+			shouldSkip := false
+			skipLower := strings.ToLower(plannedStep.SkipCondition)
+			if strings.Contains(skipLower, "already") && strings.Contains(skipLower, "memory") {
+				if plannedStep.Action == "recon" && state.ReconDone {
+					shouldSkip = true
+				}
+				if plannedStep.Action == "hunt" && state.HuntDone {
+					shouldSkip = true
+				}
 			}
-		}
+			if strings.Contains(skipLower, "subdomains already") && len(state.LiveURLs) > 0 {
+				shouldSkip = true
+			}
 
-		agentDecide(fmt.Sprintf("Action=%s | Focus=%s | Reason: %s",
-			decision.Action, decision.VulnFocus, truncate(decision.Reason, 80)))
+			if shouldSkip {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+					fmt.Sprintf("  ⏭  Step %d skipped: %s", plannedStep.StepNumber, plannedStep.SkipCondition)))
+				planStepIdx++
+				continue
+			}
+
+			// Convert planned step to decision
+			decision = &api.AgentDecision{
+				Action:    plannedStep.Action,
+				Reason:    plannedStep.Reason,
+				VulnFocus: plannedStep.VulnFocus,
+				Depth:     "deep",
+				Notes:     fmt.Sprintf("Step %d/%d: %s", plannedStep.StepNumber, len(attackPlan), plannedStep.Reason),
+			}
+			planStepIdx++
+			agentDecide(fmt.Sprintf("[PLAN Step %d/%d] Action=%s | Tool=%s | Focus=%s",
+				plannedStep.StepNumber, len(attackPlan), decision.Action, plannedStep.Tool, decision.VulnFocus))
+		} else {
+			// ── Reactive: ask AI what to do next ─────────────────────────
+			if !localMode {
+				decision, decErr = api.SendAgentDecision(state)
+			}
+			// Fallback: local decision logic if AI unavailable
+			if localMode || decErr != nil || decision == nil {
+				decision = localAgentDecision(state)
+				if decErr != nil {
+					fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+						fmt.Sprintf("  ℹ  AI brain offline (%v) — using local logic", decErr)))
+				}
+			}
+			agentDecide(fmt.Sprintf("Action=%s | Focus=%s | Reason: %s",
+				decision.Action, decision.VulnFocus, truncate(decision.Reason, 80)))
+		}
 
 		if decision.Notes != "" && decision.Notes != decision.Reason {
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
@@ -1015,6 +1088,35 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				rc := reconResult.Context
 				brain.RecordRun(target, rc.Technologies, rc.WAFVendor, rc.WAFDetected,
 					rc.Subdomains, rc.LiveURLs, rc.OpenPorts)
+				// Real-time state update from fresh memory
+				state.Technologies = rc.Technologies
+				state.WAFDetected = rc.WAFDetected
+				state.WAFVendor = rc.WAFVendor
+				state.Subdomains = len(rc.Subdomains)
+				// Update attack plan with new intelligence
+				if len(attackPlan) > 0 && !localMode {
+					agentThink("Recon complete — refining attack plan with new intelligence...")
+					mem := brain.LoadTarget(target)
+					if newSteps, planErr := api.SendPlanSteps(api.PlanStepsRequest{
+						Target:        target,
+						TechStack:     rc.Technologies,
+						OpenPorts:     rc.OpenPorts,
+						WAFDetected:   rc.WAFDetected,
+						WAFVendor:     rc.WAFVendor,
+						Subdomains:    rc.Subdomains,
+						LiveURLs:      rc.LiveURLs,
+						SkillLevel:    skillLevel,
+						FocusBugs:     focusBugs,
+						Mode:          mode,
+						MemoryContext: brain.GetLearnedPromptContext(target),
+					}); planErr == nil && len(newSteps) > 0 {
+						attackPlan = newSteps
+						planStepIdx = 0 // restart from beginning with new plan
+						fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+							fmt.Sprintf("  ✓ Attack plan refined: %d steps based on recon findings", len(newSteps))))
+					}
+					_ = mem
+				}
 			}
 
 			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
@@ -1181,6 +1283,31 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				if tr.Output != "" && tr.Tool == "nuclei" {
 					brain.RecordPattern(target, "nuclei_vuln", "nuclei finding", "", tr.Command)
 				}
+			}
+
+			// ── Self-correction: retry failed tools with fallback ─────────
+			if len(huntResult.Failed) > 0 && len(attackPlan) > 0 {
+				for _, failed := range huntResult.Failed {
+					// Find the planned step for this tool
+					for _, step := range attackPlan {
+						if step.Tool == failed.Tool && step.FallbackTool != "" && step.FallbackTool != "manual" {
+							fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+								fmt.Sprintf("  🔄 Self-correction: %s failed → trying %s", failed.Tool, step.FallbackTool)))
+							// Run fallback tool
+							fallbackResult := runHuntSilent(target, huntCtx, []string{step.FallbackTool})
+							for _, tr := range fallbackResult.Results {
+								if tr.Output != "" {
+									allFindings[step.FallbackTool+"_fallback"] = truncate(tr.Output, 500)
+									bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+									allBugs = append(allBugs, bugs...)
+								}
+							}
+							break
+						}
+					}
+				}
+				allBugs = dedupBugs(allBugs)
+				state.BugsFound = len(allBugs)
 			}
 
 			// ── Generate custom nuclei templates for this target ──────────
