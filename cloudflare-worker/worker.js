@@ -6,7 +6,7 @@
  * Heavy routes (recon analysis, abhimanyu) proxy to Render.
  *
  * Deploy: wrangler deploy
- * URL: https://cybermind-api.thecnical.workers.dev
+ * URL: https://cybermind-api.chandanabhay458.workers.dev
  */
 
 const RENDER_BACKEND = "https://cybermind-backend-8yrt.onrender.com";

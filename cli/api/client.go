@@ -21,7 +21,7 @@ import (
 const defaultBackendURL = "https://cybermind-backend-8yrt.onrender.com"
 
 // fallbackBackendURL is the Cloudflare Workers mirror — always on, zero cold start
-const fallbackBackendURL = "https://cybermind-api.thecnical.workers.dev"
+const fallbackBackendURL = "https://cybermind-api.chandanabhay458.workers.dev"
 
 // backendStatus tracks which backend is currently healthy
 var (
