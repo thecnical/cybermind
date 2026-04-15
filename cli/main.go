@@ -2578,6 +2578,33 @@ func main() {
 				}
 			}
 			for _, t := range missing {
+				// ── Skip if already installed (PATH + common locations) ──────
+				alreadyInstalled := false
+				if _, err := exec.LookPath(t.name); err == nil {
+					alreadyInstalled = true
+				} else {
+					// Check common non-PATH locations
+					homedir2, _ := os.UserHomeDir()
+					for _, p := range []string{
+						homedir2 + "/go/bin/" + t.name,
+						"/root/go/bin/" + t.name,
+						homedir2 + "/.local/bin/" + t.name,
+						"/root/.local/bin/" + t.name,
+					} {
+						if _, e := os.Stat(p); e == nil {
+							// Found — just symlink it
+							exec.Command("sudo", "ln", "-sf", p, "/usr/local/bin/"+t.name).Run()
+							alreadyInstalled = true
+							break
+						}
+					}
+				}
+				if alreadyInstalled {
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s already installed (symlinked)", t.name)))
+					instOK++
+					continue
+				}
+
 				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-20s installing...", t.name)))
 
 				var installErr error
@@ -2769,13 +2796,85 @@ rm -f /tmp/evilginx2.tar.gz`)
 
 				if installErr != nil {
 					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s failed: %v", t.name, installErr)))
-					errMsg := fmt.Sprintf("Tool installation failed: %s\nError: %v\nOS: Linux/Kali\nPlease provide exact fix commands.", t.name, installErr)
-					if fix, aiErr := api.SendPrompt(errMsg); aiErr == nil {
-						fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  💡 AI Fix suggestion:"))
-						fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).MarginLeft(4).Render(fix))
+
+					// ── AI Auto-Fix: get fix commands and execute them ────────
+					errMsg := fmt.Sprintf("Tool installation failed on Kali Linux: %s\nError: %v\nProvide ONLY the exact bash commands to fix this, one per line, no explanation.", t.name, installErr)
+					if fix, aiErr := api.SendPrompt(errMsg); aiErr == nil && fix != "" {
+						fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  🤖 AI auto-fixing..."))
+
+						// Parse and execute each command from AI response
+						fixApplied := false
+						for _, line := range strings.Split(fix, "\n") {
+							line = strings.TrimSpace(line)
+							// Skip empty lines, comments, markdown
+							if line == "" || strings.HasPrefix(line, "#") ||
+								strings.HasPrefix(line, "```") || strings.HasPrefix(line, "//") {
+								continue
+							}
+							// Only execute safe install commands
+							if strings.Contains(line, "apt") || strings.Contains(line, "pip") ||
+								strings.Contains(line, "go install") || strings.Contains(line, "curl") ||
+								strings.Contains(line, "wget") || strings.Contains(line, "npm") ||
+								strings.Contains(line, "gem install") || strings.Contains(line, "cargo") {
+								fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ " + line))
+								fixCmd := exec.Command("bash", "-c", line)
+								fixCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+								fixCmd.Stdout = os.Stdout
+								fixCmd.Stderr = os.Stderr
+								fixCmd.Stdin = nil
+								if fixErr := fixCmd.Run(); fixErr == nil {
+									fixApplied = true
+								}
+							}
+						}
+
+						// Re-check if tool is now installed after AI fix
+						if fixApplied {
+							if _, checkErr := exec.LookPath(t.name); checkErr == nil {
+								fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+									fmt.Sprintf("  ✓ %-20s fixed by AI!", t.name)))
+								instOK++
+								instFail-- // don't count as failure
+								continue
+							}
+							// Also check common install paths
+							for _, p := range []string{
+								"/usr/local/bin/" + t.name,
+								os.Getenv("HOME") + "/.local/bin/" + t.name,
+								"/root/.local/bin/" + t.name,
+							} {
+								if _, e := os.Stat(p); e == nil {
+									exec.Command("sudo", "ln", "-sf", p, "/usr/local/bin/"+t.name).Run()
+									fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+										fmt.Sprintf("  ✓ %-20s fixed + symlinked", t.name)))
+									instOK++
+									instFail--
+									break
+								}
+							}
+						}
 					}
 					instFail++
 				} else {
+					// ── Verify tool is actually accessible after install ──────
+					// Some tools install to ~/.local/bin or ~/go/bin — symlink them
+					if _, checkErr := exec.LookPath(t.name); checkErr != nil {
+						// Not in PATH — try to find and symlink
+						homedir2, _ := os.UserHomeDir()
+						searchPaths := []string{
+							homedir2 + "/go/bin/" + t.name,
+							"/root/go/bin/" + t.name,
+							homedir2 + "/.local/bin/" + t.name,
+							"/root/.local/bin/" + t.name,
+							"/opt/pipx/venvs/" + t.name + "/bin/" + t.name,
+						}
+						for _, sp := range searchPaths {
+							if _, e := os.Stat(sp); e == nil {
+								exec.Command("sudo", "ln", "-sf", sp, "/usr/local/bin/"+t.name).Run()
+								break
+							}
+						}
+					}
 					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 					instOK++
 				}
