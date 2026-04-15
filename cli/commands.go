@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"cybermind-cli/anon"
 	"cybermind-cli/api"
 	"cybermind-cli/bugdetect"
 	"cybermind-cli/hunt"
@@ -853,6 +854,15 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
 	fmt.Println()
 
+	// ── Step 0: Anonymize IP before any scanning ──────────────────────────
+	anonStatus := anon.Setup()
+	if anonStatus.Active {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			fmt.Sprintf("  ✓ Anonymized: %s via %s", anonStatus.AnonIP, anonStatus.Method)))
+	}
+	defer anon.Teardown()
+	fmt.Println()
+
 	// ── Agent state — the brain's memory ─────────────────────────────────
 	state := api.AgentState{
 		Target:     target,
@@ -1141,6 +1151,17 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		// ── Check if we should stop ───────────────────────────────────────
 		if decision.Action == "done" {
 			break
+		}
+
+		// Rotate IP every 3 iterations if Tor is active
+		if iter > 0 && iter%3 == 0 && anon.IsActive() {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				"  ⟳ Rotating Tor exit node for fresh IP..."))
+			newIP := anon.RotateIP()
+			if newIP != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+					"  ✓ New exit IP: " + newIP))
+			}
 		}
 
 		// If we have high-severity bugs and PoC is done, we're done
