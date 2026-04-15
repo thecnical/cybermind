@@ -4033,15 +4033,39 @@ rm -f /tmp/evilginx2.tar.gz`)
 		case "--scope":
 			if len(args) < 3 {
 				printError("Usage: cybermind /platform --scope <program-handle>")
+				printError("       cybermind /platform --scope shopify")
+				printError("       cybermind /platform --scope gitlab")
 				os.Exit(1)
 			}
 			handle := args[2]
+
+			// Try public scope first (no auth needed)
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Fetching scope for " + handle + " (public)..."))
+			pubScope, pubErr := brain.FetchPublicScope(handle)
+			if pubErr == nil && pubScope != nil {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
+					fmt.Sprintf("  ✓ %s — %d in-scope targets", pubScope.Name, len(pubScope.InScope))))
+				fmt.Println()
+				if len(pubScope.InScope) > 0 {
+					fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  IN SCOPE:"))
+					for _, t := range pubScope.InScope {
+						fmt.Println(lipgloss.NewStyle().Foreground(green).Render("    ✓ " + t))
+					}
+					fmt.Println()
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+						fmt.Sprintf("  Scan first target: sudo cybermind /plan %s", pubScope.InScope[0])))
+				} else {
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  No URL/domain scope found (may be invite-only or API-only program)"))
+				}
+				break
+			}
+
+			// Fallback: authenticated scope fetch
 			creds, err := brain.LoadCredentials()
 			if err != nil {
 				printError("No credentials — run: cybermind /platform --setup")
 				os.Exit(1)
 			}
-			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Fetching scope for " + handle + "..."))
 			scope, err := brain.FetchH1ProgramScope(creds, handle)
 			if err != nil {
 				printError("Failed to fetch scope: " + err.Error())
@@ -4085,7 +4109,12 @@ rm -f /tmp/evilginx2.tar.gz`)
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --setup              → save H1/BC credentials"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --status             → check saved credentials"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --programs           → list your programs"))
-			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --scope <handle>     → fetch program scope"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --scope <handle>     → fetch program scope (public, no auth)"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Examples:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  cybermind /platform --scope shopify"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  cybermind /platform --scope gitlab"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  cybermind /platform --scope automattic"))
 			fmt.Println()
 			if brain.HasCredentials() {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Credentials configured — run: cybermind /platform --status"))

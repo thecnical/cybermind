@@ -459,3 +459,99 @@ func buildImpactStatement(bug Bug) string {
 	}
 	return fmt.Sprintf("This %s vulnerability could allow an attacker to compromise the security of the application.", bug.Type)
 }
+
+// ─── Public Scope Fetcher (no auth needed) ────────────────────────────────────
+
+// PublicProgramScope holds scope data fetched without authentication
+type PublicProgramScope struct {
+	Handle   string
+	Name     string
+	InScope  []string
+	OutScope []string
+	URL      string
+}
+
+// FetchPublicScope fetches a program's scope using HackerOne's public GraphQL API.
+// No authentication required — works for any public program.
+func FetchPublicScope(handle string) (*PublicProgramScope, error) {
+	// HackerOne public GraphQL endpoint
+	query := `{"query":"{ team(handle: \"` + handle + `\") { name handle url structured_scopes(first: 100, eligible_for_submission: true) { edges { node { asset_type asset_identifier eligible_for_bounty max_severity } } } } }"}`
+
+	req, err := http.NewRequest("POST", "https://hackerone.com/graphql", bytes.NewBufferString(query))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+	req.Header.Set("X-Auth-Token", "") // public endpoint
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach HackerOne: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+
+	var result struct {
+		Data struct {
+			Team struct {
+				Name   string `json:"name"`
+				Handle string `json:"handle"`
+				URL    string `json:"url"`
+				StructuredScopes struct {
+					Edges []struct {
+						Node struct {
+							AssetType       string `json:"asset_type"`
+							AssetIdentifier string `json:"asset_identifier"`
+							EligibleBounty  bool   `json:"eligible_for_bounty"`
+							MaxSeverity     string `json:"max_severity"`
+						} `json:"node"`
+					} `json:"edges"`
+				} `json:"structured_scopes"`
+			} `json:"team"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("invalid response: %v", err)
+	}
+
+	if len(result.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL error: %s", result.Errors[0].Message)
+	}
+
+	team := result.Data.Team
+	if team.Handle == "" {
+		return nil, fmt.Errorf("program '%s' not found or not public", handle)
+	}
+
+	scope := &PublicProgramScope{
+		Handle: team.Handle,
+		Name:   team.Name,
+		URL:    "https://hackerone.com/" + team.Handle,
+	}
+
+	for _, edge := range team.StructuredScopes.Edges {
+		node := edge.Node
+		if node.AssetType == "URL" || node.AssetType == "WILDCARD" || node.AssetType == "DOMAIN" {
+			scope.InScope = append(scope.InScope, node.AssetIdentifier)
+		}
+	}
+
+	return scope, nil
+}
+
+// FetchPublicScopeTargets returns a flat list of testable domains from a public program
+func FetchPublicScopeTargets(handle string) ([]string, error) {
+	scope, err := FetchPublicScope(handle)
+	if err != nil {
+		return nil, err
+	}
+	return scope.InScope, nil
+}
