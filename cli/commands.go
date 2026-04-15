@@ -18,6 +18,8 @@ import (
 
 	"cybermind-cli/anon"
 	"cybermind-cli/api"
+	"cybermind-cli/bizlogic"
+	"cybermind-cli/brain"
 	"cybermind-cli/bugdetect"
 	"cybermind-cli/hunt"
 	"cybermind-cli/omega"
@@ -978,6 +980,13 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			state.BugsFound = len(allBugs)
 			state.BugTypes = extractBugTypes(allBugs)
 
+			// ── Brain: record recon results ───────────────────────────────
+			if reconResult.Context != nil {
+				rc := reconResult.Context
+				brain.RecordRun(target, rc.Technologies, rc.WAFVendor, rc.WAFDetected,
+					rc.Subdomains, rc.LiveURLs, rc.OpenPorts)
+			}
+
 			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
 				fmt.Sprintf("  ✓ Recon complete: %d tools ran, %d live URLs, %d ports, %d bugs",
 					len(reconResult.Tools), len(state.LiveURLs), len(state.OpenPorts), state.BugsFound)))
@@ -1042,6 +1051,16 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			state.BugsFound = len(allBugs)
 			state.BugTypes = extractBugTypes(allBugs)
 
+			// ── Brain: record hunt patterns ───────────────────────────────
+			for _, tr := range huntResult.Results {
+				if tr.Output != "" && tr.Tool == "dalfox" {
+					brain.RecordPattern(target, "xss", "dalfox XSS found", "", tr.Command)
+				}
+				if tr.Output != "" && tr.Tool == "nuclei" {
+					brain.RecordPattern(target, "nuclei_vuln", "nuclei finding", "", tr.Command)
+				}
+			}
+
 			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
 				fmt.Sprintf("  ✓ Hunt complete: %d tools ran, %d bugs found",
 					len(huntResult.Tools), state.BugsFound)))
@@ -1056,6 +1075,47 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 						fmt.Sprintf("    🐛 [%s] %s", strings.ToUpper(string(b.Severity)), b.Title)))
 				}
 			}
+
+		case "bizlogic":
+			agentAct("Running Business Logic Bug Hunter...")
+			omegaLog("\n═══ AGENT: BIZLOGIC ═══")
+
+			// Get session cookies from brain memory if available
+			bizCookies := map[string]string{}
+			bizHeaders := map[string]string{}
+
+			bizResult := bizlogic.RunBizLogicScan(target, bizCookies, bizHeaders, func(test, status string) {
+				if strings.Contains(status, "FOUND") {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render("  " + status))
+				}
+			})
+
+			// Convert bizlogic findings to bugdetect.Bug
+			for _, f := range bizResult.Findings {
+				sev := bugdetect.SeverityHigh
+				if f.Severity == "critical" {
+					sev = bugdetect.SeverityCritical
+				} else if f.Severity == "medium" {
+					sev = bugdetect.SeverityMedium
+				}
+				allBugs = append(allBugs, bugdetect.Bug{
+					Title:       f.Type + " — Business Logic",
+					Severity:    sev,
+					Tool:        "bizlogic",
+					Target:      target,
+					URL:         f.URL,
+					Description: f.Description,
+					Evidence:    f.Evidence,
+					CVSS:        7.5,
+					CWE:         "CWE-840",
+					FoundAt:     time.Now(),
+				})
+			}
+			allBugs = dedupBugs(allBugs)
+			state.BugsFound = len(allBugs)
+			state.BugTypes = extractBugTypes(allBugs)
+			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
+				fmt.Sprintf("  ✓ BizLogic: %d tests, %d bugs found", bizResult.Tested, len(bizResult.Findings))))
 
 		case "exploit":
 			agentAct(fmt.Sprintf("Running ABHIMANYU exploit phase (focus: %s)...", decision.VulnFocus))
@@ -1079,17 +1139,65 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			state.Phase = "exploit_done"
 
 		case "poc":
-			agentAct("Generating PoC for confirmed bugs...")
-			omegaLog("\n═══ AGENT: POC GENERATION ═══")
+			agentAct("Verifying bugs + generating PoC...")
+			omegaLog("\n═══ AGENT: POC + VERIFY + SUBMIT ═══")
 
-			pocs := make(map[int]string)
-			for i, bug := range allBugs {
+			// ── Step 1: Real verification before PoC ─────────────────────
+			verifiedBugs := []bugdetect.Bug{}
+			for _, bug := range allBugs {
 				if bug.Severity == bugdetect.SeverityLow || bug.Severity == bugdetect.SeverityInfo {
 					continue
 				}
 				if bug.Evidence == "" {
 					continue
 				}
+
+				// Re-verify using brain/verify
+				rawF := brain.RawFinding{
+					Tool:      bug.Tool,
+					Type:      strings.ToLower(strings.Split(bug.CWE, "-")[0]),
+					URL:       bug.URL,
+					Evidence:  bug.Evidence,
+					Severity:  string(bug.Severity),
+					RawOutput: bug.Evidence,
+				}
+				confidence := brain.ScoreConfidence(rawF)
+
+				// Only verify high-confidence findings (>0.6) to save time
+				if confidence >= 0.6 {
+					verified, proof := brain.VerifyFinding(rawF)
+					if verified && proof != "" {
+						bug.Evidence = proof // use real proof
+						fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
+							fmt.Sprintf("  ✓ Verified: %s (confidence: %.0f%%)", bug.Title, confidence*100)))
+					} else if confidence < 0.7 {
+						// Low confidence + not verified = skip
+						fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+							fmt.Sprintf("  - Skipped (unverified, confidence: %.0f%%): %s", confidence*100, bug.Title)))
+						// Record as false positive so brain learns
+						brain.RecordFalsePositive(target, bug.Tool, bug.CWE, bug.URL+"|"+bug.Title, "unverified")
+						continue
+					}
+				}
+				verifiedBugs = append(verifiedBugs, bug)
+			}
+
+			if len(verifiedBugs) == 0 && len(allBugs) > 0 {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow2).Render(
+					"  ⚠  All findings failed verification — likely false positives"))
+				allBugs = []bugdetect.Bug{}
+				state.BugsFound = 0
+				state.Phase = "poc_done"
+				break
+			}
+			if len(verifiedBugs) > 0 {
+				allBugs = verifiedBugs
+				state.BugsFound = len(allBugs)
+			}
+
+			// ── Step 2: Generate PoC for each verified bug ────────────────
+			pocs := make(map[int]string)
+			for i, bug := range allBugs {
 				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
 					fmt.Sprintf("  ⟳ PoC [%d/%d]: %s", i+1, len(allBugs), bug.Title)))
 				poc, pocErr := api.SendPoCGeneration(api.PoCRequest{
@@ -1105,11 +1213,23 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				if pocErr == nil && poc != "" {
 					pocs[i] = poc
 					fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
-						fmt.Sprintf("  ✓ PoC: %s", bug.Title)))
+						fmt.Sprintf("  ✓ PoC generated: %s", bug.Title)))
 				}
+
+				// ── Step 3: Record in brain memory ────────────────────────
+				brain.RecordBug(target, brain.Bug{
+					Title:    bug.Title,
+					Type:     bug.CWE,
+					URL:      bug.URL,
+					Severity: string(bug.Severity),
+					Evidence: bug.Evidence,
+					PoC:      poc,
+					Tool:     bug.Tool,
+					Verified: true,
+				})
 			}
 
-			// Save report with PoCs
+			// ── Step 4: Save report ───────────────────────────────────────
 			bugReport := bugdetect.BugReport{
 				Target:    target,
 				Bugs:      allBugs,
@@ -1123,9 +1243,77 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			if err := os.WriteFile(reportPath, []byte(content), 0644); err == nil {
 				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render(
 					"  ✓ Full bug report saved: " + reportPath))
-				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
-					"  " + bugdetect.GetBugBountyInfo(target)))
 			}
+
+			// ── Step 5: Telegram notification ────────────────────────────
+			notifyBugsFound(target, allBugs, reportPath)
+
+			// ── Step 6: HackerOne auto-submit ─────────────────────────────
+			creds, credsErr := brain.LoadCredentials()
+			if credsErr == nil && creds != nil && creds.H1Token != "" {
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan2).Render(
+					"  ⟳ Checking HackerOne for duplicates + auto-submitting..."))
+
+				for i, bug := range allBugs {
+					poc := pocs[i]
+					if poc == "" {
+						continue
+					}
+
+					// Check for duplicates first
+					handle := extractH1Handle(target)
+					isDup, dupURL := brain.CheckH1Duplicate(creds, handle, bug.Title, bug.URL)
+					if isDup {
+						fmt.Println(lipgloss.NewStyle().Foreground(yellow2).Render(
+							fmt.Sprintf("  ⚠  Duplicate: %s → %s", bug.Title, dupURL)))
+						continue
+					}
+
+					// Build H1 report
+					h1Report := brain.H1Report{
+						TeamHandle:        handle,
+						Title:             fmt.Sprintf("[%s] %s on %s", strings.ToUpper(string(bug.Severity)), bug.Title, target),
+						VulnerabilityInfo: fmt.Sprintf("## Summary\n%s\n\n## Evidence\n```\n%s\n```\n\n## PoC\n%s", bug.Description, bug.Evidence, poc),
+						SeverityRating:    string(bug.Severity),
+						Impact:            bug.Description,
+					}
+
+					result, submitErr := brain.SubmitH1Report(creds, h1Report)
+					if submitErr != nil {
+						fmt.Println(lipgloss.NewStyle().Foreground(red2).Render(
+							fmt.Sprintf("  ✗ H1 submit failed: %v", submitErr)))
+					} else if result.Error != "" {
+						fmt.Println(lipgloss.NewStyle().Foreground(yellow2).Render(
+							fmt.Sprintf("  ⚠  H1: %s", result.Error)))
+					} else {
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render(
+							fmt.Sprintf("  ✓ Submitted to HackerOne: %s", result.URL)))
+						// Update brain memory with submission
+						brain.RecordBug(target, brain.Bug{
+							Title:     bug.Title,
+							Type:      bug.CWE,
+							URL:       bug.URL,
+							Severity:  string(bug.Severity),
+							Evidence:  bug.Evidence,
+							PoC:       poc,
+							Tool:      bug.Tool,
+							Verified:  true,
+							Submitted: true,
+							Platform:  "hackerone",
+							ReportID:  result.ReportID,
+						})
+					}
+				}
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+					"  ℹ  No H1 credentials — skipping auto-submit"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+					"  Set credentials: cybermind /platform --setup"))
+			}
+
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+				"  " + bugdetect.GetBugBountyInfo(target)))
 			state.Phase = "poc_done"
 
 		case "report":
@@ -1233,6 +1421,10 @@ func localAgentDecision(state api.AgentState) *api.AgentDecision {
 		if state.WAFDetected {
 			d.WAFBypass = "random-agent,delay,tamper"
 		}
+	case state.HuntDone && state.BugsFound == 0 && state.Phase == "hunt_done":
+		// After hunt with no bugs, try business logic
+		d.Action = "bizlogic"
+		d.Reason = "No bugs from standard hunt — trying business logic scanner"
 	case state.BugsFound > 0 && !state.AbhiDone:
 		d.Action = "exploit"
 		d.Reason = fmt.Sprintf("Found %d bugs — running exploit phase", state.BugsFound)
@@ -1242,7 +1434,7 @@ func localAgentDecision(state api.AgentState) *api.AgentDecision {
 		}
 	case state.BugsFound > 0 && state.AbhiDone:
 		d.Action = "poc"
-		d.Reason = "Bugs confirmed — generating PoC"
+		d.Reason = "Bugs confirmed — generating PoC + submitting"
 	case state.ReconDone && state.HuntDone && state.BugsFound == 0:
 		d.Action = "next_target"
 		d.Reason = "No bugs found — move to next target"
@@ -1291,6 +1483,81 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// notifyBugsFound sends a Telegram notification when bugs are found.
+// Uses TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars.
+func notifyBugsFound(target string, bugs []bugdetect.Bug, reportPath string) {
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	chatID := os.Getenv("TELEGRAM_CHAT_ID")
+	if token == "" || chatID == "" {
+		return // not configured — silent skip
+	}
+
+	critCount, highCount := 0, 0
+	for _, b := range bugs {
+		if b.Severity == bugdetect.SeverityCritical {
+			critCount++
+		} else if b.Severity == bugdetect.SeverityHigh {
+			highCount++
+		}
+	}
+
+	msg := fmt.Sprintf("🐛 *CyberMind Bug Found!*\n\n"+
+		"🎯 Target: `%s`\n"+
+		"🔴 Critical: %d | 🟠 High: %d\n"+
+		"📊 Total: %d bugs\n"+
+		"📄 Report: `%s`\n\n",
+		target, critCount, highCount, len(bugs), reportPath)
+
+	for i, b := range bugs {
+		if i >= 5 {
+			msg += fmt.Sprintf("_...and %d more_", len(bugs)-5)
+			break
+		}
+		emoji := "🟡"
+		if b.Severity == bugdetect.SeverityCritical {
+			emoji = "🔴"
+		} else if b.Severity == bugdetect.SeverityHigh {
+			emoji = "🟠"
+		}
+		msg += fmt.Sprintf("%s `%s`\n", emoji, b.Title)
+		if b.URL != "" {
+			msg += fmt.Sprintf("   URL: `%s`\n", truncate(b.URL, 60))
+		}
+	}
+
+	payload := map[string]interface{}{
+		"chat_id":    chatID,
+		"text":       msg,
+		"parse_mode": "Markdown",
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token),
+		bytes.NewBuffer(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			"  ✓ Telegram notification sent"))
+	}
+}
+
+// extractH1Handle extracts a HackerOne program handle from a target domain.
+// e.g. "shopify.com" → "shopify", "api.github.com" → "github"
+func extractH1Handle(target string) string {
+	target = strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://")
+	parts := strings.Split(target, ".")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] // second-to-last part = company name
+	}
+	return target
 }
 
 // ─── OMEGA Planning Mode ──────────────────────────────────────────────────────
