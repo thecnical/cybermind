@@ -371,7 +371,7 @@ func runAutoRecon(target string, requested []string) {
 		ToolsRun:        result.Tools,
 		ToolsFailed:     failedNames,
 		ToolsSkipped:    skippedNames,
-		Findings:        findings,
+		Findings:        truncateFindings(findings),
 		SubdomainsFound: len(ctx.Subdomains),
 		LiveHostsFound:  len(ctx.LiveHosts),
 		OpenPorts:       openPorts,
@@ -379,7 +379,7 @@ func runAutoRecon(target string, requested []string) {
 		WAFVendor:       ctx.WAFVendor,
 		LiveURLs:        liveURLs,
 		Technologies:    technologies,
-		RawCombined:     recon.GetCombinedOutput(result),
+		RawCombined:     truncateRaw(recon.GetCombinedOutput(result)),
 	}
 
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to AI for analysis..."))
@@ -431,6 +431,39 @@ func runAutoRecon(target string, requested []string) {
 // These are used by runOmegaPlan to chain phases with context passing.
 // Unlike runAutoRecon/runHunt, they do NOT ask "start hunt?" / "start abhimanyu?"
 // They return the raw result so the caller can feed context to the next phase.
+
+// truncateFindings truncates tool output to prevent payload size issues.
+// nuclei 1h scan = 10MB+ output — AI providers reject payloads > 1MB.
+func truncateFindings(findings map[string]string) map[string]string {
+	toolLimits := map[string]int{
+		"nuclei": 8000, "nikto": 5000, "nmap": 3000,
+		"reconftw": 6000, "katana": 3000, "httpx": 2000,
+		"masscan": 1500, "rustscan": 1500, "subfinder": 2000,
+		"amass": 2000, "dalfox": 3000, "sqlmap": 3000,
+	}
+	out := make(map[string]string, len(findings))
+	for tool, output := range findings {
+		limit := 2500 // default
+		if l, ok := toolLimits[strings.ToLower(tool)]; ok {
+			limit = l
+		}
+		if len(output) > limit {
+			out[tool] = output[:limit] + "\n...[truncated — " + fmt.Sprintf("%d", len(output)) + " chars total]"
+		} else {
+			out[tool] = output
+		}
+	}
+	return out
+}
+
+// truncateRaw truncates raw combined output to 300KB max.
+func truncateRaw(raw string) string {
+	const maxRaw = 300000
+	if len(raw) > maxRaw {
+		return raw[:maxRaw] + "\n...[truncated]"
+	}
+	return raw
+}
 
 // runAutoReconSilent runs the full recon pipeline without interactive prompts.
 // Returns ReconResult so the caller can extract context for hunt phase.
@@ -508,7 +541,7 @@ func runAutoReconSilent(target string, requested []string) recon.ReconResult {
 		ToolsRun:        result.Tools,
 		ToolsFailed:     failedNames,
 		ToolsSkipped:    skippedNames,
-		Findings:        findings,
+		Findings:        truncateFindings(findings),
 		SubdomainsFound: len(ctx.Subdomains),
 		LiveHostsFound:  len(ctx.LiveHosts),
 		OpenPorts:       openPorts,
@@ -516,7 +549,7 @@ func runAutoReconSilent(target string, requested []string) recon.ReconResult {
 		WAFVendor:       ctx.WAFVendor,
 		LiveURLs:        liveURLs,
 		Technologies:    technologies,
-		RawCombined:     recon.GetCombinedOutput(result),
+		RawCombined:     truncateRaw(recon.GetCombinedOutput(result)),
 	}
 
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending recon to AI for analysis..."))
@@ -645,7 +678,7 @@ func runHuntSilent(target string, reconCtx *hunt.HuntContext, requested []string
 		ToolsRun:       result.Tools,
 		ToolsFailed:    failedNames,
 		ToolsSkipped:   skippedNames,
-		Findings:       findings,
+		Findings:        truncateFindings(findings),
 		XSSFound:       xssFound,
 		ParamsFound:    paramsFound,
 		VulnsFound:     vulnsFound,
@@ -653,7 +686,7 @@ func runHuntSilent(target string, reconCtx *hunt.HuntContext, requested []string
 		WAFDetected:    ctx.WAFDetected,
 		WAFVendor:      ctx.WAFVendor,
 		OpenPorts:      openPorts,
-		RawCombined:    hunt.GetHuntCombinedOutput(result),
+		RawCombined:    truncateRaw(hunt.GetHuntCombinedOutput(result)),
 	}
 
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending hunt results to AI for analysis..."))
@@ -819,7 +852,7 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 		ToolsRun:       result.Tools,
 		ToolsFailed:    failedNames,
 		ToolsSkipped:   skippedNames,
-		Findings:       findings,
+		Findings:        truncateFindings(findings),
 		XSSFound:       xssFound,
 		ParamsFound:    paramsFound,
 		VulnsFound:     vulnsFound,
@@ -827,7 +860,7 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 		WAFDetected:    ctx.WAFDetected,
 		WAFVendor:      ctx.WAFVendor,
 		OpenPorts:      openPorts,
-		RawCombined:    hunt.GetHuntCombinedOutput(result),
+		RawCombined:    truncateRaw(hunt.GetHuntCombinedOutput(result)),
 	}
 
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to AI for vulnerability analysis..."))
