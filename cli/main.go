@@ -2466,6 +2466,16 @@ func main() {
 			{"ldeep", "exploit", "apt:ldeep", false, false},
 			{"donut-shellcode", "exploit", "apt:donut-shellcode", false, false},
 			{"bopscrk", "exploit", "apt:bopscrk", false, false},
+			// ── Crypto/Web3 ─────────────────────────────────────────────────────
+			{"slither", "exploit", "pipx:slither-analyzer", false, false},
+			{"myth", "exploit", "pipx:mythril", false, false},
+			// ── Mobile ──────────────────────────────────────────────────────────
+			{"apktool", "exploit", "apt:apktool", false, false},
+			{"jadx", "exploit", "apt:jadx", false, false},
+			// ── OAuth/SAML/Business Logic ────────────────────────────────────────
+			{"smuggler", "exploit", "venv:https://github.com/defparam/smuggler:/opt/smuggler:smuggler.py", false, false},
+			{"corscanner", "exploit", "pipx:corscanner", false, false},
+			{"h2csmuggler", "exploit", "pipx:h2csmuggler", false, false},
 		}
 
 		var missing []toolEntry

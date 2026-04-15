@@ -854,13 +854,29 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
 	fmt.Println()
 
-	// ── Step 0: Anonymize IP before any scanning ──────────────────────────
-	anonStatus := anon.Setup()
-	if anonStatus.Active {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			fmt.Sprintf("  ✓ Anonymized: %s via %s", anonStatus.AnonIP, anonStatus.Method)))
+	// ── Step 0: Ask user about anonymization ─────────────────────────────
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+		"  🔒 ANONYMIZATION — Route traffic through Tor? (slower but hides your IP)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+		"  Yes = Tor (anonymous, ~3x slower) | No = Direct (fast, your real IP used)"))
+	anonAns := readWithTimeout(
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Enable Tor anonymization? [y/N] → "),
+		"n", 15)
+
+	if strings.ToLower(strings.TrimSpace(anonAns)) == "y" {
+		anonStatus := anon.Setup()
+		if anonStatus.Active {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  ✓ Anonymized via %s — Anon IP: %s", anonStatus.Method, anonStatus.AnonIP)))
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+				"  ✗ Tor setup failed — continuing without anonymization"))
+		}
+		defer anon.Teardown()
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+			"  ℹ  Direct mode — no anonymization"))
 	}
-	defer anon.Teardown()
 	fmt.Println()
 
 	// ── Agent state — the brain's memory ─────────────────────────────────

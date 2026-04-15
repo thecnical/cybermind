@@ -774,6 +774,326 @@ var exploitRegistry = []ToolSpec{
 			},
 		},
 	},
+
+	// ══════════════════════════════════════════════════════════════════════
+	// CRYPTO / WEB3 ATTACK TOOLS
+	// ══════════════════════════════════════════════════════════════════════
+
+	// ── Slither — Solidity smart contract static analyzer ──
+	{
+		Name: "slither", Phase: 1, Timeout: 600,
+		VulnTypes:   []string{"all", "crypto", "web3", "rce"},
+		InstallHint: "pip3 install slither-analyzer --break-system-packages",
+		InstallCmd:  "pip3 install slither-analyzer --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			// Analyze any .sol files found, or scan GitHub repos
+			return []string{
+				".", "--print", "human-summary",
+				"--detect", "reentrancy-eth,reentrancy-no-eth,arbitrary-send,controlled-delegatecall,suicidal,unprotected-upgrade",
+				"--json", "/tmp/cybermind_slither.json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{".", "--print", "human-summary"}
+			},
+		},
+	},
+
+	// ── Mythril — EVM bytecode security analysis ──
+	{
+		Name: "myth", Phase: 1, Timeout: 900,
+		VulnTypes:   []string{"all", "crypto", "web3"},
+		InstallHint: "pip3 install mythril --break-system-packages",
+		InstallCmd:  "pip3 install mythril --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"analyze", "--solv", "0.8.0",
+				"--execution-timeout", "600",
+				"-o", "json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"analyze", "--execution-timeout", "300"}
+			},
+		},
+	},
+
+	// ══════════════════════════════════════════════════════════════════════
+	// MOBILE APP ATTACK TOOLS
+	// ══════════════════════════════════════════════════════════════════════
+
+	// ── apktool — Android APK decompilation ──
+	{
+		Name: "apktool", Phase: 1, Timeout: 300,
+		VulnTypes:   []string{"all", "mobile", "android"},
+		InstallHint: "sudo apt install apktool -y",
+		InstallCmd:  "sudo apt install apktool -y",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{"d", "/tmp/cybermind_target.apk", "-o", "/tmp/cybermind_apk_decoded", "-f"}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"d", "/tmp/cybermind_target.apk", "-f"}
+			},
+		},
+	},
+
+	// ── jadx — Android APK to Java source ──
+	{
+		Name: "jadx", Phase: 1, Timeout: 300,
+		VulnTypes:   []string{"all", "mobile", "android"},
+		InstallHint: "sudo apt install jadx -y",
+		InstallCmd:  "sudo apt install jadx -y",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"-d", "/tmp/cybermind_jadx_out",
+				"--show-bad-code",
+				"/tmp/cybermind_target.apk",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"-d", "/tmp/cybermind_jadx_out", "/tmp/cybermind_target.apk"}
+			},
+		},
+	},
+
+	// ══════════════════════════════════════════════════════════════════════
+	// OAUTH / SSO / JWT ATTACK TOOLS
+	// ══════════════════════════════════════════════════════════════════════
+
+	// ── oauth-scan — OAuth misconfiguration scanner ──
+	{
+		Name: "oauthscan", Phase: 1, Timeout: 600,
+		VulnTypes:   []string{"all", "oauth", "auth", "web"},
+		InstallHint: "pip3 install oauthscan --break-system-packages || go install github.com/nicowillis/oauthscan@latest",
+		InstallCmd:  "pip3 install oauthscan --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-u", u, "--all", "--verbose"}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u}
+			},
+		},
+	},
+
+	// ── samlrequest — SAML attack toolkit ──
+	{
+		Name: "samlrequest", Phase: 1, Timeout: 300,
+		VulnTypes:   []string{"all", "saml", "auth", "web"},
+		InstallHint: "pip3 install python-saml --break-system-packages && pip3 install samlrequest --break-system-packages",
+		InstallCmd:  "pip3 install samlrequest --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"--url", u, "--test-all"}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"--url", u}
+			},
+		},
+	},
+
+	// ══════════════════════════════════════════════════════════════════════
+	// BUSINESS LOGIC / RACE CONDITION TOOLS
+	// ══════════════════════════════════════════════════════════════════════
+
+	// ── race-the-web — race condition testing ──
+	{
+		Name: "race-the-web", Phase: 1, Timeout: 300,
+		VulnTypes:   []string{"all", "race", "business_logic", "web"},
+		InstallHint: "go install github.com/nicowillis/race-the-web@latest",
+		InstallCmd:  "go install github.com/nicowillis/race-the-web@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-url", u, "-count", "50", "-verbose"}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-url", u, "-count", "20"}
+			},
+		},
+	},
+
+	// ── smuggler — HTTP request smuggling ──
+	{
+		Name: "smuggler", Phase: 1, Timeout: 600,
+		VulnTypes:   []string{"all", "smuggling", "web", "rce"},
+		InstallHint: "git clone https://github.com/defparam/smuggler /opt/smuggler && pip3 install -r /opt/smuggler/requirements.txt --break-system-packages && sudo tee /usr/local/bin/smuggler > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/smuggler/smuggler.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/smuggler",
+		InstallCmd:  "git clone https://github.com/defparam/smuggler /opt/smuggler && pip3 install -r /opt/smuggler/requirements.txt --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-u", u, "--no-color", "-v", "2"}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u}
+			},
+		},
+	},
+
+	// ── h2csmuggler — HTTP/2 cleartext smuggling ──
+	{
+		Name: "h2csmuggler", Phase: 1, Timeout: 300,
+		VulnTypes:   []string{"all", "smuggling", "web"},
+		InstallHint: "pip3 install h2csmuggler --break-system-packages",
+		InstallCmd:  "pip3 install h2csmuggler --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"--scan-list", u, "-x", "GET / HTTP/1.1\r\nHost: " + target}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"--scan-list", u}
+			},
+		},
+	},
+
+	// ── CORScanner — CORS misconfiguration ──
+	{
+		Name: "corscanner", Phase: 1, Timeout: 300,
+		VulnTypes:   []string{"all", "cors", "web"},
+		InstallHint: "pip3 install corscanner --break-system-packages",
+		InstallCmd:  "pip3 install corscanner --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-u", u, "-v"}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u}
+			},
+		},
+	},
+
+	// ── cariddi — endpoint + secret extractor (already in hunt, add to exploit too) ──
+	{
+		Name: "cariddi", Phase: 1, Timeout: 900,
+		VulnTypes:   []string{"all", "web", "secrets"},
+		InstallHint: "go install github.com/edoardottt/cariddi/cmd/cariddi@latest",
+		InstallCmd:  "go install github.com/edoardottt/cariddi/cmd/cariddi@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-s", u, "-e", "-ef", "3",
+				"-secrets", "-err", "-c", "200", "-d", "10",
+				"-o", "/tmp/cybermind_cariddi_exploit.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-s", u, "-e", "-secrets"}
+			},
+		},
+	},
+
+	// ── nuclei-extra — run nuclei with ALL templates including fuzzing ──
+	{
+		Name: "nuclei", Phase: 1, Timeout: 7200,
+		VulnTypes:   []string{"all", "web", "cve", "rce", "xss", "sqli", "ssrf", "lfi", "idor"},
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+		InstallCmd:  "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			args := []string{
+				"-u", u,
+				"-severity", "critical,high,medium",
+				"-t", "cves/,vulnerabilities/,exposures/,misconfiguration/,default-logins/,fuzzing/",
+				"-c", "50",
+				"-timeout", "10",
+				"-retries", "2",
+				"-no-color",
+				"-json-export", "/tmp/cybermind_nuclei_exploit.json",
+			}
+			if ctx.WAFDetected {
+				args = append(args, "-H", "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1)")
+				args = append(args, "-rate-limit", "10")
+			}
+			if len(ctx.LiveURLs) > 1 {
+				f := fmt.Sprintf("/tmp/cybermind_nuclei_urls_%d.txt", len(ctx.LiveURLs))
+				return []string{
+					"-list", f,
+					"-severity", "critical,high,medium",
+					"-t", "cves/,vulnerabilities/,exposures/,misconfiguration/,default-logins/,fuzzing/",
+					"-c", "50", "-timeout", "10", "-retries", "2", "-no-color",
+					"-json-export", "/tmp/cybermind_nuclei_exploit.json",
+				}
+			}
+			return args
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-severity", "critical,high", "-c", "25", "-no-color"}
+			},
+		},
+	},
 }
 
 // portListOrDefault returns comma-separated ports or a default string
