@@ -156,6 +156,9 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /bizlogic <target> --cookie 'session=abc'") + d.Render(" → authenticated scan"))
 		fmt.Println(g.Render("  cybermind /guide <target>") + d.Render("      → 📋 AI manual testing guide (step-by-step for the 12% tools can't automate)"))
 		fmt.Println(g.Render("  cybermind /guide <target> --focus oauth") + d.Render(" → OAuth/SSO specific guide"))
+		fmt.Println(g.Render("  cybermind /platform --setup") + d.Render("         → 🎯 Save HackerOne/Bugcrowd credentials for auto-submit"))
+		fmt.Println(g.Render("  cybermind /platform --programs") + d.Render("      → List your HackerOne programs"))
+		fmt.Println(g.Render("  cybermind /platform --status") + d.Render("        → Check saved credentials"))
 		fmt.Println()
 	}
 
@@ -3963,17 +3966,36 @@ rm -f /tmp/evilginx2.tar.gz`)
 		case "--setup":
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Setting up platform credentials..."))
 			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  How to get HackerOne API token:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1. Login → hackerone.com"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  2. Profile picture → Settings → API Token"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  3. Create API Token → copy the token"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  How to get Bugcrowd API token:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1. Login → bugcrowd.com"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  2. Settings → API → Create Token"))
+			fmt.Println()
 
 			var creds brain.PlatformCredentials
 
-			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  HackerOne username: "))
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  HackerOne username (leave blank to skip): "))
 			fmt.Scanln(&creds.H1Username)
-			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  HackerOne API token: "))
-			fmt.Scanln(&creds.H1Token)
-			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Bugcrowd email (optional): "))
+			if creds.H1Username != "" {
+				fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  HackerOne API token: "))
+				fmt.Scanln(&creds.H1Token)
+			}
+			fmt.Println()
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Bugcrowd email (leave blank to skip): "))
 			fmt.Scanln(&creds.BCEmail)
-			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Bugcrowd API token (optional): "))
-			fmt.Scanln(&creds.BCToken)
+			if creds.BCEmail != "" {
+				fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Bugcrowd API token: "))
+				fmt.Scanln(&creds.BCToken)
+			}
+
+			if creds.H1Username == "" && creds.BCEmail == "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  No credentials entered — skipping"))
+				break
+			}
 
 			if err := brain.SaveCredentials(creds); err != nil {
 				printError("Failed to save credentials: " + err.Error())
@@ -3981,7 +4003,11 @@ rm -f /tmp/evilginx2.tar.gz`)
 			}
 			fmt.Println()
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Credentials saved to ~/.cybermind/platform_creds.json"))
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Now run: cybermind /platform --programs"))
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Auto-submit enabled — bugs will be submitted to H1/BC automatically"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Next steps:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --programs    → see your programs"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  sudo cybermind /plan --auto-target → start hunting!"))
 
 		case "--programs":
 			creds, err := brain.LoadCredentials()
@@ -4026,16 +4052,48 @@ rm -f /tmp/evilginx2.tar.gz`)
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
 				brain.FormatScopeReport(scope, expanded)))
 
+		case "--status":
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  Platform Credentials Status"))
+			fmt.Println()
+			if brain.HasCredentials() {
+				creds, _ := brain.LoadCredentials()
+				if creds.H1Username != "" {
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ HackerOne: " + creds.H1Username))
+					if creds.H1Token != "" {
+						masked := creds.H1Token[:min(8, len(creds.H1Token))] + strings.Repeat("•", 20)
+						fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    Token: " + masked))
+					}
+				}
+				if creds.BCEmail != "" {
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Bugcrowd: " + creds.BCEmail))
+				}
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Auto-submit enabled — bugs will be submitted automatically"))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  No credentials saved"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run: cybermind /platform --setup"))
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  How to get HackerOne API token:"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1. Login to hackerone.com"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  2. Profile → Settings → API Token"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  3. Create API Token → copy it"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  4. Run: cybermind /platform --setup"))
+			}
+
 		default:
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Commands:"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --setup              → save H1/BC credentials"))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --status             → check saved credentials"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --programs           → list your programs"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /platform --scope <handle>     → fetch program scope"))
 			fmt.Println()
 			if brain.HasCredentials() {
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Credentials configured"))
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Credentials configured — run: cybermind /platform --status"))
 			} else {
 				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  No credentials — run: cybermind /platform --setup"))
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Quick setup:"))
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  cybermind /platform --setup"))
 			}
 		}
 
