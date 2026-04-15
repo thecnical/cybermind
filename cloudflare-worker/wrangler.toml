@@ -1,0 +1,11 @@
+name = "cybermind-api"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+
+# Routes — worker handles all requests to this domain
+# Deploy: wrangler deploy
+# URL after deploy: https://cybermind-api.thecnical.workers.dev

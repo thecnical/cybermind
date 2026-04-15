@@ -20,20 +20,58 @@ import (
 
 const defaultBackendURL = "https://cybermind-backend-8yrt.onrender.com"
 
-// SSRF protection — reject private/loopback IPs in CYBERMIND_API env var
+// fallbackBackendURL is the Cloudflare Workers mirror — always on, zero cold start
+const fallbackBackendURL = "https://cybermind-api.thecnical.workers.dev"
+
+// backendStatus tracks which backend is currently healthy
+var (
+	primaryHealthy  = true
+	lastHealthCheck = time.Time{}
+	healthCheckTTL  = 30 * time.Second
+)
+
+// getBaseURL returns the best available backend URL.
+// Priority: CYBERMIND_API env → Render (primary) → Cloudflare Workers (fallback)
 func getBaseURL() string {
+	// 1. Explicit override via env
 	if raw := os.Getenv("CYBERMIND_API"); raw != "" {
 		u, err := url.Parse(raw)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
 			return defaultBackendURL
 		}
-		// Block SSRF: reject private/loopback/link-local hostnames
-		host := u.Hostname()
-		if isSSRFHost(host) {
+		if isSSRFHost(u.Hostname()) {
 			return defaultBackendURL
 		}
 		return strings.TrimRight(raw, "/")
 	}
+
+	// 2. Check if primary (Render) is healthy — cached for 30s
+	if time.Since(lastHealthCheck) > healthCheckTTL {
+		lastHealthCheck = time.Now()
+		primaryHealthy = isPrimaryHealthy()
+	}
+
+	if primaryHealthy {
+		return defaultBackendURL
+	}
+
+	// 3. Fallback to Cloudflare Workers (always on)
+	return fallbackBackendURL
+}
+
+// isPrimaryHealthy pings Render backend with a short timeout
+func isPrimaryHealthy() bool {
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Get(defaultBackendURL + "/ping")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == 200
+}
+
+// getBaseURLDirect always returns primary — for non-critical requests
+func getBaseURLDirect() string {
 	return defaultBackendURL
 }
 
@@ -321,16 +359,18 @@ func waitForBackend(maxWait time.Duration) error {
 }
 
 // post sends a JSON request and returns the AI response string.
-// Handles Render cold start transparently — shows progress, auto-retries.
+// post sends a JSON request and returns the AI response string.
+// Handles Render cold start transparently — tries Cloudflare Workers fallback first.
 func post(endpoint string, body interface{}) (string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode request: %w", err)
 	}
 
-	// Attempt 1 — try immediately
+	// Attempt 1 — try primary (Render)
 	result, err := doPost(endpoint, payload)
 	if err == nil {
+		primaryHealthy = true
 		return result, nil
 	}
 
@@ -339,24 +379,43 @@ func post(endpoint string, body interface{}) (string, error) {
 		return "", err
 	}
 
-	// Backend is sleeping — wake it up with progress display
-	fmt.Print("\r  ⟳ Backend waking up ")
+	// Primary is down — mark unhealthy and try Cloudflare Workers immediately
+	primaryHealthy = false
+	lastHealthCheck = time.Now()
+
+	fmt.Print("\r  ⟳ Primary backend sleeping — trying edge fallback... ")
+	result, cfErr := doPostURL(fallbackBackendURL+endpoint, payload)
+	if cfErr == nil {
+		fmt.Printf("\r  ✓ Edge backend responded                              \n")
+		return result, nil
+	}
+
+	// Both down — wake up Render with progress display
+	fmt.Print("\r  ⟳ Waking up backend ")
 	wakeStart := time.Now()
-	maxWake := 90 * time.Second
+	maxWake := 60 * time.Second // reduced from 90s since we have fallback
 
 	woke := false
 	for time.Since(wakeStart) < maxWake {
 		elapsed := int(time.Since(wakeStart).Seconds())
 		dots := strings.Repeat(".", (elapsed/3)%4)
 		spaces := strings.Repeat(" ", 3-(elapsed/3)%4)
-		fmt.Printf("\r  ⟳ Backend waking up%s%s (%ds)", dots, spaces, elapsed)
+		fmt.Printf("\r  ⟳ Waking up backend%s%s (%ds)", dots, spaces, elapsed)
 
-		resp, pingErr := fastClient.Get(getBaseURL() + "/ping")
+		resp, pingErr := fastClient.Get(defaultBackendURL + "/ping")
 		if pingErr == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
 				woke = true
+				primaryHealthy = true
 				break
+			}
+		}
+		// Keep trying fallback every 15s while waiting
+		if elapsed > 0 && elapsed%15 == 0 {
+			if r2, e2 := doPostURL(fallbackBackendURL+endpoint, payload); e2 == nil {
+				fmt.Printf("\r  ✓ Edge backend responded                              \n")
+				return r2, nil
 			}
 		}
 		time.Sleep(3 * time.Second)
@@ -364,12 +423,11 @@ func post(endpoint string, body interface{}) (string, error) {
 
 	if !woke {
 		fmt.Println()
-		return "", fmt.Errorf("backend took too long to start. Try again in 30 seconds")
+		return "", fmt.Errorf("backend unavailable. Try again in 30 seconds")
 	}
 
-	// Backend is up — small buffer then retry
 	time.Sleep(1 * time.Second)
-	fmt.Printf("\r  ✓ Backend ready — sending request...%s\n", strings.Repeat(" ", 20))
+	fmt.Printf("\r  ✓ Backend ready                                       \n")
 
 	// Attempt 2 — after wake
 	result, err = doPost(endpoint, payload)
@@ -386,9 +444,14 @@ func post(endpoint string, body interface{}) (string, error) {
 	return result, err
 }
 
-// doPost performs a single HTTP POST and parses the JSON response.
+// doPost performs a single HTTP POST to the current best backend URL.
 func doPost(endpoint string, payload []byte) (string, error) {
-	req, err := http.NewRequest("POST", getBaseURL()+endpoint, bytes.NewBuffer(payload))
+	return doPostURL(getBaseURL()+endpoint, payload)
+}
+
+// doPostURL performs a single HTTP POST to a specific URL.
+func doPostURL(fullURL string, payload []byte) (string, error) {
+	req, err := http.NewRequest("POST", fullURL, bytes.NewBuffer(payload))
 	if err != nil {
 		return "", fmt.Errorf("_backend_down: request build failed")
 	}
