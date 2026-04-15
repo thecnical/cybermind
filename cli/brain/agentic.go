@@ -216,3 +216,123 @@ LastUsed:    time.Now(),
 })
 SaveGlobal(g)
 }
+
+// SuggestNextAction returns the best next action based on current scan state.
+// This is the brain's autonomous decision engine — called when AI is unavailable.
+// Returns: action string, vuln focus, reason
+func SuggestNextAction(
+	target string,
+	reconDone, huntDone, abhiDone bool,
+	bugsFound int,
+	bugTypes []string,
+	technologies []string,
+	wafDetected bool,
+	mode string,
+) (action, vulnFocus, reason string) {
+
+	// Load memory for this target
+	mem := LoadTarget(target)
+	similar := FindSimilarTargets(target, 3)
+
+	techStr := strings.ToLower(strings.Join(technologies, " "))
+
+	// ── Quick mode: prioritize speed ─────────────────────────────────────
+	if mode == "quick" {
+		if !reconDone {
+			return "recon", "all", "Quick mode: fast recon first"
+		}
+		if !huntDone {
+			// Use memory to focus on most likely vuln type
+			if len(mem.PatternsWorked) > 0 {
+				return "hunt", mem.PatternsWorked[0].Type, fmt.Sprintf("Quick mode: memory says %s works on this target", mem.PatternsWorked[0].Type)
+			}
+			return "hunt", selectFocusByTech(techStr), "Quick mode: tech-aware hunt"
+		}
+		if bugsFound > 0 && !abhiDone {
+			return "exploit", selectExploitByBugs(bugTypes), fmt.Sprintf("Quick mode: %d bugs found, exploiting immediately", bugsFound)
+		}
+		if bugsFound > 0 {
+			return "poc", "all", "Quick mode: generating PoC"
+		}
+		return "next_target", "all", "Quick mode: no bugs found, moving on"
+	}
+
+	// ── Deep/overnight mode: thorough coverage ────────────────────────────
+	if !reconDone {
+		return "recon", "all", "Gathering target intelligence"
+	}
+
+	if !huntDone {
+		focus := selectFocusByTech(techStr)
+		// Check if similar targets had specific bugs
+		if len(similar) > 0 {
+			for _, s := range similar {
+				if len(s.BugTypes) > 0 {
+					focus = s.BugTypes[0]
+					reason = fmt.Sprintf("Similar target %s had %s bugs — focusing there", s.Domain, focus)
+					return "hunt", focus, reason
+				}
+			}
+		}
+		return "hunt", focus, "Running full hunt with tech-aware focus: " + focus
+	}
+
+	if bugsFound > 0 && !abhiDone {
+		focus := selectExploitByBugs(bugTypes)
+		return "exploit", focus, fmt.Sprintf("Hunt found %d bugs (%v) — running Abhimanyu exploit phase", bugsFound, bugTypes)
+	}
+
+	if bugsFound > 0 && abhiDone {
+		return "poc", "all", "Exploitation complete — generating PoC and report"
+	}
+
+	// No bugs found after hunt — try deeper approaches
+	if huntDone && bugsFound == 0 {
+		if wafDetected {
+			return "hunt", "waf_bypass", "WAF detected — retrying with bypass techniques"
+		}
+		return "deep_hunt", "all", "Standard hunt found nothing — running novel attacks + deep scan"
+	}
+
+	return "done", "all", "All phases complete"
+}
+
+// selectFocusByTech returns the best vuln focus based on tech stack
+func selectFocusByTech(techStr string) string {
+	switch {
+	case strings.Contains(techStr, "wordpress"):
+		return "sqli,xss,rce"
+	case strings.Contains(techStr, "graphql"):
+		return "idor,ssrf"
+	case strings.Contains(techStr, "node") || strings.Contains(techStr, "express"):
+		return "ssrf,xss"
+	case strings.Contains(techStr, "php"):
+		return "sqli,lfi"
+	case strings.Contains(techStr, "asp.net") || strings.Contains(techStr, "iis"):
+		return "sqli,xxe"
+	case strings.Contains(techStr, "java") || strings.Contains(techStr, "spring"):
+		return "deserialization,ssrf"
+	case strings.Contains(techStr, "django") || strings.Contains(techStr, "flask"):
+		return "ssti,ssrf"
+	default:
+		return "all"
+	}
+}
+
+// selectExploitByBugs returns the best Abhimanyu focus based on confirmed bugs
+func selectExploitByBugs(bugTypes []string) string {
+	if len(bugTypes) == 0 {
+		return "all"
+	}
+	priority := []string{"rce", "sqli", "xss", "ssrf", "auth", "lfi"}
+	bugSet := make(map[string]bool)
+	for _, bt := range bugTypes {
+		bugSet[strings.ToLower(bt)] = true
+	}
+	for _, p := range priority {
+		if bugSet[p] {
+			return p
+		}
+	}
+	return bugTypes[0]
+}

@@ -929,26 +929,38 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 
 	lhost := getLocalIP()
 
-	// ── Auto-select vulnType based on hunt findings ───────────────────────
+	// ── Auto-select vulnType based on hunt findings + decision focus ─────
 	// If hunt found specific vuln types, target those first instead of running all
 	vulnType := "all"
-	if len(xssFound) > 0 && len(vulnsFound) == 0 {
-		vulnType = "xss"
-	} else if len(vulnsFound) > 0 {
-		// Check nuclei findings for specific vuln types
-		for _, v := range vulnsFound {
-			lower := strings.ToLower(v)
-			if strings.Contains(lower, "sqli") || strings.Contains(lower, "sql-injection") {
-				vulnType = "sqli"
-				break
-			}
-			if strings.Contains(lower, "rce") || strings.Contains(lower, "command") {
-				vulnType = "rce"
-				break
-			}
-			if strings.Contains(lower, "ssrf") {
-				vulnType = "ssrf"
-				break
+
+	// Check if decision passed a specific vuln focus via Technologies field
+	for _, tech := range ctx.Technologies {
+		if strings.HasPrefix(tech, "CYBERMIND_VULN_FOCUS:") {
+			vulnType = strings.TrimPrefix(tech, "CYBERMIND_VULN_FOCUS:")
+			break
+		}
+	}
+
+	// Override with hunt findings if more specific
+	if vulnType == "all" {
+		if len(xssFound) > 0 && len(vulnsFound) == 0 {
+			vulnType = "xss"
+		} else if len(vulnsFound) > 0 {
+			// Check nuclei findings for specific vuln types
+			for _, v := range vulnsFound {
+				lower := strings.ToLower(v)
+				if strings.Contains(lower, "sqli") || strings.Contains(lower, "sql-injection") {
+					vulnType = "sqli"
+					break
+				}
+				if strings.Contains(lower, "rce") || strings.Contains(lower, "command") {
+					vulnType = "rce"
+					break
+				}
+				if strings.Contains(lower, "ssrf") {
+					vulnType = "ssrf"
+					break
+				}
 			}
 		}
 	}

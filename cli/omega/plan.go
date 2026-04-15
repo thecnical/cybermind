@@ -852,3 +852,219 @@ return "", err
 return filename, os.WriteFile(filename, data, 0644)
 }
 
+
+// ─── Tech-Aware Tool Selection ────────────────────────────────────────────────
+
+// ToolSelection holds the recommended tools for each phase based on target intel.
+type ToolSelection struct {
+	ReconTools   []string // tools to prioritize in recon phase
+	HuntTools    []string // tools to prioritize in hunt phase
+	ExploitTools []string // tools to prioritize in Abhimanyu phase
+	SkipTools    []string // tools to skip (not relevant for this target)
+	VulnFocus    string   // primary vuln focus: sqli|xss|rce|ssrf|all
+	Notes        []string // human-readable notes about why tools were selected
+}
+
+// SelectToolsByIntel returns a target-specific tool selection based on gathered intelligence.
+// This is the core of "intelligent planning" — instead of running all 120+ tools,
+// we select the most relevant ones based on what we know about the target.
+func SelectToolsByIntel(intel TargetIntel) ToolSelection {
+	sel := ToolSelection{
+		VulnFocus: "all",
+	}
+
+	techStr := strings.ToLower(strings.Join(intel.TechStack, " "))
+	serverStr := strings.ToLower(intel.ServerBanner)
+
+	// ── WordPress detection ───────────────────────────────────────────────
+	if strings.Contains(techStr, "wordpress") || strings.Contains(techStr, "wp-") {
+		sel.ReconTools = append(sel.ReconTools, "wpscan", "nuclei")
+		sel.HuntTools = append(sel.HuntTools, "wpscan", "nuclei", "paramspider", "dalfox")
+		sel.ExploitTools = append(sel.ExploitTools, "wpscan", "sqlmap", "commix")
+		sel.VulnFocus = "sqli,xss,rce"
+		sel.Notes = append(sel.Notes, "WordPress detected → wpscan, xmlrpc attacks, plugin CVEs")
+		// Skip tools not relevant for WordPress
+		sel.SkipTools = append(sel.SkipTools, "graphw00f", "kerbrute", "nosqlmap")
+	}
+
+	// ── GraphQL detection ─────────────────────────────────────────────────
+	if strings.Contains(techStr, "graphql") || strings.Contains(techStr, "apollo") {
+		sel.HuntTools = append(sel.HuntTools, "graphw00f", "nuclei", "jwt_tool")
+		sel.ExploitTools = append(sel.ExploitTools, "sqlmap", "commix")
+		sel.VulnFocus = "idor,ssrf,injection"
+		sel.Notes = append(sel.Notes, "GraphQL detected → introspection, batching attacks, IDOR")
+		sel.SkipTools = append(sel.SkipTools, "wpscan", "kerbrute")
+	}
+
+	// ── Node.js / Express detection ───────────────────────────────────────
+	if strings.Contains(techStr, "node") || strings.Contains(techStr, "express") ||
+		strings.Contains(techStr, "x-powered-by:express") {
+		sel.HuntTools = append(sel.HuntTools, "nuclei", "dalfox", "smuggler", "jwt_tool")
+		sel.ExploitTools = append(sel.ExploitTools, "sqlmap", "commix")
+		sel.VulnFocus = "ssrf,prototype,xss"
+		sel.Notes = append(sel.Notes, "Node.js/Express detected → prototype pollution, SSRF, JWT attacks")
+		sel.SkipTools = append(sel.SkipTools, "wpscan", "kerbrute", "nosqlmap")
+	}
+
+	// ── PHP detection ─────────────────────────────────────────────────────
+	if strings.Contains(techStr, "php") || strings.Contains(serverStr, "php") {
+		sel.HuntTools = append(sel.HuntTools, "nuclei", "dalfox", "paramspider", "tplmap")
+		sel.ExploitTools = append(sel.ExploitTools, "sqlmap", "commix", "tplmap")
+		sel.VulnFocus = "sqli,lfi,rce"
+		sel.Notes = append(sel.Notes, "PHP detected → SQLi, LFI, RCE via file inclusion, SSTI")
+	}
+
+	// ── ASP.NET / IIS detection ───────────────────────────────────────────
+	if strings.Contains(techStr, "asp.net") || strings.Contains(techStr, "iis") ||
+		strings.Contains(serverStr, "iis") || strings.Contains(techStr, "x-powered-by:asp.net") {
+		sel.HuntTools = append(sel.HuntTools, "nuclei", "smuggler", "jwt_tool")
+		sel.ExploitTools = append(sel.ExploitTools, "sqlmap", "commix")
+		sel.VulnFocus = "sqli,xxe,deserialization"
+		sel.Notes = append(sel.Notes, "ASP.NET/IIS detected → SQLi, XXE, .NET deserialization, ViewState")
+		sel.SkipTools = append(sel.SkipTools, "wpscan", "kerbrute", "nosqlmap")
+	}
+
+	// ── Java / Spring / Tomcat detection ─────────────────────────────────
+	if strings.Contains(techStr, "java") || strings.Contains(techStr, "spring") ||
+		strings.Contains(techStr, "tomcat") || strings.Contains(serverStr, "tomcat") ||
+		strings.Contains(serverStr, "jetty") {
+		sel.HuntTools = append(sel.HuntTools, "nuclei", "smuggler", "jwt_tool")
+		sel.ExploitTools = append(sel.ExploitTools, "sqlmap", "commix")
+		sel.VulnFocus = "deserialization,ssrf,rce"
+		sel.Notes = append(sel.Notes, "Java/Spring detected → Log4Shell, deserialization, SSRF, Spring4Shell")
+		sel.SkipTools = append(sel.SkipTools, "wpscan", "nosqlmap")
+	}
+
+	// ── Django / Python detection ─────────────────────────────────────────
+	if strings.Contains(techStr, "django") || strings.Contains(techStr, "python") ||
+		strings.Contains(techStr, "flask") || strings.Contains(techStr, "fastapi") {
+		sel.HuntTools = append(sel.HuntTools, "nuclei", "tplmap", "dalfox", "jwt_tool")
+		sel.ExploitTools = append(sel.ExploitTools, "sqlmap", "tplmap", "commix")
+		sel.VulnFocus = "ssti,ssrf,sqli"
+		sel.Notes = append(sel.Notes, "Django/Python detected → SSTI (Jinja2), SSRF, SQLi")
+		sel.SkipTools = append(sel.SkipTools, "wpscan", "kerbrute")
+	}
+
+	// ── MongoDB / NoSQL detection ─────────────────────────────────────────
+	if strings.Contains(techStr, "mongodb") || strings.Contains(techStr, "nosql") ||
+		containsPort(intel.OpenPorts, 27017) {
+		sel.HuntTools = append(sel.HuntTools, "nuclei", "nosqlmap")
+		sel.ExploitTools = append(sel.ExploitTools, "nosqlmap")
+		sel.Notes = append(sel.Notes, "MongoDB/NoSQL detected → NoSQL injection, auth bypass")
+	}
+
+	// ── MySQL / PostgreSQL detection ──────────────────────────────────────
+	if containsPort(intel.OpenPorts, 3306) || containsPort(intel.OpenPorts, 5432) ||
+		strings.Contains(techStr, "mysql") || strings.Contains(techStr, "postgresql") {
+		sel.ExploitTools = append(sel.ExploitTools, "sqlmap")
+		sel.Notes = append(sel.Notes, "Database port open → sqlmap with direct DB connection")
+	}
+
+	// ── SSH detection ─────────────────────────────────────────────────────
+	if containsPort(intel.OpenPorts, 22) {
+		sel.ExploitTools = append(sel.ExploitTools, "hydra")
+		sel.Notes = append(sel.Notes, "SSH port 22 open → hydra brute force, key enumeration")
+	}
+
+	// ── SMB / Windows detection ───────────────────────────────────────────
+	if containsPort(intel.OpenPorts, 445) || containsPort(intel.OpenPorts, 139) ||
+		strings.Contains(techStr, "windows") || intel.OSHint == "Windows" {
+		sel.ExploitTools = append(sel.ExploitTools, "crackmapexec", "impacket-secretsdump")
+		sel.Notes = append(sel.Notes, "SMB/Windows detected → crackmapexec, pass-the-hash, secretsdump")
+	}
+
+	// ── Cloudflare WAF ────────────────────────────────────────────────────
+	if intel.WAFDetected && strings.Contains(strings.ToLower(intel.WAFVendor), "cloudflare") {
+		sel.Notes = append(sel.Notes, "Cloudflare WAF → stealth mode, rate limiting, WAF bypass payloads")
+		// Add WAF bypass tools
+		sel.HuntTools = append(sel.HuntTools, "dalfox", "nuclei")
+	}
+
+	// ── AWS / Cloud detection ─────────────────────────────────────────────
+	if strings.Contains(techStr, "aws") || strings.Contains(techStr, "amazon") ||
+		strings.Contains(techStr, "s3") || strings.Contains(techStr, "cloudfront") {
+		sel.HuntTools = append(sel.HuntTools, "nuclei", "ssrfmap")
+		sel.Notes = append(sel.Notes, "AWS detected → SSRF to metadata (169.254.169.254), S3 bucket misconfig")
+	}
+
+	// ── Shodan CVEs ───────────────────────────────────────────────────────
+	if vulns, ok := intel.ShodanData["vulns"]; ok && vulns != "" {
+		sel.Notes = append(sel.Notes, fmt.Sprintf("Shodan CVEs detected: %s → run searchsploit + nuclei CVE templates", vulns))
+		sel.ExploitTools = append(sel.ExploitTools, "searchsploit")
+	}
+
+	// ── Default: if no specific tech detected, run full arsenal ──────────
+	if len(sel.HuntTools) == 0 {
+		sel.VulnFocus = "all"
+		sel.Notes = append(sel.Notes, "No specific tech detected — running full tool arsenal")
+	}
+
+	// Deduplicate tool lists
+	sel.ReconTools = deduplicateTools(sel.ReconTools)
+	sel.HuntTools = deduplicateTools(sel.HuntTools)
+	sel.ExploitTools = deduplicateTools(sel.ExploitTools)
+	sel.SkipTools = deduplicateTools(sel.SkipTools)
+
+	return sel
+}
+
+// containsPort checks if a port is in the list
+func containsPort(ports []int, port int) bool {
+	for _, p := range ports {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
+
+// deduplicateTools removes duplicate tool names
+func deduplicateTools(tools []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, t := range tools {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// DisplayToolSelection prints the tech-aware tool selection to terminal
+func DisplayToolSelection(sel ToolSelection, target string) {
+	s := func(color lipgloss.Color, text string) string {
+		return lipgloss.NewStyle().Foreground(color).Render(text)
+	}
+	b := func(color lipgloss.Color, text string) string {
+		return lipgloss.NewStyle().Bold(true).Foreground(color).Render(text)
+	}
+
+	fmt.Println()
+	fmt.Println(b(cyan, "  🎯 TECH-AWARE TOOL SELECTION — "+target))
+	fmt.Println(s(lipgloss.Color("#333333"), "  "+strings.Repeat("─", 60)))
+	fmt.Println()
+
+	if len(sel.Notes) > 0 {
+		fmt.Println(b(yellow, "  Intelligence:"))
+		for _, note := range sel.Notes {
+			fmt.Println(s(lipgloss.Color("#E0E0E0"), "    → "+note))
+		}
+		fmt.Println()
+	}
+
+	if len(sel.ReconTools) > 0 {
+		fmt.Println(b(lipgloss.Color("#00CFFF"), "  Recon priority:  ")+s(green, strings.Join(sel.ReconTools, ", ")))
+	}
+	if len(sel.HuntTools) > 0 {
+		fmt.Println(b(lipgloss.Color("#FF6600"), "  Hunt priority:   ")+s(green, strings.Join(sel.HuntTools, ", ")))
+	}
+	if len(sel.ExploitTools) > 0 {
+		fmt.Println(b(red, "  Exploit tools:   ")+s(green, strings.Join(sel.ExploitTools, ", ")))
+	}
+	if len(sel.SkipTools) > 0 {
+		fmt.Println(b(dim, "  Skipping:        ")+s(dim, strings.Join(sel.SkipTools, ", ")+" (not relevant)"))
+	}
+	fmt.Println(b(purple, "  Vuln focus:      ")+s(lipgloss.Color("#FFD700"), sel.VulnFocus))
+	fmt.Println()
+}

@@ -963,11 +963,11 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	var allFindings = make(map[string]string)
 	_ = bestPatterns // used in future iterations
 
-	maxIterations := 8 // prevent infinite loops
+	maxIterations := 10 // prevent infinite loops — enough for: recon+hunt+exploit+poc+guide
 	if mode == "overnight" {
-		maxIterations = 20
+		maxIterations = 25
 	} else if mode == "quick" {
-		maxIterations = 4
+		maxIterations = 6 // quick: recon+hunt+exploit+poc minimum
 	}
 
 	for iter := 0; iter < maxIterations; iter++ {
@@ -1427,13 +1427,15 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 
 		case "exploit":
 			agentAct(fmt.Sprintf("Running ABHIMANYU exploit phase (focus: %s)...", decision.VulnFocus))
-			omegaLog("\n═══ AGENT: EXPLOIT ═══")
+			omegaLog("\n═══ AGENT: EXPLOIT (ABHIMANYU) ═══")
 
 			var huntCtxForAbhi hunt.HuntContext
 			if huntResult.Context != nil {
 				huntCtxForAbhi = *huntResult.Context
 			}
 
+			// ── CRITICAL FIX: Pass specific vuln targets to Abhimanyu ────
+			// If hunt found specific SQLi params, XSS URLs, etc. — pass them
 			xssFound := huntCtxForAbhi.XSSFound
 			vulnsFound := huntCtxForAbhi.VulnsFound
 			paramsFound := huntCtxForAbhi.ParamsFound
@@ -1442,9 +1444,89 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				openPorts = reconResult.Context.OpenPorts
 			}
 
+			// Set vuln focus from decision (tech-aware selection)
+			if decision.VulnFocus != "" && decision.VulnFocus != "all" {
+				huntCtxForAbhi.Technologies = append(huntCtxForAbhi.Technologies,
+					"CYBERMIND_VULN_FOCUS:"+decision.VulnFocus)
+			}
+
+			// Show what Abhimanyu will target
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+				fmt.Sprintf("  ⚔️  Abhimanyu targets: XSS=%d URLs, Vulns=%d, Params=%d, Ports=%d",
+					len(xssFound), len(vulnsFound), len(paramsFound), len(openPorts))))
+
 			runAbhimanyuFromHunt(target, huntCtxForAbhi, xssFound, vulnsFound, paramsFound, openPorts, allFindings)
 			state.AbhiDone = true
 			state.Phase = "exploit_done"
+
+		case "deep_hunt":
+			// ── NEW: Second-pass deep scan when first hunt finds nothing ──
+			agentAct("Running DEEP HUNT — second-pass scan with exhaustive tool coverage...")
+			omegaLog("\n═══ AGENT: DEEP HUNT (SECOND PASS) ═══")
+
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+				"  ⟳ Deep hunt: running novel attacks + full nuclei template set + extended crawl..."))
+
+			// Run novel attacks from brain module
+			if reconResult.Context != nil {
+				liveURLs := reconResult.Context.LiveURLs
+				brain.RunNovelAttacks(target, liveURLs, func(result brain.NovelAttackResult) {
+					if result.Vulnerable {
+						sev := bugdetect.SeverityHigh
+						if result.Severity == "critical" {
+							sev = bugdetect.SeverityCritical
+						} else if result.Severity == "medium" {
+							sev = bugdetect.SeverityMedium
+						}
+						allBugs = append(allBugs, bugdetect.Bug{
+							Title:       result.AttackType + " — Novel Attack",
+							Severity:    sev,
+							Tool:        "novel_attacks",
+							Target:      target,
+							URL:         result.URL,
+							Description: result.Description,
+							Evidence:    result.Evidence,
+							CVSS:        8.0,
+							CWE:         "CWE-200",
+							FoundAt:     time.Now(),
+						})
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+							fmt.Sprintf("  🐛 NOVEL ATTACK: [%s] %s", result.Severity, result.AttackType)))
+					}
+				})
+			}
+
+			// Run a second hunt pass with different tool focus
+			var deepHuntCtx *hunt.HuntContext
+			if reconResult.Context != nil {
+				rc := reconResult.Context
+				deepHuntCtx = &hunt.HuntContext{
+					Target:       target,
+					TargetType:   rc.TargetType,
+					LiveURLs:     rc.LiveURLs,
+					CrawledURLs:  rc.CrawledURLs,
+					OpenPorts:    rc.OpenPorts,
+					WAFDetected:  rc.WAFDetected,
+					WAFVendor:    rc.WAFVendor,
+					Subdomains:   rc.Subdomains,
+					Technologies: rc.Technologies,
+				}
+			}
+			// Focus on tools not yet run
+			deepHuntResult := runHuntSilent(target, deepHuntCtx, []string{"nuclei", "ssrfmap", "tplmap", "jwt_tool", "corsy", "smuggler"})
+			for _, tr := range deepHuntResult.Results {
+				if tr.Output != "" {
+					bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+					allBugs = append(allBugs, bugs...)
+					allFindings["deep_"+tr.Tool] = truncate(tr.Output, 500)
+				}
+			}
+			allBugs = dedupBugs(allBugs)
+			state.BugsFound = len(allBugs)
+			state.BugTypes = extractBugTypes(allBugs)
+			state.Phase = "deep_hunt_done"
+			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
+				fmt.Sprintf("  ✓ Deep hunt complete: %d additional bugs found", state.BugsFound)))
 
 		case "poc":
 			agentAct("Verifying bugs + generating PoC...")
@@ -1864,6 +1946,12 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 }
 
 // localAgentDecision makes a decision without AI — pure logic fallback
+// localAgentDecision is the fallback decision engine when AI is unavailable.
+// It implements a proper state machine that:
+// 1. Always runs recon → hunt → exploit (Abhimanyu) → poc
+// 2. Selects vuln-specific exploit focus based on what was found
+// 3. Runs deep_hunt for second-pass scanning when first hunt finds nothing
+// 4. Exits early on critical findings in quick mode
 func localAgentDecision(state api.AgentState) *api.AgentDecision {
 	d := &api.AgentDecision{
 		VulnFocus:  "all",
@@ -1871,42 +1959,162 @@ func localAgentDecision(state api.AgentState) *api.AgentDecision {
 		Confidence: 60,
 	}
 
+	// ── Quick mode: exit early if critical bug found ──────────────────────
+	if state.Mode == "quick" && state.BugsFound > 0 {
+		for _, bt := range state.BugTypes {
+			if bt == "rce" || bt == "sqli" || bt == "critical" {
+				if state.AbhiDone {
+					d.Action = "poc"
+					d.Reason = fmt.Sprintf("Critical bug found (%s) — generating PoC immediately", bt)
+					return d
+				}
+				d.Action = "exploit"
+				d.Reason = fmt.Sprintf("Critical bug found (%s) — exploiting immediately", bt)
+				d.VulnFocus = bt
+				return d
+			}
+		}
+	}
+
 	switch {
 	case !state.ReconDone:
 		d.Action = "recon"
 		d.Reason = "Recon not done yet — gather target intelligence first"
+
 	case !state.HuntDone:
 		d.Action = "hunt"
 		d.Reason = "Hunt not done yet — find vulnerabilities"
 		if state.WAFDetected {
 			d.WAFBypass = "random-agent,delay,tamper"
 		}
+		// Tech-aware vuln focus
+		d.VulnFocus = selectVulnFocusByTech(state.Technologies)
+
 	case state.HuntDone && state.BugsFound == 0 && state.Phase == "hunt_done":
-		// After hunt with no bugs, try business logic
-		d.Action = "bizlogic"
-		d.Reason = "No bugs from standard hunt — trying business logic scanner"
-	case state.BugsFound > 0 && !state.AbhiDone:
-		d.Action = "exploit"
-		d.Reason = fmt.Sprintf("Found %d bugs — running exploit phase", state.BugsFound)
-		d.VulnFocus = "all"
-		if len(state.BugTypes) > 0 {
-			d.VulnFocus = state.BugTypes[0]
+		// After hunt with no bugs — try business logic first, then deep hunt
+		if state.LastAction != "bizlogic" {
+			d.Action = "bizlogic"
+			d.Reason = "No bugs from standard hunt — trying business logic scanner"
+		} else {
+			// BizLogic also found nothing — run deep hunt with different tools
+			d.Action = "deep_hunt"
+			d.Reason = "Standard hunt + bizlogic found nothing — running deep second-pass scan"
+			d.Depth = "exhaustive"
 		}
-	case state.BugsFound > 0 && state.AbhiDone:
+
+	case state.BugsFound > 0 && !state.AbhiDone:
+		// ── CRITICAL FIX: Always run Abhimanyu when bugs are found ──────
+		d.Action = "exploit"
+		d.Reason = fmt.Sprintf("Found %d bugs — running Abhimanyu exploit phase", state.BugsFound)
+		// Select specific vuln focus based on what was found
+		d.VulnFocus = selectExploitFocusByBugs(state.BugTypes)
+		if state.WAFDetected {
+			d.WAFBypass = "tamper,random-agent,chunked"
+		}
+
+	case state.BugsFound > 0 && state.AbhiDone && state.Phase != "poc_done":
 		d.Action = "poc"
-		d.Reason = "Bugs confirmed — generating PoC + submitting"
+		d.Reason = "Bugs confirmed + exploited — generating PoC + submitting"
+
 	case state.Phase == "poc_done":
 		d.Action = "guide"
 		d.Reason = "PoC done — generate manual testing guide for remaining attack surface"
-	case state.ReconDone && state.HuntDone && state.BugsFound == 0:
+
+	case state.ReconDone && state.HuntDone && state.BugsFound == 0 && state.LastAction == "deep_hunt":
 		d.Action = "next_target"
-		d.Reason = "No bugs found — move to next target"
+		d.Reason = "Exhaustive scan complete — no bugs found, moving to next target"
+
 	default:
 		d.Action = "done"
 		d.Reason = "All phases complete"
 	}
 
 	return d
+}
+
+// selectVulnFocusByTech returns the best vuln focus based on detected tech stack.
+// This makes the hunt phase target the most likely vulnerabilities for the tech.
+func selectVulnFocusByTech(technologies []string) string {
+	techStr := strings.ToLower(strings.Join(technologies, " "))
+	switch {
+	case strings.Contains(techStr, "wordpress") || strings.Contains(techStr, "wp-"):
+		return "sqli,xss,rce" // WordPress: SQLi via plugins, XSS, RCE via file upload
+	case strings.Contains(techStr, "graphql"):
+		return "idor,ssrf,injection" // GraphQL: IDOR, SSRF via queries, injection
+	case strings.Contains(techStr, "node") || strings.Contains(techStr, "express"):
+		return "ssrf,prototype,xss" // Node.js: SSRF, prototype pollution, XSS
+	case strings.Contains(techStr, "php"):
+		return "sqli,lfi,rce" // PHP: SQLi, LFI, RCE via file inclusion
+	case strings.Contains(techStr, "asp.net") || strings.Contains(techStr, "iis"):
+		return "sqli,xxe,deserialization" // ASP.NET: SQLi, XXE, .NET deserialization
+	case strings.Contains(techStr, "java") || strings.Contains(techStr, "spring") || strings.Contains(techStr, "tomcat"):
+		return "deserialization,ssrf,rce" // Java: deserialization, SSRF, Log4Shell
+	case strings.Contains(techStr, "django") || strings.Contains(techStr, "python"):
+		return "ssti,ssrf,sqli" // Django/Python: SSTI, SSRF, SQLi
+	case strings.Contains(techStr, "rails") || strings.Contains(techStr, "ruby"):
+		return "deserialization,sqli,ssrf" // Rails: deserialization, SQLi, SSRF
+	default:
+		return "all"
+	}
+}
+
+// selectExploitFocusByBugs returns the best Abhimanyu vuln focus based on confirmed bugs.
+// This ensures Abhimanyu runs the right tools for what was actually found.
+func selectExploitFocusByBugs(bugTypes []string) string {
+	if len(bugTypes) == 0 {
+		return "all"
+	}
+	// Priority order: RCE > SQLi > XSS > SSRF > Auth > others
+	priority := []string{"rce", "sqli", "xss", "ssrf", "auth", "lfi", "xxe", "idor"}
+	bugSet := make(map[string]bool)
+	for _, bt := range bugTypes {
+		bugSet[strings.ToLower(bt)] = true
+	}
+	for _, p := range priority {
+		if bugSet[p] {
+			return p
+		}
+	}
+	// Check for partial matches
+	for _, bt := range bugTypes {
+		lower := strings.ToLower(bt)
+		if strings.Contains(lower, "sql") {
+			return "sqli"
+		}
+		if strings.Contains(lower, "xss") || strings.Contains(lower, "cross-site") {
+			return "xss"
+		}
+		if strings.Contains(lower, "rce") || strings.Contains(lower, "command") || strings.Contains(lower, "inject") {
+			return "rce"
+		}
+		if strings.Contains(lower, "ssrf") {
+			return "ssrf"
+		}
+	}
+	return bugTypes[0] // use first bug type as focus
+}
+
+// shouldRunAbhimanyu returns true if Abhimanyu should be triggered based on hunt findings.
+// This is the smart exploit trigger — only runs when there's something worth exploiting.
+func shouldRunAbhimanyu(huntResult hunt.HuntResult, allBugs []bugdetect.Bug) bool {
+	// Always run if confirmed bugs found
+	if len(allBugs) > 0 {
+		return true
+	}
+	// Run if hunt found specific exploitable indicators
+	if huntResult.Context != nil {
+		hc := huntResult.Context
+		if len(hc.XSSFound) > 0 {
+			return true // confirmed XSS → dalfox deep mode
+		}
+		if len(hc.VulnsFound) > 0 {
+			return true // nuclei confirmed vulns
+		}
+		if len(hc.ParamsFound) > 5 {
+			return true // many params found → worth running sqlmap/ssrfmap
+		}
+	}
+	return false
 }
 
 // extractBugTypes returns unique vuln type names from bugs
@@ -2247,6 +2455,18 @@ func runOmegaPlan(target string, localMode bool) {
 
 	// ── STEP 5: AI generates OMEGA attack plan ────────────────────────────
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AI generating OMEGA attack plan..."))
+
+	// ── NEW: Tech-aware tool selection based on gathered intel ────────────
+	toolSel := omega.SelectToolsByIntel(intel)
+	omega.DisplayToolSelection(toolSel, target)
+
+	// Apply tool selection to environment for agentic loop
+	if toolSel.VulnFocus != "" && toolSel.VulnFocus != "all" {
+		os.Setenv("CYBERMIND_FOCUS_BUGS", toolSel.VulnFocus)
+	}
+	if len(toolSel.SkipTools) > 0 {
+		os.Setenv("CYBERMIND_SKIP_TOOLS", strings.Join(toolSel.SkipTools, ","))
+	}
 
 	// Build Shodan map
 	shodanMap := make(map[string]string)
