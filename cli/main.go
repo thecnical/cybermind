@@ -16,6 +16,7 @@ import (
 
 	"cybermind-cli/abhimanyu"
 	"cybermind-cli/api"
+	"cybermind-cli/bizlogic"
 	"cybermind-cli/brain"
 	"cybermind-cli/hunt"
 	"cybermind-cli/recon"
@@ -151,6 +152,8 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /abhimanyu <target> auth") + d.Render(" → Auth brute force"))
 		fmt.Println(g.Render("  cybermind /abhimanyu <target> postexploit") + d.Render(" → Post-exploitation"))
 		fmt.Println(g.Render("  cybermind /abhimanyu <target> lateral") + d.Render(" → Lateral movement"))
+		fmt.Println(g.Render("  cybermind /bizlogic <target>") + d.Render("   → 💰 Business logic bugs (price manipulation, IDOR, race conditions)"))
+		fmt.Println(g.Render("  cybermind /bizlogic <target> --cookie 'session=abc'") + d.Render(" → authenticated scan"))
 		fmt.Println()
 	}
 
@@ -3514,6 +3517,101 @@ rm -f /tmp/evilginx2.tar.gz`)
 		}
 
 		runOmegaPlan(planTarget, localMode)
+
+	case "/bizlogic", "/biz":
+		// Business Logic Bug Hunter — automated price manipulation, IDOR, race conditions, etc.
+		if runtime.GOOS != "linux" {
+			printError("Business logic scanner is Linux-only.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /bizlogic <target>")
+			printError("       cybermind /bizlogic example.com")
+			printError("       cybermind /bizlogic example.com --cookie 'session=abc123'")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+
+		bizTarget := args[1]
+		if !strings.HasPrefix(bizTarget, "http") {
+			bizTarget = "https://" + bizTarget
+		}
+
+		// Parse optional --cookie and --header flags
+		bizCookies := map[string]string{}
+		bizHeaders := map[string]string{}
+		for i := 2; i < len(args); i++ {
+			switch args[i] {
+			case "--cookie", "-c":
+				if i+1 < len(args) {
+					// Parse "name=value; name2=value2"
+					for _, part := range strings.Split(args[i+1], ";") {
+						kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+						if len(kv) == 2 {
+							bizCookies[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+						}
+					}
+					i++
+				}
+			case "--header", "-H":
+				if i+1 < len(args) {
+					kv := strings.SplitN(args[i+1], ":", 2)
+					if len(kv) == 2 {
+						bizHeaders[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+					}
+					i++
+				}
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  💰 BUSINESS LOGIC BUG HUNTER — " + bizTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Testing: price manipulation, IDOR, race conditions, workflow bypass, mass assignment"))
+		fmt.Println()
+
+		result := bizlogic.RunBizLogicScan(bizTarget, bizCookies, bizHeaders, func(test, status string) {
+			if strings.Contains(status, "FOUND") {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render("  " + status))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ⟳ [" + test + "] " + status))
+			}
+		})
+
+		fmt.Println()
+		if len(result.Findings) == 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				fmt.Sprintf("  No business logic bugs found (%d tests run)", result.Tested)))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Tip: Provide --cookie with your session token for authenticated testing"))
+		} else {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  🐛 %d BUSINESS LOGIC BUGS FOUND!", len(result.Findings))))
+			fmt.Println()
+
+			for _, f := range result.Findings {
+				color := lipgloss.Color("#FFD700")
+				if f.Severity == "critical" {
+					color = lipgloss.Color("#FF4444")
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(color).Render(
+					fmt.Sprintf("  [%s] %s — %s", strings.ToUpper(f.Severity), f.Type, f.URL)))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    " + f.Description))
+				fmt.Println()
+			}
+
+			// Save report
+			report := bizlogic.GenerateReport(result)
+			ts := time.Now().Format("2006-01-02_15-04-05")
+			safeTarget := strings.ReplaceAll(strings.TrimPrefix(strings.TrimPrefix(bizTarget, "https://"), "http://"), ".", "_")
+			reportPath := fmt.Sprintf("cybermind_bizlogic_%s_%s.md", safeTarget, ts)
+			if err := os.WriteFile(reportPath, []byte(report), 0644); err == nil {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
+					"  ✓ Report saved: " + reportPath))
+			}
+		}
 
 	case "/scan":
 		// Native network scan — works on Windows, macOS, Linux
