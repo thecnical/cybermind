@@ -1800,8 +1800,26 @@ x8 --version`)
 }
 
 // installRustscan installs rustscan via .deb release (most reliable on Kali).
-// Uses bee-san/RustScan 2.4.1 (latest stable) with fallback to latest release.
 func installRustscan() error {
+	// Check if already installed via cargo — just symlink it
+	for _, cargoPath := range []string{
+		"/root/.cargo/bin/rustscan",
+		os.Getenv("HOME") + "/.cargo/bin/rustscan",
+	} {
+		if _, err := os.Stat(cargoPath); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ rustscan found in cargo — symlinking to /usr/local/bin/"))
+			exec.Command("sudo", "ln", "-sf", cargoPath, "/usr/local/bin/rustscan").Run()
+			// Add cargo to PATH permanently
+			for _, profile := range []string{"/root/.bashrc", "/root/.zshrc"} {
+				if _, e := os.Stat(profile); e == nil {
+					exec.Command("bash", "-c", fmt.Sprintf(
+						`grep -q "cargo/bin" %s || echo 'export PATH=$PATH:$HOME/.cargo/bin' >> %s`, profile, profile)).Run()
+				}
+			}
+			return nil
+		}
+	}
+
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Downloading RustScan 2.4.1 .deb..."))
 
 	// Method 1: Direct 2.4.1 .deb (known good URL)
@@ -1816,6 +1834,7 @@ rm -f /tmp/rustscan.deb`, knownURL, knownURL))
 	dlCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 	dlCmd.Stdout = os.Stdout
 	dlCmd.Stderr = os.Stderr
+	dlCmd.Stdin = nil
 	if err := dlCmd.Run(); err == nil {
 		if _, e := exec.LookPath("rustscan"); e == nil {
 			return nil
@@ -1840,22 +1859,23 @@ fi`)
 	latestCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 	latestCmd.Stdout = os.Stdout
 	latestCmd.Stderr = os.Stderr
+	latestCmd.Stdin = nil
 	if err := latestCmd.Run(); err == nil {
 		return nil
 	}
 
-	// Method 3: snap install (no compilation needed)
+	// Method 3: snap install
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Trying snap install rustscan..."))
 	snapCmd := exec.Command("bash", "-c", "sudo snap install rustscan 2>/dev/null && sudo ln -sf /snap/bin/rustscan /usr/local/bin/rustscan 2>/dev/null || true")
 	snapCmd.Stdout = os.Stdout
 	snapCmd.Stderr = os.Stderr
-	if err := snapCmd.Run(); err == nil {
-		if _, e := exec.LookPath("rustscan"); e == nil {
-			return nil
-		}
-	}
+	snapCmd.Stdin = nil
+	snapCmd.Run()
 
-	return fmt.Errorf("rustscan install failed — try manually: sudo dpkg -i /tmp/rustscan.deb")
+	if _, e := exec.LookPath("rustscan"); e == nil {
+		return nil
+	}
+	return fmt.Errorf("rustscan install failed — skip and continue")
 }
 
 // updateAllTools silently updates all installed tools to latest versions.
