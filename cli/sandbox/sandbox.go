@@ -1,22 +1,16 @@
-// Package sandbox — Vercel Sandbox integration for CyberMind
-//
-// Uses Vercel's browser sandbox to:
-// 1. Verify XSS in a real browser (not just curl)
-// 2. Perform authenticated scanning (login + capture session)
-// 3. Take screenshots as bug evidence
-// 4. Execute DOM-based XSS that curl can't detect
-//
-// Vercel Sandbox API: https://vercel.com/docs/sandbox
-// The sandbox runs a headless Chromium browser on Vercel's infrastructure.
+﻿// Package sandbox - Browser automation for CyberMind XSS verification + authenticated scanning
+// Priority: Local Playwright -> Vercel Sandbox -> curl fallback
 package sandbox
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -25,10 +19,11 @@ import (
 type SandboxResult struct {
 	Success    bool
 	Output     string
-	Screenshot string // base64 PNG
+	Screenshot string
 	Cookies    map[string]string
 	Error      string
 	Duration   time.Duration
+	Method     string // "playwright" | "vercel" | "curl"
 }
 
 // LoginResult holds captured session after authenticated login
@@ -36,331 +31,269 @@ type LoginResult struct {
 	Success bool
 	Cookies map[string]string
 	Headers map[string]string
-	Token   string // JWT or session token if found
+	Token   string
 	Error   string
+	Method  string
 }
 
-// sandboxClient with reasonable timeout
-var sandboxClient = &http.Client{Timeout: 60 * time.Second}
-
-// getVercelToken returns the Vercel API token from env
-func getVercelToken() string {
-	return os.Getenv("VERCEL_TOKEN")
+var sandboxClient = &http.Client{
+	Timeout: 60 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	},
 }
 
-// isAvailable returns true if Vercel Sandbox is configured
-func IsAvailable() bool {
-	return getVercelToken() != ""
+func getVercelToken() string { return os.Getenv("VERCEL_TOKEN") }
+
+// IsAvailable returns true if any browser automation is available
+func IsAvailable() bool { return hasPlaywright() || getVercelToken() != "" }
+
+func hasPlaywright() bool {
+	if _, err := exec.LookPath("node"); err != nil {
+		return false
+	}
+	cmd := exec.Command("node", "-e", "require('playwright')")
+	cmd.Stdin = nil
+	return cmd.Run() == nil
 }
 
-// ─── XSS Verification ────────────────────────────────────────────────────────
-
-// VerifyXSSInBrowser uses Vercel Sandbox to verify XSS in a real browser.
-// This catches DOM-based XSS that curl/dalfox miss.
+// VerifyXSSInBrowser verifies XSS in a real browser with auto-fallback:
+// 1. Local Playwright (fastest, most reliable)
+// 2. Vercel Sandbox (cloud browser)
+// 3. curl reflection check (basic fallback)
 func VerifyXSSInBrowser(targetURL, payload string) SandboxResult {
 	start := time.Now()
-
-	if !IsAvailable() {
-		return SandboxResult{Error: "VERCEL_TOKEN not set — sandbox unavailable"}
+	if hasPlaywright() {
+		r := verifyXSSPlaywright(targetURL, payload)
+		r.Duration = time.Since(start)
+		r.Method = "playwright"
+		return r
 	}
-
-	// Build the sandbox script
-	script := fmt.Sprintf(`
-const { chromium } = require('playwright');
-
-(async () => {
-  const browser = await chromium.launch();
-  const page = await browser.newPage();
-  
-  let xssTriggered = false;
-  let xssPayload = '';
-  
-  // Listen for dialog (alert/confirm/prompt) — XSS indicator
-  page.on('dialog', async dialog => {
-    xssTriggered = true;
-    xssPayload = dialog.message();
-    await dialog.dismiss();
-  });
-  
-  // Also listen for console errors that might indicate XSS
-  page.on('console', msg => {
-    if (msg.text().includes('cybermind_xss')) {
-      xssTriggered = true;
-    }
-  });
-  
-  try {
-    await page.goto('%s', { waitUntil: 'networkidle', timeout: 15000 });
-    await page.waitForTimeout(2000);
-    
-    const screenshot = await page.screenshot({ encoding: 'base64' });
-    const title = await page.title();
-    const url = page.url();
-    
-    console.log(JSON.stringify({
-      xss_triggered: xssTriggered,
-      xss_payload: xssPayload,
-      title: title,
-      final_url: url,
-      screenshot: screenshot
-    }));
-  } catch (e) {
-    console.log(JSON.stringify({ error: e.message }));
-  }
-  
-  await browser.close();
-})();
-`, targetURL)
-
-	result := runSandboxScript(script)
-	result.Duration = time.Since(start)
-
-	// Parse XSS result from output
-	if strings.Contains(result.Output, `"xss_triggered":true`) {
-		result.Success = true
+	if getVercelToken() != "" {
+		r := verifyXSSVercel(targetURL)
+		r.Duration = time.Since(start)
+		r.Method = "vercel"
+		return r
 	}
-
-	return result
+	r := verifyXSSCurl(targetURL, payload)
+	r.Duration = time.Since(start)
+	r.Method = "curl"
+	return r
 }
 
-// ─── Authenticated Scanning ───────────────────────────────────────────────────
-
-// LoginAndCapture performs a login flow in the sandbox and captures session cookies.
-// Returns cookies/tokens that can be used for authenticated scanning.
-func LoginAndCapture(loginURL, username, password string) LoginResult {
-	if !IsAvailable() {
-		return LoginResult{Error: "VERCEL_TOKEN not set — sandbox unavailable"}
+func verifyXSSPlaywright(targetURL, payload string) SandboxResult {
+	script := `const{chromium}=require('playwright');(async()=>{const b=await chromium.launch({args:['--no-sandbox']});const p=await b.newPage();let x=false;p.on('dialog',async d=>{x=true;await d.dismiss();});try{await p.goto('` + targetURL + `',{waitUntil:'networkidle',timeout:15000});await p.waitForTimeout(2000);console.log(JSON.stringify({xss_triggered:x,url:p.url()}));}catch(e){console.log(JSON.stringify({error:e.message}));}await b.close();})();`
+	tmpFile := "/tmp/cybermind_xss_verify.js"
+	os.WriteFile(tmpFile, []byte(script), 0644)
+	defer os.Remove(tmpFile)
+	cmd := exec.Command("node", tmpFile)
+	cmd.Stdin = nil
+	out, err := runWithTimeout(cmd, 30)
+	if err != nil {
+		return SandboxResult{Error: err.Error()}
 	}
+	var parsed struct {
+		XSSTriggered bool   `json:"xss_triggered"`
+		Error        string `json:"error"`
+	}
+	json.Unmarshal([]byte(out), &parsed)
+	return SandboxResult{Success: parsed.XSSTriggered, Output: out, Error: parsed.Error}
+}
 
-	script := fmt.Sprintf(`
-const { chromium } = require('playwright');
+func verifyXSSVercel(targetURL string) SandboxResult {
+	script := `const{chromium}=require('playwright');(async()=>{const b=await chromium.launch();const p=await b.newPage();let x=false;p.on('dialog',async d=>{x=true;await d.dismiss();});try{await p.goto('` + targetURL + `',{waitUntil:'networkidle',timeout:15000});await p.waitForTimeout(2000);console.log(JSON.stringify({xss_triggered:x}));}catch(e){console.log(JSON.stringify({error:e.message}));}await b.close();})();`
+	return runSandboxScript(script)
+}
 
-(async () => {
-  const browser = await chromium.launch();
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  
-  const capturedTokens = [];
-  
-  // Intercept requests to capture auth tokens
-  page.on('request', request => {
-    const headers = request.headers();
-    if (headers['authorization']) {
-      capturedTokens.push(headers['authorization']);
-    }
-  });
-  
-  try {
-    await page.goto('%s', { waitUntil: 'networkidle', timeout: 15000 });
-    
-    // Try common login form selectors
-    const emailSelectors = ['input[type="email"]', 'input[name="email"]', 'input[name="username"]', '#email', '#username', '#user'];
-    const passSelectors = ['input[type="password"]', 'input[name="password"]', '#password', '#pass'];
-    const submitSelectors = ['button[type="submit"]', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Sign in")', 'button:has-text("Log in")'];
-    
-    let filled = false;
-    for (const sel of emailSelectors) {
-      try {
-        await page.fill(sel, '%s', { timeout: 2000 });
-        filled = true;
-        break;
-      } catch {}
-    }
-    
-    for (const sel of passSelectors) {
-      try {
-        await page.fill(sel, '%s', { timeout: 2000 });
-        break;
-      } catch {}
-    }
-    
-    if (filled) {
-      for (const sel of submitSelectors) {
-        try {
-          await page.click(sel, { timeout: 2000 });
-          break;
-        } catch {}
-      }
-      await page.waitForTimeout(3000);
-    }
-    
-    // Capture all cookies after login
-    const cookies = await context.cookies();
-    const cookieMap = {};
-    cookies.forEach(c => { cookieMap[c.name] = c.value; });
-    
-    // Check localStorage for tokens
-    const localStorageData = await page.evaluate(() => {
-      const data = {};
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        data[key] = localStorage.getItem(key);
-      }
-      return data;
-    });
-    
-    const finalURL = page.url();
-    const loginSuccess = finalURL !== '%s'; // URL changed = likely logged in
-    
-    console.log(JSON.stringify({
-      success: loginSuccess,
-      cookies: cookieMap,
-      tokens: capturedTokens,
-      local_storage: localStorageData,
-      final_url: finalURL
-    }));
-  } catch (e) {
-    console.log(JSON.stringify({ error: e.message, success: false }));
-  }
-  
-  await browser.close();
-})();
-`, loginURL, username, password, loginURL)
+func verifyXSSCurl(targetURL, payload string) SandboxResult {
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	resp, err := client.Get(targetURL)
+	if err != nil {
+		return SandboxResult{Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	reflected := strings.Contains(string(body), payload) || strings.Contains(string(body), "<script>")
+	return SandboxResult{
+		Success: reflected,
+		Output:  fmt.Sprintf("curl reflection check: reflected=%v (JS execution not verified)", reflected),
+	}
+}
 
-	result := runSandboxScript(script)
+// LoginAndCapture performs login and captures session — auto-fallback
+func LoginAndCapture(loginURL, username, password string) LoginResult {
+	if hasPlaywright() {
+		r := loginPlaywright(loginURL, username, password)
+		r.Method = "playwright"
+		return r
+	}
+	if getVercelToken() != "" {
+		r := loginVercel(loginURL, username, password)
+		r.Method = "vercel"
+		return r
+	}
+	return LoginResult{Error: "no browser available — install: sudo npm install -g playwright && sudo playwright install chromium"}
+}
 
+func loginPlaywright(loginURL, username, password string) LoginResult {
+	script := `const{chromium}=require('playwright');(async()=>{const b=await chromium.launch({args:['--no-sandbox']});const ctx=await b.newContext();const p=await ctx.newPage();const toks=[];p.on('request',r=>{const h=r.headers();if(h['authorization'])toks.push(h['authorization']);});try{await p.goto('` + loginURL + `',{waitUntil:'networkidle',timeout:15000});const es=['input[type="email"]','input[name="email"]','input[name="username"]','#email','#username'];const ps=['input[type="password"]','input[name="password"]','#password'];const ss=['button[type="submit"]','input[type="submit"]'];let f=false;for(const s of es){try{await p.fill(s,'` + username + `',{timeout:2000});f=true;break;}catch{}}for(const s of ps){try{await p.fill(s,'` + password + `',{timeout:2000});break;}catch{}}if(f){for(const s of ss){try{await p.click(s,{timeout:2000});break;}catch{}}}await p.waitForTimeout(3000);const cs=await ctx.cookies();const cm={};cs.forEach(c=>{cm[c.name]=c.value;});const ls=await p.evaluate(()=>{const d={};for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);d[k]=localStorage.getItem(k);}return d;});console.log(JSON.stringify({success:p.url()!=='` + loginURL + `',cookies:cm,tokens:toks,local_storage:ls,final_url:p.url()}));}catch(e){console.log(JSON.stringify({error:e.message,success:false}));}await b.close();})();`
+	tmpFile := "/tmp/cybermind_login.js"
+	os.WriteFile(tmpFile, []byte(script), 0644)
+	defer os.Remove(tmpFile)
+	cmd := exec.Command("node", tmpFile)
+	cmd.Stdin = nil
+	out, err := runWithTimeout(cmd, 30)
+	if err != nil {
+		return LoginResult{Error: err.Error()}
+	}
 	var parsed struct {
 		Success      bool              `json:"success"`
 		Cookies      map[string]string `json:"cookies"`
 		Tokens       []string          `json:"tokens"`
 		LocalStorage map[string]string `json:"local_storage"`
-		FinalURL     string            `json:"final_url"`
 		Error        string            `json:"error"`
 	}
-
-	if err := json.Unmarshal([]byte(result.Output), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		return LoginResult{Error: "parse error: " + err.Error()}
 	}
-
-	loginResult := LoginResult{
+	result := LoginResult{
 		Success: parsed.Success,
 		Cookies: parsed.Cookies,
 		Headers: make(map[string]string),
+		Error:   parsed.Error,
 	}
-
-	// Extract JWT token if found
 	for _, t := range parsed.Tokens {
 		if strings.HasPrefix(t, "Bearer ") {
-			loginResult.Token = strings.TrimPrefix(t, "Bearer ")
-			loginResult.Headers["Authorization"] = t
+			result.Token = strings.TrimPrefix(t, "Bearer ")
+			result.Headers["Authorization"] = t
 			break
 		}
 	}
-
-	// Check localStorage for tokens
 	for k, v := range parsed.LocalStorage {
 		lower := strings.ToLower(k)
 		if strings.Contains(lower, "token") || strings.Contains(lower, "jwt") || strings.Contains(lower, "auth") {
-			loginResult.Token = v
-			loginResult.Headers["Authorization"] = "Bearer " + v
+			result.Token = v
+			result.Headers["Authorization"] = "Bearer " + v
 			break
 		}
 	}
-
-	if parsed.Error != "" {
-		loginResult.Error = parsed.Error
-	}
-
-	return loginResult
+	return result
 }
 
-// ─── Screenshot Evidence ──────────────────────────────────────────────────────
-
-// TakeScreenshot captures a screenshot of a URL as bug evidence.
-func TakeScreenshot(targetURL string) (string, error) {
-	if !IsAvailable() {
-		return "", fmt.Errorf("VERCEL_TOKEN not set")
-	}
-
-	script := fmt.Sprintf(`
-const { chromium } = require('playwright');
-(async () => {
-  const browser = await chromium.launch();
-  const page = await browser.newPage();
-  await page.setViewportSize({ width: 1280, height: 720 });
-  try {
-    await page.goto('%s', { waitUntil: 'networkidle', timeout: 15000 });
-    await page.waitForTimeout(1000);
-    const screenshot = await page.screenshot({ encoding: 'base64', fullPage: false });
-    console.log(JSON.stringify({ screenshot }));
-  } catch (e) {
-    console.log(JSON.stringify({ error: e.message }));
-  }
-  await browser.close();
-})();
-`, targetURL)
-
+func loginVercel(loginURL, username, password string) LoginResult {
+	script := `const{chromium}=require('playwright');(async()=>{const b=await chromium.launch();const ctx=await b.newContext();const p=await ctx.newPage();try{await p.goto('` + loginURL + `',{waitUntil:'networkidle',timeout:15000});try{await p.fill('input[type="email"]','` + username + `',{timeout:2000});}catch{}try{await p.fill('input[type="password"]','` + password + `',{timeout:2000});}catch{}try{await p.click('button[type="submit"]',{timeout:2000});}catch{}await p.waitForTimeout(3000);const cs=await ctx.cookies();const cm={};cs.forEach(c=>{cm[c.name]=c.value;});console.log(JSON.stringify({success:true,cookies:cm}));}catch(e){console.log(JSON.stringify({error:e.message}));}await b.close();})();`
 	result := runSandboxScript(script)
-	if result.Error != "" {
-		return "", fmt.Errorf(result.Error)
-	}
-
 	var parsed struct {
-		Screenshot string `json:"screenshot"`
-		Error      string `json:"error"`
+		Success bool              `json:"success"`
+		Cookies map[string]string `json:"cookies"`
+		Error   string            `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(result.Output), &parsed); err != nil {
-		return "", err
+		return LoginResult{Error: result.Error}
 	}
-	return parsed.Screenshot, nil
+	return LoginResult{
+		Success: parsed.Success,
+		Cookies: parsed.Cookies,
+		Headers: make(map[string]string),
+		Error:   parsed.Error,
+	}
 }
 
-// ─── Sandbox Runner ───────────────────────────────────────────────────────────
+// TakeScreenshot captures a screenshot — tries Playwright then Vercel
+func TakeScreenshot(targetURL string) (string, error) {
+	if hasPlaywright() {
+		outFile := "/tmp/cybermind_screenshot.png"
+		script := `const{chromium}=require('playwright');(async()=>{const b=await chromium.launch({args:['--no-sandbox']});const p=await b.newPage();await p.setViewportSize({width:1280,height:720});try{await p.goto('` + targetURL + `',{waitUntil:'networkidle',timeout:15000});await p.screenshot({path:'` + outFile + `'});console.log(JSON.stringify({saved:'` + outFile + `'}));}catch(e){console.log(JSON.stringify({error:e.message}));}await b.close();})();`
+		tmpFile := "/tmp/cybermind_ss.js"
+		os.WriteFile(tmpFile, []byte(script), 0644)
+		defer os.Remove(tmpFile)
+		cmd := exec.Command("node", tmpFile)
+		cmd.Stdin = nil
+		if _, err := runWithTimeout(cmd, 20); err != nil {
+			return "", err
+		}
+		return outFile, nil
+	}
+	if getVercelToken() != "" {
+		script := `const{chromium}=require('playwright');(async()=>{const b=await chromium.launch();const p=await b.newPage();try{await p.goto('` + targetURL + `',{waitUntil:'networkidle',timeout:15000});const ss=await p.screenshot({encoding:'base64'});console.log(JSON.stringify({screenshot:ss}));}catch(e){console.log(JSON.stringify({error:e.message}));}await b.close();})();`
+		result := runSandboxScript(script)
+		var parsed struct {
+			Screenshot string `json:"screenshot"`
+		}
+		json.Unmarshal([]byte(result.Output), &parsed)
+		return parsed.Screenshot, nil
+	}
+	return "", fmt.Errorf("no browser available")
+}
 
-// runSandboxScript executes a Node.js script in Vercel Sandbox
+// InstallPlaywright installs Playwright + Chromium on Linux automatically
+func InstallPlaywright() {
+	cmds := [][]string{
+		{"bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - 2>/dev/null || true"},
+		{"sudo", "apt-get", "install", "-y", "-qq", "nodejs"},
+		{"sudo", "npm", "install", "-g", "playwright"},
+		{"sudo", "npx", "playwright", "install", "chromium", "--with-deps"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Stdin = nil
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run()
+	}
+}
+
 func runSandboxScript(script string) SandboxResult {
 	token := getVercelToken()
 	if token == "" {
-		return SandboxResult{Error: "VERCEL_TOKEN not configured"}
+		return SandboxResult{Error: "VERCEL_TOKEN not set"}
 	}
-
-	// Vercel Sandbox API
 	payload := map[string]interface{}{
-		"runtime": "nodejs",
-		"code":    script,
+		"runtime":  "nodejs",
+		"code":     script,
 		"packages": []string{"playwright"},
-		"timeout": 30,
+		"timeout":  30,
 	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return SandboxResult{Error: err.Error()}
-	}
-
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest("POST", "https://api.vercel.com/v1/sandbox/run", bytes.NewBuffer(body))
 	if err != nil {
 		return SandboxResult{Error: err.Error()}
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-
 	resp, err := sandboxClient.Do(req)
 	if err != nil {
-		return SandboxResult{Error: "sandbox request failed: " + err.Error()}
+		return SandboxResult{Error: "vercel sandbox: " + err.Error()}
 	}
 	defer resp.Body.Close()
-
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
-
 	var result struct {
 		Output string `json:"output"`
 		Stdout string `json:"stdout"`
-		Stderr string `json:"stderr"`
 		Error  string `json:"error"`
 	}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return SandboxResult{Error: "parse error: " + string(raw[:min(200, len(raw))])}
+	json.Unmarshal(raw, &result)
+	out := result.Output
+	if out == "" {
+		out = result.Stdout
 	}
+	return SandboxResult{Success: result.Error == "", Output: out, Error: result.Error}
+}
 
-	output := result.Output
-	if output == "" {
-		output = result.Stdout
-	}
-
-	return SandboxResult{
-		Success: result.Error == "",
-		Output:  output,
-		Error:   result.Error,
+func runWithTimeout(cmd *exec.Cmd, timeoutSec int) (string, error) {
+	var out strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		return strings.TrimSpace(out.String()), err
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		return out.String(), fmt.Errorf("timeout after %ds", timeoutSec)
 	}
 }
 
