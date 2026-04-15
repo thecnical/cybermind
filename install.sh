@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="3.0.0"
+VERSION="4.0.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -218,6 +218,37 @@ if command -v nuclei &>/dev/null; then
     nuclei -update-templates 2>/dev/null || true
 fi
 
+# ── Interactsh (real SSRF/OOB verification) ───────────────────────────────────
+if ! command -v interactsh-client &>/dev/null; then
+    echo -e "${DIM}  Installing interactsh-client (OOB verification)...${NC}"
+    go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest 2>/dev/null && \
+        symlink_go_tool "interactsh-client" || true
+fi
+
+# ── Playwright (browser automation for XSS/OAuth/race conditions) ─────────────
+if ! command -v node &>/dev/null; then
+    echo -e "${DIM}  Installing Node.js for Playwright...${NC}"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - 2>/dev/null || true
+    sudo apt-get install -y nodejs -qq 2>/dev/null || true
+fi
+if command -v node &>/dev/null && ! node -e "require('playwright')" 2>/dev/null; then
+    echo -e "${DIM}  Installing Playwright (browser automation)...${NC}"
+    sudo npm install -g playwright 2>/dev/null || true
+    sudo npx playwright install chromium --with-deps 2>/dev/null || true
+fi
+
+# ── Additional exploit tools ──────────────────────────────────────────────────
+echo -e "${DIM}  Installing additional tools...${NC}"
+# Slither (smart contract analysis)
+command -v slither &>/dev/null || pip3 install slither-analyzer --break-system-packages -q 2>/dev/null || true
+# APK tools (mobile)
+command -v apktool &>/dev/null || sudo apt-get install -y apktool -qq 2>/dev/null || true
+# HTTP smuggling
+command -v smuggler &>/dev/null || (git clone --depth=1 https://github.com/defparam/smuggler /opt/smuggler 2>/dev/null && \
+    pip3 install -r /opt/smuggler/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/smuggler/smuggler.py "$@"\n' | sudo tee /usr/local/bin/smuggler > /dev/null && \
+    sudo chmod +x /usr/local/bin/smuggler) 2>/dev/null || true
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -231,9 +262,13 @@ echo -e "  ${CYAN}Hunt:${NC}          sudo cybermind /hunt example.com"
 echo -e "  ${CYAN}OMEGA Plan:${NC}    sudo cybermind /plan --auto-target"
 echo -e "  ${CYAN}Auto-Target:${NC}   sudo cybermind /plan --auto-target --skill intermediate --focus idor,xss"
 echo -e "  ${CYAN}Overnight:${NC}     sudo cybermind /plan --auto-target --mode overnight --continuous"
+echo -e "  ${CYAN}BizLogic:${NC}      sudo cybermind /bizlogic example.com"
+echo -e "  ${CYAN}Manual Guide:${NC}  sudo cybermind /guide example.com"
 echo -e "  ${CYAN}Vibe Coder:${NC}    cybermind /vibe"
 echo ""
 echo -e "  ${DIM}Full tool install: sudo cybermind /doctor${NC}"
+echo -e "  ${DIM}Browser tests:     Playwright auto-installed above${NC}"
+echo -e "  ${DIM}OOB verification:  interactsh-client auto-installed above${NC}"
 echo ""
 if [ -n "$CYBERMIND_KEY" ]; then
     echo -e "  ${GREEN}✓ API key saved — run: cybermind whoami${NC}"
