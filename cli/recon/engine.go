@@ -198,6 +198,7 @@ func run(timeoutSec int, name string, args ...string) (string, error) {
 	var errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
+	cmd.Stdin = nil // never read from tty — prevents zsh: suspended (tty input)
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Run() }()

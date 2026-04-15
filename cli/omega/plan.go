@@ -300,6 +300,7 @@ if len(parts) >= 3 {
 cmd := exec.Command("go", "install", parts[2])
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
+cmd.Stdin = nil
 if err := cmd.Run(); err != nil {
 return err
 }
@@ -320,6 +321,7 @@ if _, err := exec.LookPath("pipx"); err == nil {
 cmd := exec.Command("pipx", "install", t.Name)
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
+cmd.Stdin = nil
 if cmd.Run() == nil {
 return nil
 }
@@ -327,6 +329,7 @@ return nil
 cmd := exec.Command("pip3", "install", t.Name, "--break-system-packages", "-q")
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
+cmd.Stdin = nil
 return cmd.Run()
 }
 
@@ -335,6 +338,7 @@ exec.Command("sudo", "apt", "install", "-y", "libssl-dev", "pkg-config", "cargo"
 cmd := exec.Command("cargo", "install", t.Name)
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
+cmd.Stdin = nil
 return cmd.Run()
 }
 
@@ -344,6 +348,7 @@ exec.Command("sudo", "rm", "-rf", t.GitDir).Run()
 cloneCmd := exec.Command("git", "clone", "--depth=1", t.GitURL, t.GitDir)
 cloneCmd.Stdout = os.Stdout
 cloneCmd.Stderr = os.Stderr
+cloneCmd.Stdin = nil
 if err := cloneCmd.Run(); err != nil {
 return err
 }
@@ -379,6 +384,7 @@ return nil
 cmd := exec.Command("bash", "-c", t.Install)
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
+cmd.Stdin = nil
 return cmd.Run()
 }
 
@@ -389,6 +395,7 @@ aptName := strings.ToLower(t.Name)
 cmd := exec.Command("sudo", "apt", "install", "-y", aptName)
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
+cmd.Stdin = nil
 if cmd.Run() == nil {
 return nil
 }
@@ -396,6 +403,7 @@ return nil
 cmd2 := exec.Command("pip3", "install", aptName, "--break-system-packages", "-q")
 cmd2.Stdout = os.Stdout
 cmd2.Stderr = os.Stderr
+cmd2.Stdin = nil
 return cmd2.Run()
 }
 

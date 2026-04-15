@@ -1536,6 +1536,7 @@ func installPythonPipTool(pkgName string) error {
 	installCmd := exec.Command(venvPip, "install", pkgName, "-q")
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
+	installCmd.Stdin = nil
 	if err := installCmd.Run(); err == nil {
 		if _, e := os.Stat(venvBin); e == nil {
 			exec.Command("sudo", "ln", "-sf", venvBin, "/usr/local/bin/"+pkgName).Run()
@@ -1547,6 +1548,7 @@ func installPythonPipTool(pkgName string) error {
 	cmd3 := exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q")
 	cmd3.Stdout = os.Stdout
 	cmd3.Stderr = os.Stderr
+	cmd3.Stdin = nil
 	return cmd3.Run()
 }
 
@@ -1562,6 +1564,7 @@ func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 	cloneCmd := exec.Command("git", "clone", "--depth=1", repoURL, installDir)
 	cloneCmd.Stdout = os.Stdout
 	cloneCmd.Stderr = os.Stderr
+	cloneCmd.Stdin = nil
 	if err := cloneCmd.Run(); err != nil {
 		return fmt.Errorf("git clone failed: %v", err)
 	}
@@ -1586,6 +1589,7 @@ func installPythonGitTool(name, repoURL, installDir, mainScript string) error {
 		pipCmd := exec.Command(venvPip, "install", "-r", reqFile, "-q")
 		pipCmd.Stdout = os.Stdout
 		pipCmd.Stderr = os.Stderr
+		pipCmd.Stdin = nil
 		pipCmd.Run()
 	}
 
@@ -1636,6 +1640,7 @@ func installReconftw() error {
 		"https://github.com/six2dez/reconftw.git", "/opt/reconftw")
 	cloneCmd.Stdout = os.Stdout
 	cloneCmd.Stderr = os.Stderr
+	cloneCmd.Stdin = nil
 	if err := cloneCmd.Run(); err != nil {
 		return fmt.Errorf("git clone failed: %v", err)
 	}
@@ -1649,6 +1654,7 @@ func installReconftw() error {
 	installCmd := exec.Command("sudo", "bash", "-c", "cd /opt/reconftw && ./install.sh")
 	installCmd.Stdout = os.Stdout
 	installCmd.Stderr = os.Stderr
+	installCmd.Stdin = nil
 	installCmd.Run() // intentionally ignore error — partial install is fine
 
 	// Create proper wrapper that preserves working directory
@@ -2527,6 +2533,7 @@ func main() {
 					cmd2 := exec.Command("go", "install", module)
 					cmd2.Stdout = os.Stdout
 					cmd2.Stderr = os.Stderr
+					cmd2.Stdin = nil
 					installErr = cmd2.Run()
 					if installErr == nil {
 						symlinkGoTool(t.name)
@@ -2545,6 +2552,7 @@ func main() {
 					cmd2 := exec.Command("sudo", "gem", "install", pkg)
 					cmd2.Stdout = os.Stdout
 					cmd2.Stderr = os.Stderr
+					cmd2.Stdin = nil
 					installErr = cmd2.Run()
 
 				case t.install == "special:reconftw":
@@ -2558,6 +2566,7 @@ func main() {
 						"curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin")
 					cmd2.Stdout = os.Stdout
 					cmd2.Stderr = os.Stderr
+					cmd2.Stdin = nil
 					installErr = cmd2.Run()
 
 				case t.install == "special:x8":
@@ -2567,6 +2576,7 @@ func main() {
 					cmd2 := exec.Command("go", "install", "github.com/tomnomnom/gf@latest")
 					cmd2.Stdout = os.Stdout
 					cmd2.Stderr = os.Stderr
+					cmd2.Stdin = nil
 					if err := cmd2.Run(); err != nil {
 						installErr = err
 					} else {
@@ -2583,6 +2593,7 @@ func main() {
 					cloneCmd := exec.Command("git", "clone", "--depth=1", "https://github.com/enjoiz/XXEinjector", "/opt/xxeinjector")
 					cloneCmd.Stdout = os.Stdout
 					cloneCmd.Stderr = os.Stderr
+					cloneCmd.Stdin = nil
 					if err := cloneCmd.Run(); err != nil {
 						installErr = err
 					} else {
@@ -2604,6 +2615,7 @@ chmod +x /tmp/kerbrute
 sudo mv /tmp/kerbrute /usr/local/bin/kerbrute`)
 					dlCmd.Stdout = os.Stdout
 					dlCmd.Stderr = os.Stderr
+					dlCmd.Stdin = nil
 					installErr = dlCmd.Run()
 
 				case t.install == "special:linpeas":
@@ -2611,6 +2623,7 @@ sudo mv /tmp/kerbrute /usr/local/bin/kerbrute`)
 						"curl -sL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o /opt/linpeas.sh && chmod +x /opt/linpeas.sh && sudo ln -sf /opt/linpeas.sh /usr/local/bin/linpeas")
 					cmd2.Stdout = os.Stdout
 					cmd2.Stderr = os.Stderr
+					cmd2.Stdin = nil
 					installErr = cmd2.Run()
 
 				case t.install == "special:pspy":
@@ -2618,6 +2631,7 @@ sudo mv /tmp/kerbrute /usr/local/bin/kerbrute`)
 						"curl -sL https://github.com/DominicBreuker/pspy/releases/latest/download/pspy64 -o /opt/pspy && chmod +x /opt/pspy && sudo ln -sf /opt/pspy /usr/local/bin/pspy")
 					cmd2.Stdout = os.Stdout
 					cmd2.Stderr = os.Stderr
+					cmd2.Stdin = nil
 					installErr = cmd2.Run()
 
 				case t.install == "special:sliver":
@@ -2630,6 +2644,7 @@ chmod +x /tmp/sliver-client
 sudo mv /tmp/sliver-client /usr/local/bin/sliver`)
 					dlCmd.Stdout = os.Stdout
 					dlCmd.Stderr = os.Stderr
+					dlCmd.Stdin = nil
 					installErr = dlCmd.Run()
 
 				case t.install == "special:evilginx2":
@@ -2645,6 +2660,7 @@ sudo ln -sf /opt/evilginx2/evilginx /usr/local/bin/evilginx2 2>/dev/null || true
 rm -f /tmp/evilginx2.tar.gz`)
 					dlCmd.Stdout = os.Stdout
 					dlCmd.Stderr = os.Stderr
+					dlCmd.Stdin = nil
 					installErr = dlCmd.Run()
 
 				default:
@@ -2656,6 +2672,7 @@ rm -f /tmp/evilginx2.tar.gz`)
 						cmd2 := exec.Command("go", "install", parts[len(parts)-1])
 						cmd2.Stdout = os.Stdout
 						cmd2.Stderr = os.Stderr
+						cmd2.Stdin = nil
 						installErr = cmd2.Run()
 						if installErr == nil {
 							symlinkGoTool(t.name)
@@ -2665,6 +2682,7 @@ rm -f /tmp/evilginx2.tar.gz`)
 						cmd2.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 						cmd2.Stdout = os.Stdout
 						cmd2.Stderr = os.Stderr
+						cmd2.Stdin = nil
 						installErr = cmd2.Run()
 					}
 				}
