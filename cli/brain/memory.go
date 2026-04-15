@@ -1,5 +1,5 @@
-// Package brain implements CyberMind's persistent memory and learning system.
-// Every run teaches the system — patterns that worked, false positives to skip,
+﻿// Package brain implements CyberMind's persistent memory and learning system.
+// Every run teaches the system â€” patterns that worked, false positives to skip,
 // tech stacks, WAF vendors, confirmed bugs, and scope intelligence.
 package brain
 
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Bug represents a confirmed vulnerability found during a run.
 type Bug struct {
@@ -78,11 +78,11 @@ type GlobalMemory struct {
 	TotalBugsFound    int                `json:"total_bugs_found"`
 	TotalTargetsTested int               `json:"total_targets_tested"`
 	BestPatterns      []Pattern          `json:"best_patterns"`
-	TargetStats       map[string]int     `json:"target_stats"` // target → bug count
+	TargetStats       map[string]int     `json:"target_stats"` // target â†’ bug count
 	LastUpdated       time.Time          `json:"last_updated"`
 }
 
-// ─── Storage ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func brainDir() string {
 	home, _ := os.UserHomeDir()
@@ -157,7 +157,7 @@ func SaveGlobal(g *GlobalMemory) error {
 	return os.WriteFile(globalFile(), data, 0600)
 }
 
-// ─── Learning API ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Learning API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // RecordRun updates memory after a scan run.
 func RecordRun(target string, techStack []string, wafVendor string, wafDetected bool,
@@ -169,7 +169,7 @@ func RecordRun(target string, techStack []string, wafVendor string, wafDetected 
 	mem.WAFVendor = wafVendor
 	mem.WAFDetected = wafDetected
 
-	// Merge — don't duplicate
+	// Merge â€” don't duplicate
 	mem.TechStack = mergeUnique(mem.TechStack, techStack)
 	mem.SubdomainsFound = mergeUnique(mem.SubdomainsFound, subdomains)
 	mem.LiveURLs = mergeUnique(mem.LiveURLs, liveURLs)
@@ -305,27 +305,27 @@ func GetBestPatterns(target string) []Pattern {
 func GetMemorySummary(target string) string {
 	mem := LoadTarget(target)
 	if mem.RunCount == 0 {
-		return "  🧠 No prior memory — first run on this target"
+		return "  ðŸ§  No prior memory â€” first run on this target"
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("  🧠 Memory: %d prior runs | %d bugs found | %d subdomains known\n",
+	sb.WriteString(fmt.Sprintf("  ðŸ§  Memory: %d prior runs | %d bugs found | %d subdomains known\n",
 		mem.RunCount, len(mem.BugsFound), len(mem.SubdomainsFound)))
 	if mem.WAFDetected {
-		sb.WriteString(fmt.Sprintf("  🛡  WAF: %s (known — applying bypass strategy)\n", mem.WAFVendor))
+		sb.WriteString(fmt.Sprintf("  ðŸ›¡  WAF: %s (known â€” applying bypass strategy)\n", mem.WAFVendor))
 	}
 	if len(mem.TechStack) > 0 {
-		sb.WriteString(fmt.Sprintf("  ⚙️  Tech: %s\n", strings.Join(mem.TechStack[:min(5, len(mem.TechStack))], ", ")))
+		sb.WriteString(fmt.Sprintf("  âš™ï¸  Tech: %s\n", strings.Join(mem.TechStack[:min(5, len(mem.TechStack))], ", ")))
 	}
 	if len(mem.PatternsWorked) > 0 {
-		sb.WriteString(fmt.Sprintf("  ✓  %d patterns that worked before — applying automatically\n", len(mem.PatternsWorked)))
+		sb.WriteString(fmt.Sprintf("  âœ“  %d patterns that worked before â€” applying automatically\n", len(mem.PatternsWorked)))
 	}
 	if len(mem.FalsePositives) > 0 {
-		sb.WriteString(fmt.Sprintf("  ✗  %d known false positives — will skip\n", len(mem.FalsePositives)))
+		sb.WriteString(fmt.Sprintf("  âœ—  %d known false positives â€” will skip\n", len(mem.FalsePositives)))
 	}
 	return sb.String()
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func mergeUnique(existing, new []string) []string {
 	seen := make(map[string]bool)

@@ -1621,3 +1621,99 @@ func SendBugAlert(target string, bugs []map[string]string, reportPath string, cr
 	io.ReadAll(io.LimitReader(resp.Body, 4096))
 	return nil
 }
+
+// ─── Adversarial Thinking ─────────────────────────────────────────────────────
+
+// AdversarialRequest asks the AI to think like both defender and attacker
+type AdversarialRequest struct {
+	Target        string            `json:"target"`
+	TechStack     []string          `json:"tech_stack"`
+	BugsFound     []map[string]string `json:"bugs_found"`
+	WAFVendor     string            `json:"waf_vendor"`
+	OpenPorts     []int             `json:"open_ports"`
+	FailedAttacks []string          `json:"failed_attacks"`
+	MemoryContext string            `json:"memory_context"`
+}
+
+// SendAdversarialThink asks the AI to think adversarially about a target
+func SendAdversarialThink(req AdversarialRequest) (string, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/adversarial/think", bytes.NewBuffer(payload))
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+
+	var result struct {
+		Success  bool   `json:"success"`
+		Analysis string `json:"analysis"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	return result.Analysis, nil
+}
+
+// SendAdversarialRefine refines attack strategy after a successful PoC
+func SendAdversarialRefine(target, bugType, payload, endpoint string, techStack, similarTargets []string) (string, error) {
+	body, err := json.Marshal(map[string]interface{}{
+		"target":             target,
+		"bug_type":           bugType,
+		"successful_payload": payload,
+		"endpoint":           endpoint,
+		"tech_stack":         techStack,
+		"similar_targets":    similarTargets,
+	})
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/adversarial/refine", bytes.NewBuffer(body))
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+
+	var result struct {
+		Success    bool   `json:"success"`
+		Refinement string `json:"refinement"`
+		Error      string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	return result.Refinement, nil
+}

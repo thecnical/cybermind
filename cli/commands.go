@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"cybermind-cli/anon"
@@ -24,6 +25,7 @@ import (
 	"cybermind-cli/hunt"
 	"cybermind-cli/omega"
 	"cybermind-cli/recon"
+	"cybermind-cli/sandbox"
 	"cybermind-cli/storage"
 	"cybermind-cli/utils"
 
@@ -892,11 +894,39 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		Findings:   make(map[string]string),
 	}
 
+	// ── Load memory context for self-improving prompts ────────────────────
+	memContext := brain.GetLearnedPromptContext(target)
+	if memContext != "" {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+			"  🧠 Brain memory loaded — using past learnings"))
+	}
+
+	// ── Memory-driven: find similar targets where bugs were found ─────────
+	similar := brain.FindSimilarTargets(target, 3)
+	if len(similar) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+			fmt.Sprintf("  🧠 Found %d similar targets with known bugs:", len(similar))))
+		for _, s := range similar {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+				fmt.Sprintf("    → %s (%.0f%% similar, bugs: %v)", s.Domain, s.Similarity*100, s.BugTypes)))
+		}
+		fmt.Println()
+	}
+
+	// ── Get best attack strategy from memory ─────────────────────────────
+	bestPatterns := brain.GetBestAttackStrategy(target)
+	if len(bestPatterns) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+			fmt.Sprintf("  🧠 %d proven attack patterns loaded from memory", len(bestPatterns))))
+	}
+	fmt.Println()
+
 	// Accumulated context across all phases
 	var allBugs []bugdetect.Bug
 	var reconResult recon.ReconResult
 	var huntResult hunt.HuntResult
 	var allFindings = make(map[string]string)
+	_ = bestPatterns // used in future iterations
 
 	maxIterations := 8 // prevent infinite loops
 	if mode == "overnight" {
@@ -992,8 +1022,8 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 					len(reconResult.Tools), len(state.LiveURLs), len(state.OpenPorts), state.BugsFound)))
 
 		case "hunt":
-			agentAct(fmt.Sprintf("Running HUNT phase (focus: %s)...", decision.VulnFocus))
-			omegaLog("\n═══ AGENT: HUNT ═══")
+			agentAct(fmt.Sprintf("Running HUNT phase (focus: %s) — PARALLEL MODE...", decision.VulnFocus))
+			omegaLog("\n═══ AGENT: HUNT (PARALLEL) ═══")
 
 			// Build hunt context from recon
 			var huntCtx *hunt.HuntContext
@@ -1021,7 +1051,72 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				}
 			}
 
-			huntResult = runHuntSilent(target, huntCtx, buildRequestedTools(skipTools, "hunt"))
+			// ── MULTI-AGENT PARALLELISM ───────────────────────────────────
+			// Run hunt + bizlogic + adversarial thinking simultaneously
+			type parallelResult struct {
+				hunt      hunt.HuntResult
+				bizResult bizlogic.BizLogicResult
+				adversarial string
+			}
+			pResult := parallelResult{}
+			var wg sync.WaitGroup
+
+			// Agent 1: Hunt
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				pResult.hunt = runHuntSilent(target, huntCtx, buildRequestedTools(skipTools, "hunt"))
+			}()
+
+			// Agent 2: BizLogic (runs in parallel with hunt)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				pResult.bizResult = bizlogic.RunBizLogicScan(target,
+					map[string]string{}, map[string]string{},
+					func(test, status string) {
+						if strings.Contains(status, "FOUND") {
+							fmt.Println(lipgloss.NewStyle().Foreground(red2).Render("  [BIZ] " + status))
+						}
+					})
+			}()
+
+			// Agent 3: Adversarial thinking (runs in parallel)
+			if !localMode {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					bugMaps := make([]map[string]string, 0, len(allBugs))
+					for _, b := range allBugs {
+						bugMaps = append(bugMaps, map[string]string{
+							"title": b.Title, "severity": string(b.Severity),
+						})
+					}
+					failedAttacks := []string{}
+					for _, t := range state.ToolsFailed {
+						failedAttacks = append(failedAttacks, t)
+					}
+					analysis, err := api.SendAdversarialThink(api.AdversarialRequest{
+						Target:        target,
+						TechStack:     state.Technologies,
+						BugsFound:     bugMaps,
+						WAFVendor:     state.WAFVendor,
+						OpenPorts:     state.OpenPorts,
+						FailedAttacks: failedAttacks,
+						MemoryContext: memContext,
+					})
+					if err == nil {
+						pResult.adversarial = analysis
+					}
+				}()
+			}
+
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+				"  ⟳ Running Hunt + BizLogic + Adversarial Analysis in parallel..."))
+			wg.Wait()
+
+			// Merge results
+			huntResult = pResult.hunt
 			state.HuntDone = true
 			state.Phase = "hunt_done"
 
@@ -1046,6 +1141,29 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 					allBugs = append(allBugs, bugs...)
 				}
 			}
+
+			// Merge bizlogic findings
+			for _, f := range pResult.bizResult.Findings {
+				sev := bugdetect.SeverityHigh
+				if f.Severity == "critical" {
+					sev = bugdetect.SeverityCritical
+				} else if f.Severity == "medium" {
+					sev = bugdetect.SeverityMedium
+				}
+				allBugs = append(allBugs, bugdetect.Bug{
+					Title:       f.Type + " — Business Logic",
+					Severity:    sev,
+					Tool:        "bizlogic",
+					Target:      target,
+					URL:         f.URL,
+					Description: f.Description,
+					Evidence:    f.Evidence,
+					CVSS:        7.5,
+					CWE:         "CWE-840",
+					FoundAt:     time.Now(),
+				})
+			}
+
 			// Dedup bugs
 			allBugs = dedupBugs(allBugs)
 			state.BugsFound = len(allBugs)
@@ -1064,7 +1182,6 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			// ── Generate custom nuclei templates for this target ──────────
 			if len(state.Technologies) > 0 && !localMode {
 				go func() {
-					// Run in background — don't block the main loop
 					tmplReq := api.NucleiTemplateRequest{
 						Target:    target,
 						TechStack: state.Technologies,
@@ -1082,9 +1199,25 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				}()
 			}
 
+			// ── Show adversarial analysis ─────────────────────────────────
+			if pResult.adversarial != "" {
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
+					"  🎭 ADVERSARIAL ANALYSIS:"))
+				// Show first 500 chars
+				preview := pResult.adversarial
+				if len(preview) > 500 {
+					preview = preview[:500] + "..."
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render("  " + strings.ReplaceAll(preview, "\n", "\n  ")))
+				// Save full analysis
+				advPath := fmt.Sprintf("/tmp/cybermind_adversarial_%s.txt", strings.ReplaceAll(target, ".", "_"))
+				os.WriteFile(advPath, []byte(pResult.adversarial), 0644)
+			}
+
 			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
-				fmt.Sprintf("  ✓ Hunt complete: %d tools ran, %d bugs found",
-					len(huntResult.Tools), state.BugsFound)))
+				fmt.Sprintf("  ✓ Parallel hunt complete: %d hunt tools + %d bizlogic tests → %d bugs",
+					len(huntResult.Tools), pResult.bizResult.Tested, state.BugsFound)))
 
 			if state.BugsFound > 0 {
 				for _, b := range allBugs {
@@ -1237,7 +1370,7 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 						fmt.Sprintf("  ✓ PoC generated: %s", bug.Title)))
 				}
 
-				// ── Step 3: Record in brain memory ────────────────────────
+			// ── Step 3: Record in brain memory + self-improving prompts ──
 				brain.RecordBug(target, brain.Bug{
 					Title:    bug.Title,
 					Type:     bug.CWE,
@@ -1248,6 +1381,39 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 					Tool:     bug.Tool,
 					Verified: true,
 				})
+
+				// Self-improving: refine attack strategy after successful PoC
+				if poc != "" && !localMode {
+					go func(b bugdetect.Bug, p string) {
+						similarDomains := make([]string, 0, len(similar))
+						for _, s := range similar {
+							similarDomains = append(similarDomains, s.Domain)
+						}
+						refinement, err := api.SendAdversarialRefine(
+							target, b.CWE, b.Evidence, b.URL,
+							state.Technologies, similarDomains)
+						if err == nil && refinement != "" {
+							// Record the refined pattern in brain
+							brain.RecordSuccessfulPoC(target, b.CWE, b.Evidence, b.URL, p)
+							// Save refinement for user
+							refPath := fmt.Sprintf("/tmp/cybermind_refinement_%s.txt",
+								strings.ReplaceAll(target, ".", "_"))
+							existing, _ := os.ReadFile(refPath)
+							os.WriteFile(refPath, append(existing, []byte("\n\n---\n"+refinement)...), 0644)
+						}
+					}(bug, poc)
+				}
+
+				// Sandbox XSS verification if available
+				if strings.Contains(strings.ToLower(bug.CWE), "79") && sandbox.IsAvailable() && bug.URL != "" {
+					go func(b bugdetect.Bug) {
+						result := sandbox.VerifyXSSInBrowser(b.URL, b.Evidence)
+						if result.Success {
+							fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render(
+								"  ✓ XSS verified in real browser (Vercel Sandbox)!"))
+						}
+					}(bug)
+				}
 			}
 
 			// Save report with PoCs
