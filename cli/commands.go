@@ -1547,8 +1547,60 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 
 		case "guide":
 			agentAct("Generating manual testing guide for remaining 12%...")
-			omegaLog("\n═══ AGENT: MANUAL GUIDE ═══")
+			omegaLog("\n═══ AGENT: MANUAL GUIDE + BROWSER TESTS ═══")
 
+			// First: try autonomous browser tests
+			if sandbox.IsAvailable() {
+				agentAct("Running autonomous browser tests (Playwright)...")
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+					"  ⟳ Browser engine testing: price manipulation, IDOR, race conditions, DOM XSS, OAuth..."))
+
+				// Get session cookies from brain memory
+				mem := brain.LoadTarget(target)
+				sessionCookies := map[string]string{}
+				// Use any cookies from previous login attempts
+				_ = mem
+
+				browserResults := sandbox.RunAutonomousBrowserTests(
+					"https://"+target,
+					sessionCookies,
+					func(msg string) {
+						fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render("  ⟳ " + msg))
+					},
+				)
+
+				// Show browser results
+				for _, r := range browserResults {
+					if r.BugFound {
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+							fmt.Sprintf("  🐛 BROWSER BUG: [%s] %s", r.TestName, r.Evidence)))
+						// Add to allBugs
+						allBugs = append(allBugs, bugdetect.Bug{
+							Title:       r.TestName + " — Browser Confirmed",
+							Severity:    bugdetect.SeverityHigh,
+							Tool:        "playwright",
+							Target:      target,
+							Description: r.Evidence,
+							Evidence:    r.Evidence,
+							CVSS:        7.5,
+							CWE:         "CWE-840",
+							FoundAt:     time.Now(),
+						})
+					}
+				}
+				state.BugsFound = len(allBugs)
+
+				// Format and save browser results + manual steps
+				browserReport := sandbox.FormatBrowserResults(browserResults)
+				ts := time.Now().Format("2006-01-02_15-04-05")
+				safeT := strings.ReplaceAll(target, ".", "_")
+				browserPath := fmt.Sprintf("cybermind_browser_%s_%s.md", safeT, ts)
+				os.WriteFile(browserPath, []byte(browserReport), 0644)
+				fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
+					"  ✓ Browser test report: " + browserPath))
+			}
+
+			// Then: generate AI manual guide for what browser couldn't do
 			bugMaps := make([]map[string]string, 0, len(allBugs))
 			for _, b := range allBugs {
 				bugMaps = append(bugMaps, map[string]string{
