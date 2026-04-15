@@ -116,18 +116,27 @@ func hasMinimumEvidence(output string) bool {
 	return contentLines >= 2
 }
 
-// ParseNucleiOutput parses nuclei output and returns confirmed bugs
+// ParseNucleiOutput parses nuclei output and returns confirmed bugs — deduplicated
 func ParseNucleiOutput(output, target string) []Bug {
 	var bugs []Bug
-	lines := strings.Split(output, "\n")
+	seen := map[string]bool{} // dedup by template+url
 
+	// Skip entirely if output is negative
+	if isNegativeOutput(output) || !hasMinimumEvidence(output) {
+		return nil
+	}
+
+	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+		// Skip negative lines
+		if isNegativeOutput(line) {
+			continue
+		}
 
-		// Match nuclei format: [severity] [template] [url]
 		m := nucleiPattern.FindStringSubmatch(line)
 		if m == nil {
 			continue
@@ -137,16 +146,23 @@ func ParseNucleiOutput(output, target string) []Bug {
 		templateID := m[2]
 		url := m[3]
 
-		// Skip info unless it contains interesting keywords
+		// Skip info unless interesting
 		if sev == SeverityInfo {
 			lower := strings.ToLower(line)
 			if !strings.Contains(lower, "exposed") && !strings.Contains(lower, "secret") &&
-				!strings.Contains(lower, "token") && !strings.Contains(lower, "key") {
+				!strings.Contains(lower, "token") && !strings.Contains(lower, "key") &&
+				!strings.Contains(lower, "takeover") {
 				continue
 			}
 		}
 
-		// Extract CVE if present
+		// Dedup by template+url
+		dedupKey := templateID + "|" + url
+		if seen[dedupKey] {
+			continue
+		}
+		seen[dedupKey] = true
+
 		cve := ""
 		if cveMatches := cvePattern.FindString(line); cveMatches != "" {
 			cve = cveMatches

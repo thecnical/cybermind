@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -920,20 +921,54 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 
 	lhost := getLocalIP()
 
-	// Build AbhimanyuContext from hunt results
-	abhCtx := &abhimanyu.AbhimanyuContext{
-		Target:      target,
-		TargetType:  ctx.TargetType,
-		VulnType:    "all",
-		LHOST:       lhost,
-		LiveURLs:    ctx.LiveURLs,
-		OpenPorts:   openPorts,
-		XSSFound:    xssFound,
-		VulnsFound:  vulnsFound,
-		ParamsFound: paramsFound,
-		WAFDetected: ctx.WAFDetected,
-		WAFVendor:   ctx.WAFVendor,
+	// ── Auto-select vulnType based on hunt findings ───────────────────────
+	// If hunt found specific vuln types, target those first instead of running all
+	vulnType := "all"
+	if len(xssFound) > 0 && len(vulnsFound) == 0 {
+		vulnType = "xss"
+	} else if len(vulnsFound) > 0 {
+		// Check nuclei findings for specific vuln types
+		for _, v := range vulnsFound {
+			lower := strings.ToLower(v)
+			if strings.Contains(lower, "sqli") || strings.Contains(lower, "sql-injection") {
+				vulnType = "sqli"
+				break
+			}
+			if strings.Contains(lower, "rce") || strings.Contains(lower, "command") {
+				vulnType = "rce"
+				break
+			}
+			if strings.Contains(lower, "ssrf") {
+				vulnType = "ssrf"
+				break
+			}
+		}
 	}
+	if vulnType != "all" {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+			fmt.Sprintf("  🎯 Auto-selected exploit type: %s (based on hunt findings)", vulnType)))
+		fmt.Println()
+	}
+
+	// ── Build full AbhimanyuContext from hunt results ─────────────────────
+	// Merge all URL sources for maximum coverage
+	allURLs := deduplicateStrings(append(append(ctx.LiveURLs, ctx.CrawledURLs...), ctx.HistoricalURLs...))
+
+	abhCtx := &abhimanyu.AbhimanyuContext{
+		Target:       target,
+		TargetType:   ctx.TargetType,
+		VulnType:     vulnType,
+		LHOST:        lhost,
+		LiveURLs:     ctx.LiveURLs,
+		OpenPorts:    openPorts,
+		XSSFound:     xssFound,
+		VulnsFound:   vulnsFound,
+		ParamsFound:  paramsFound,
+		WAFDetected:  ctx.WAFDetected,
+		WAFVendor:    ctx.WAFVendor,
+		Technologies: extractTechnologiesFromFindings(findings),
+	}
+	_ = allURLs // available for future use in exploit targeting
 
 	// Run full exploit pipeline using registry
 	results := abhimanyu.RunAbhimanyuMode(abhCtx, func(status abhimanyu.AbhimanyuStatus) {
@@ -969,19 +1004,21 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 		}
 	}
 
-	// Build AI payload
+	// Build AI payload with full context
 	abhimanyuPayload := map[string]interface{}{
 		"target":       target,
-		"vuln_type":    "all",
+		"vuln_type":    vulnType,
 		"lhost":        lhost,
 		"target_type":  ctx.TargetType,
 		"open_ports":   openPorts,
 		"live_urls":    ctx.LiveURLs,
+		"all_urls":     allURLs,
 		"xss_found":    xssFound,
 		"vulns_found":  vulnsFound,
 		"params_found": paramsFound,
 		"waf_detected": ctx.WAFDetected,
 		"waf_vendor":   ctx.WAFVendor,
+		"technologies": abhCtx.Technologies,
 		"findings":     findings,
 		"session_dir":  abhCtx.SessionDir,
 	}
@@ -989,19 +1026,16 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to Abhimanyu AI for exploit analysis..."))
 
-	exploit, exploitErr := api.SendAbhimanyu(target, "all", abhimanyuPayload)
+	exploit, exploitErr := api.SendAbhimanyu(target, vulnType, abhimanyuPayload)
 	if exploitErr == nil {
 		cleanExploit := utils.StripMarkdown(exploit)
 		printResult("⚔️  ABHIMANYU Exploit Report → "+target, cleanExploit)
 		_ = storage.AddEntry("/abhimanyu "+target, cleanExploit)
-
-		// FIX: autoExecuteAICommands REMOVED — AI-controlled shell execution is an RCE vector
-		// Commands are displayed for manual review only
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 			"  Copy any commands above and run them manually in your terminal."))
 	} else {
 		printError("Abhimanyu AI failed: " + exploitErr.Error())
-		// Print raw findings anyway
+		// Print raw findings anyway — don't leave user with nothing
 		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  Raw findings:"))
 		for tool, output := range findings {
 			if len(output) > 2000 {
@@ -1011,12 +1045,41 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 		}
 	}
 
-	// Show session info for next run
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
 		fmt.Sprintf("  💾 Session saved: %s/session.json", abhCtx.SessionDir)))
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 		"  Resume next session: cybermind /abhimanyu " + target))
+}
+
+// deduplicateStrings returns a deduplicated copy of a string slice.
+func deduplicateStrings(items []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range items {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// extractTechnologiesFromFindings extracts technology names from tool findings.
+func extractTechnologiesFromFindings(findings map[string]string) []string {
+	techRe := regexp.MustCompile(`(?i)(wordpress|joomla|drupal|nginx|apache|iis|php|python|ruby|node|react|angular|vue|laravel|django|rails|spring|tomcat|jenkins|grafana|kibana|elasticsearch)`)
+	seen := map[string]bool{}
+	var techs []string
+	for _, output := range findings {
+		for _, match := range techRe.FindAllString(output, -1) {
+			lower := strings.ToLower(match)
+			if !seen[lower] {
+				seen[lower] = true
+				techs = append(techs, lower)
+			}
+		}
+	}
+	return techs
 }
 
 func runAbhimanyu(target, vulnType string) {

@@ -73,6 +73,7 @@ type HuntContext struct {
 	WAFDetected bool
 	WAFVendor   string
 	Subdomains  []string
+	Technologies []string // detected tech stack from recon (whatweb, wappalyzer)
 
 	// Populated during hunt phases
 	HistoricalURLs []string // waymore + gau + waybackurls
@@ -381,24 +382,32 @@ func extractParams(result HuntResult) []string {
 }
 
 // extractXSS parses dalfox output for confirmed XSS findings.
+// Only accepts lines with explicit [v] or [vuln] markers — not generic "found".
 func extractXSS(result HuntResult) []string {
 	var found []string
 	seen := map[string]bool{}
 	for _, tr := range result.Results {
-		if tr.Tool != "dalfox" {
+		if tr.Tool != "dalfox" && tr.Tool != "kxss" && tr.Tool != "bxss" {
 			continue
 		}
 		for _, line := range strings.Split(tr.Output, "\n") {
 			line = strings.TrimSpace(line)
 			lower := strings.ToLower(line)
-			if strings.Contains(lower, "poc") ||
-				strings.Contains(lower, "verified") ||
-				strings.Contains(lower, "[v]") ||
-				strings.Contains(lower, "found") {
-				if !seen[line] && line != "" {
-					seen[line] = true
-					found = append(found, line)
-				}
+			// Must have explicit confirmation — not just "found" which is too loose
+			confirmed := strings.Contains(lower, "[v]") ||
+				strings.Contains(lower, "[vuln]") ||
+				strings.Contains(lower, "poc") ||
+				strings.Contains(lower, "verified")
+			if !confirmed {
+				continue
+			}
+			// Skip negative lines
+			if strings.Contains(lower, "not") && strings.Contains(lower, "vuln") {
+				continue
+			}
+			if !seen[line] && line != "" {
+				seen[line] = true
+				found = append(found, line)
 			}
 		}
 	}
@@ -406,6 +415,9 @@ func extractXSS(result HuntResult) []string {
 }
 
 // extractVulns parses nuclei output for confirmed vulnerabilities.
+// Only accepts lines matching nuclei's [severity][template][url] format.
+var nucleiLineRe = regexp.MustCompile(`\[(critical|high|medium|low|info)\]\s+\[`)
+
 func extractVulns(result HuntResult) []string {
 	var vulns []string
 	seen := map[string]bool{}
@@ -415,7 +427,23 @@ func extractVulns(result HuntResult) []string {
 		}
 		for _, line := range strings.Split(tr.Output, "\n") {
 			line = strings.TrimSpace(line)
-			if line != "" && !seen[line] {
+			if line == "" {
+				continue
+			}
+			// Must match nuclei's output format — not just any line
+			if !nucleiLineRe.MatchString(line) {
+				continue
+			}
+			// Skip info-only lines unless they contain interesting keywords
+			lower := strings.ToLower(line)
+			if strings.Contains(line, "[info]") {
+				if !strings.Contains(lower, "exposed") && !strings.Contains(lower, "secret") &&
+					!strings.Contains(lower, "token") && !strings.Contains(lower, "key") &&
+					!strings.Contains(lower, "takeover") {
+					continue
+				}
+			}
+			if !seen[line] {
 				seen[line] = true
 				vulns = append(vulns, line)
 			}

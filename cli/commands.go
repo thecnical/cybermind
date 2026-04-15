@@ -1098,14 +1098,15 @@ func runOmegaPlan(target string, localMode bool) {
 			openPorts = []int{}
 		}
 		huntCtxFromRecon = &hunt.HuntContext{
-			Target:      target,
-			TargetType:  rc.TargetType,
-			LiveURLs:    liveURLs,
-			CrawledURLs: rc.CrawledURLs,
-			OpenPorts:   openPorts,
-			WAFDetected: rc.WAFDetected,
-			WAFVendor:   rc.WAFVendor,
-			Subdomains:  rc.Subdomains,
+			Target:       target,
+			TargetType:   rc.TargetType,
+			LiveURLs:     liveURLs,
+			CrawledURLs:  rc.CrawledURLs,
+			OpenPorts:    openPorts,
+			WAFDetected:  rc.WAFDetected,
+			WAFVendor:    rc.WAFVendor,
+			Subdomains:   rc.Subdomains,
+			Technologies: rc.Technologies,
 		}
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
 			fmt.Sprintf("  ℹ  Recon context: %d live URLs, %d open ports, WAF=%v (%s)",
