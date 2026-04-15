@@ -1061,6 +1061,27 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				}
 			}
 
+			// ── Generate custom nuclei templates for this target ──────────
+			if len(state.Technologies) > 0 && !localMode {
+				go func() {
+					// Run in background — don't block the main loop
+					tmplReq := api.NucleiTemplateRequest{
+						Target:    target,
+						TechStack: state.Technologies,
+						VulnType:  decision.VulnFocus,
+					}
+					if tmpl, err := api.GenerateNucleiTemplate(tmplReq); err == nil && tmpl != nil {
+						tmplDir := "/tmp/cybermind_custom_templates"
+						os.MkdirAll(tmplDir, 0755)
+						tmplPath := tmplDir + "/" + tmpl.Filename
+						if os.WriteFile(tmplPath, []byte(tmpl.Template), 0644) == nil {
+							fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+								"  ✓ Custom nuclei template: " + tmplPath))
+						}
+					}
+				}()
+			}
+
 			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
 				fmt.Sprintf("  ✓ Hunt complete: %d tools ran, %d bugs found",
 					len(huntResult.Tools), state.BugsFound)))
@@ -1229,7 +1250,7 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				})
 			}
 
-			// ── Step 4: Save report ───────────────────────────────────────
+			// Save report with PoCs
 			bugReport := bugdetect.BugReport{
 				Target:    target,
 				Bugs:      allBugs,
@@ -1243,6 +1264,16 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			if err := os.WriteFile(reportPath, []byte(content), 0644); err == nil {
 				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render(
 					"  ✓ Full bug report saved: " + reportPath))
+			}
+
+			// Also save HackerOne-format report
+			h1Content := bugdetect.GenerateH1Report(bugReport, pocs)
+			if h1Content != "" {
+				h1Path := fmt.Sprintf("cybermind_h1_report_%s_%s.md", safeTarget, ts)
+				if os.WriteFile(h1Path, []byte(h1Content), 0644) == nil {
+					fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
+						"  ✓ HackerOne report saved: " + h1Path))
+				}
 			}
 
 			// ── Step 5: Telegram notification ────────────────────────────
@@ -1485,67 +1516,41 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// notifyBugsFound sends a Telegram notification when bugs are found.
-// Uses TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars.
+// notifyBugsFound sends a Telegram notification via the backend Telegram agent.
+// Uses the existing core/telegram.js infrastructure — no separate bot needed.
 func notifyBugsFound(target string, bugs []bugdetect.Bug, reportPath string) {
-	token := os.Getenv("TELEGRAM_BOT_TOKEN")
-	chatID := os.Getenv("TELEGRAM_CHAT_ID")
-	if token == "" || chatID == "" {
-		return // not configured — silent skip
+	if len(bugs) == 0 {
+		return
 	}
 
 	critCount, highCount := 0, 0
+	bugMaps := make([]map[string]string, 0, len(bugs))
 	for _, b := range bugs {
 		if b.Severity == bugdetect.SeverityCritical {
 			critCount++
 		} else if b.Severity == bugdetect.SeverityHigh {
 			highCount++
 		}
+		bugMaps = append(bugMaps, map[string]string{
+			"title":    b.Title,
+			"severity": string(b.Severity),
+			"url":      b.URL,
+			"tool":     b.Tool,
+		})
 	}
 
-	msg := fmt.Sprintf("🐛 *CyberMind Bug Found!*\n\n"+
-		"🎯 Target: `%s`\n"+
-		"🔴 Critical: %d | 🟠 High: %d\n"+
-		"📊 Total: %d bugs\n"+
-		"📄 Report: `%s`\n\n",
-		target, critCount, highCount, len(bugs), reportPath)
-
-	for i, b := range bugs {
-		if i >= 5 {
-			msg += fmt.Sprintf("_...and %d more_", len(bugs)-5)
-			break
-		}
-		emoji := "🟡"
-		if b.Severity == bugdetect.SeverityCritical {
-			emoji = "🔴"
-		} else if b.Severity == bugdetect.SeverityHigh {
-			emoji = "🟠"
-		}
-		msg += fmt.Sprintf("%s `%s`\n", emoji, b.Title)
-		if b.URL != "" {
-			msg += fmt.Sprintf("   URL: `%s`\n", truncate(b.URL, 60))
-		}
-	}
-
-	payload := map[string]interface{}{
-		"chat_id":    chatID,
-		"text":       msg,
-		"parse_mode": "Markdown",
-	}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest("POST",
-		fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token),
-		bytes.NewBuffer(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	resp, err := httpClient.Do(req)
+	// Send via backend Telegram agent (uses TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID on server)
+	err := api.SendBugAlert(target, bugMaps, reportPath, critCount, highCount, "")
 	if err == nil {
-		resp.Body.Close()
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			"  ✓ Telegram notification sent"))
+			"  ✓ Telegram notification sent via backend agent"))
+	}
+	// Also try direct env-based notification as fallback
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	chatID := os.Getenv("TELEGRAM_CHAT_ID")
+	if token != "" && chatID != "" && err != nil {
+		brain.NotifyBugFound(target, fmt.Sprintf("%d bugs found", len(bugs)),
+			"critical", "", reportPath)
 	}
 }
 

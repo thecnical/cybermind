@@ -1528,3 +1528,96 @@ func parseDecisionFromText(text string, state AgentState) *AgentDecision {
 
 	return d
 }
+
+// ─── Nuclei Custom Templates ──────────────────────────────────────────────────
+
+// NucleiTemplateRequest asks AI to generate a target-specific nuclei template
+type NucleiTemplateRequest struct {
+	Target     string   `json:"target"`
+	TechStack  []string `json:"tech_stack"`
+	VulnType   string   `json:"vuln_type"`
+	Endpoint   string   `json:"endpoint,omitempty"`
+	Parameter  string   `json:"parameter,omitempty"`
+	Evidence   string   `json:"evidence,omitempty"`
+}
+
+// NucleiTemplateResult holds the generated template
+type NucleiTemplateResult struct {
+	Template string `json:"template"`
+	Filename string `json:"filename"`
+}
+
+// GenerateNucleiTemplate asks the backend to generate a custom nuclei template
+func GenerateNucleiTemplate(req NucleiTemplateRequest) (*NucleiTemplateResult, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/nuclei-template", bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("_backend_down: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+
+	var result struct {
+		Success  bool   `json:"success"`
+		Template string `json:"template"`
+		Filename string `json:"filename"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("%s", result.Error)
+	}
+	return &NucleiTemplateResult{Template: result.Template, Filename: result.Filename}, nil
+}
+
+// ─── Bug Alert (Telegram via backend) ────────────────────────────────────────
+
+// SendBugAlert sends a bug notification via the backend Telegram agent
+func SendBugAlert(target string, bugs []map[string]string, reportPath string, critCount, highCount int, duration string) error {
+	payload, err := json.Marshal(map[string]interface{}{
+		"target":         target,
+		"bugs":           bugs,
+		"report_path":    reportPath,
+		"total_bugs":     len(bugs),
+		"critical_count": critCount,
+		"high_count":     highCount,
+		"scan_duration":  duration,
+	})
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/bug-alert", bytes.NewBuffer(payload))
+	if err != nil {
+		return fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("_backend_down: %v", err)
+	}
+	defer resp.Body.Close()
+	io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return nil
+}
