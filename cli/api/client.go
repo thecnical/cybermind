@@ -1386,3 +1386,145 @@ func GetShodanAPIKey() string {
 	}
 	return ""
 }
+
+// ─── Agentic Omega Brain ──────────────────────────────────────────────────────
+
+// AgentState is the full context the AI brain sees at each decision point
+type AgentState struct {
+	Target       string            `json:"target"`
+	Iteration    int               `json:"iteration"`
+	Phase        string            `json:"phase"`        // current phase name
+	ReconDone    bool              `json:"recon_done"`
+	HuntDone     bool              `json:"hunt_done"`
+	AbhiDone     bool              `json:"abhi_done"`
+	BugsFound    int               `json:"bugs_found"`
+	BugTypes     []string          `json:"bug_types"`    // confirmed vuln types
+	LiveURLs     []string          `json:"live_urls"`
+	OpenPorts    []int             `json:"open_ports"`
+	WAFDetected  bool              `json:"waf_detected"`
+	WAFVendor    string            `json:"waf_vendor"`
+	Technologies []string          `json:"technologies"`
+	Subdomains   int               `json:"subdomains_found"`
+	ToolsRan     []string          `json:"tools_ran"`
+	ToolsFailed  []string          `json:"tools_failed"`
+	Findings     map[string]string `json:"findings_summary"` // tool → short summary
+	LastAction   string            `json:"last_action"`
+	SkillLevel   string            `json:"skill_level"`
+	FocusBugs    string            `json:"focus_bugs"`
+	Mode         string            `json:"mode"` // quick|deep|overnight
+}
+
+// AgentDecision is what the AI brain decides to do next
+type AgentDecision struct {
+	Action      string   `json:"action"`       // recon|hunt|exploit|poc|report|next_target|done
+	Reason      string   `json:"reason"`       // why this action
+	VulnFocus   string   `json:"vuln_focus"`   // sqli|xss|rce|ssrf|all
+	ToolsAdd    []string `json:"tools_add"`    // extra tools to run
+	ToolsSkip   []string `json:"tools_skip"`   // tools to skip
+	WAFBypass   string   `json:"waf_bypass"`   // bypass strategy
+	Depth       string   `json:"depth"`        // quick|deep|exhaustive
+	NextTarget  string   `json:"next_target"`  // if action=next_target
+	Confidence  int      `json:"confidence"`   // 0-100 confidence in finding bugs
+	Notes       string   `json:"notes"`        // AI notes for user
+}
+
+// SendAgentDecision asks the AI brain what to do next given current state
+func SendAgentDecision(state AgentState) (*AgentDecision, error) {
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode state: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/agent/decide", bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("_backend_down: cannot connect — %s", err.Error())
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Try structured response first
+	var structured struct {
+		Success  bool          `json:"success"`
+		Decision AgentDecision `json:"decision"`
+		Error    string        `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &structured); err == nil && structured.Success {
+		return &structured.Decision, nil
+	}
+
+	// Fallback: parse from text response
+	var textResp promptResponse
+	if err := json.Unmarshal(raw, &textResp); err == nil && textResp.Success {
+		text := textResp.Response
+		if textResp.Analysis != "" {
+			text = textResp.Analysis
+		}
+		// Parse action from text
+		decision := parseDecisionFromText(text, state)
+		return decision, nil
+	}
+
+	return nil, fmt.Errorf("agent decision failed")
+}
+
+// parseDecisionFromText extracts a decision from free-form AI text
+func parseDecisionFromText(text string, state AgentState) *AgentDecision {
+	lower := strings.ToLower(text)
+	d := &AgentDecision{
+		Action:     "hunt",
+		Reason:     text,
+		VulnFocus:  "all",
+		Depth:      "deep",
+		Confidence: 50,
+		Notes:      text,
+	}
+
+	// Determine action from text
+	switch {
+	case !state.ReconDone:
+		d.Action = "recon"
+	case !state.HuntDone:
+		d.Action = "hunt"
+	case state.BugsFound > 0 && !state.AbhiDone:
+		d.Action = "exploit"
+	case state.BugsFound > 0:
+		d.Action = "poc"
+	case strings.Contains(lower, "next target") || strings.Contains(lower, "move on"):
+		d.Action = "next_target"
+	case strings.Contains(lower, "done") || strings.Contains(lower, "complete"):
+		d.Action = "done"
+	default:
+		d.Action = "hunt"
+	}
+
+	// Extract vuln focus
+	switch {
+	case strings.Contains(lower, "sqli") || strings.Contains(lower, "sql injection"):
+		d.VulnFocus = "sqli"
+	case strings.Contains(lower, "xss"):
+		d.VulnFocus = "xss"
+	case strings.Contains(lower, "rce") || strings.Contains(lower, "command injection"):
+		d.VulnFocus = "rce"
+	case strings.Contains(lower, "ssrf"):
+		d.VulnFocus = "ssrf"
+	case strings.Contains(lower, "idor"):
+		d.VulnFocus = "idor"
+	}
+
+	return d
+}

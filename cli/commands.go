@@ -20,6 +20,7 @@ import (
 	"cybermind-cli/bugdetect"
 	"cybermind-cli/hunt"
 	"cybermind-cli/omega"
+	"cybermind-cli/recon"
 	"cybermind-cli/storage"
 	"cybermind-cli/utils"
 
@@ -811,6 +812,450 @@ var _ = filepath.Join
 var _ = exec.LookPath
 var _ = runtime.GOOS
 
+// ─── OMEGA Agentic Brain Loop ─────────────────────────────────────────────────
+
+// agentPrint prints a styled agent brain message
+func agentPrint(msg string) {
+	fmt.Println(lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00FFFF")).
+		Background(lipgloss.Color("#0A0A1A")).
+		Padding(0, 1).
+		Render("  🧠 AGENT") + " " +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(msg))
+}
+
+func agentThink(msg string) {
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ [BRAIN] " + msg))
+}
+
+func agentDecide(msg string) {
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  → [DECIDE] " + msg))
+}
+
+func agentAct(msg string) {
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render("  ⚡ [ACT] " + msg))
+}
+
+// runAgenticOmega is the full agentic loop — AI brain controls everything.
+// It decides what to run, adapts based on findings, and loops until bugs found or exhausted.
+func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool) {
+	cyan2 := lipgloss.Color("#00FFFF")
+	green2 := lipgloss.Color("#00FF00")
+	red2 := lipgloss.Color("#FF4444")
+	yellow2 := lipgloss.Color("#FFD700")
+	dim2 := lipgloss.Color("#777777")
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  🤖 OMEGA AGENTIC MODE — AI BRAIN IN CONTROL"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(fmt.Sprintf("  Target: %s | Mode: %s | Skill: %s | Focus: %s", target, mode, skillLevel, focusBugs)))
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
+	fmt.Println()
+
+	// ── Agent state — the brain's memory ─────────────────────────────────
+	state := api.AgentState{
+		Target:     target,
+		Iteration:  0,
+		Phase:      "init",
+		SkillLevel: skillLevel,
+		FocusBugs:  focusBugs,
+		Mode:       mode,
+		Findings:   make(map[string]string),
+	}
+
+	// Accumulated context across all phases
+	var allBugs []bugdetect.Bug
+	var reconResult recon.ReconResult
+	var huntResult hunt.HuntResult
+	var allFindings = make(map[string]string)
+
+	maxIterations := 8 // prevent infinite loops
+	if mode == "overnight" {
+		maxIterations = 20
+	} else if mode == "quick" {
+		maxIterations = 4
+	}
+
+	for iter := 0; iter < maxIterations; iter++ {
+		state.Iteration = iter + 1
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(fmt.Sprintf("  %s", strings.Repeat("─", 60))))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow2).Render(
+			fmt.Sprintf("  🔄 AGENT ITERATION %d/%d", iter+1, maxIterations)))
+		fmt.Println()
+
+		// ── Ask AI brain what to do next ─────────────────────────────────
+		agentThink(fmt.Sprintf("Analyzing state: recon=%v hunt=%v bugs=%d phase=%s",
+			state.ReconDone, state.HuntDone, state.BugsFound, state.Phase))
+
+		var decision *api.AgentDecision
+		var decErr error
+
+		if !localMode {
+			decision, decErr = api.SendAgentDecision(state)
+		}
+
+		// Fallback: local decision logic if AI unavailable
+		if localMode || decErr != nil || decision == nil {
+			decision = localAgentDecision(state)
+			if decErr != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+					fmt.Sprintf("  ℹ  AI brain offline (%v) — using local logic", decErr)))
+			}
+		}
+
+		agentDecide(fmt.Sprintf("Action=%s | Focus=%s | Reason: %s",
+			decision.Action, decision.VulnFocus, truncate(decision.Reason, 80)))
+
+		if decision.Notes != "" && decision.Notes != decision.Reason {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				"  💭 " + truncate(decision.Notes, 120)))
+		}
+		fmt.Println()
+
+		// ── Execute the decision ──────────────────────────────────────────
+		switch decision.Action {
+
+		case "recon":
+			agentAct("Running RECON phase...")
+			omegaLog("\n═══ AGENT: RECON ═══\nTarget: " + target)
+
+			reconResult = runAutoReconSilent(target, nil)
+			state.ReconDone = true
+			state.Phase = "recon_done"
+
+			// Update state from recon
+			if reconResult.Context != nil {
+				rc := reconResult.Context
+				state.LiveURLs = rc.LiveURLs
+				state.OpenPorts = rc.OpenPorts
+				state.WAFDetected = rc.WAFDetected
+				state.WAFVendor = rc.WAFVendor
+				state.Technologies = rc.Technologies
+				state.Subdomains = len(rc.Subdomains)
+			}
+			state.ToolsRan = append(state.ToolsRan, reconResult.Tools...)
+			for _, f := range reconResult.Results {
+				if f.Output != "" {
+					allFindings["recon_"+f.Tool] = truncate(f.Output, 500)
+				}
+			}
+
+			// Parse bugs from recon
+			for _, tr := range reconResult.Results {
+				if tr.Output != "" {
+					bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+					allBugs = append(allBugs, bugs...)
+				}
+			}
+			state.BugsFound = len(allBugs)
+			state.BugTypes = extractBugTypes(allBugs)
+
+			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
+				fmt.Sprintf("  ✓ Recon complete: %d tools ran, %d live URLs, %d ports, %d bugs",
+					len(reconResult.Tools), len(state.LiveURLs), len(state.OpenPorts), state.BugsFound)))
+
+		case "hunt":
+			agentAct(fmt.Sprintf("Running HUNT phase (focus: %s)...", decision.VulnFocus))
+			omegaLog("\n═══ AGENT: HUNT ═══")
+
+			// Build hunt context from recon
+			var huntCtx *hunt.HuntContext
+			if reconResult.Context != nil {
+				rc := reconResult.Context
+				huntCtx = &hunt.HuntContext{
+					Target:       target,
+					TargetType:   rc.TargetType,
+					LiveURLs:     rc.LiveURLs,
+					CrawledURLs:  rc.CrawledURLs,
+					OpenPorts:    rc.OpenPorts,
+					WAFDetected:  rc.WAFDetected,
+					WAFVendor:    rc.WAFVendor,
+					Subdomains:   rc.Subdomains,
+					Technologies: rc.Technologies,
+				}
+			}
+
+			// Apply agent's tool decisions
+			var skipTools map[string]bool
+			if len(decision.ToolsSkip) > 0 {
+				skipTools = make(map[string]bool)
+				for _, t := range decision.ToolsSkip {
+					skipTools[t] = true
+				}
+			}
+
+			huntResult = runHuntSilent(target, huntCtx, buildRequestedTools(skipTools, "hunt"))
+			state.HuntDone = true
+			state.Phase = "hunt_done"
+
+			// Update state from hunt
+			if huntResult.Context != nil {
+				hc := huntResult.Context
+				if len(hc.LiveURLs) > len(state.LiveURLs) {
+					state.LiveURLs = hc.LiveURLs
+				}
+			}
+			state.ToolsRan = append(state.ToolsRan, huntResult.Tools...)
+			for _, f := range huntResult.Results {
+				if f.Output != "" {
+					allFindings[f.Tool] = truncate(f.Output, 500)
+				}
+			}
+
+			// Parse bugs from hunt
+			for _, tr := range huntResult.Results {
+				if tr.Output != "" {
+					bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+					allBugs = append(allBugs, bugs...)
+				}
+			}
+			// Dedup bugs
+			allBugs = dedupBugs(allBugs)
+			state.BugsFound = len(allBugs)
+			state.BugTypes = extractBugTypes(allBugs)
+
+			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
+				fmt.Sprintf("  ✓ Hunt complete: %d tools ran, %d bugs found",
+					len(huntResult.Tools), state.BugsFound)))
+
+			if state.BugsFound > 0 {
+				for _, b := range allBugs {
+					color := yellow2
+					if b.Severity == bugdetect.SeverityCritical {
+						color = red2
+					}
+					fmt.Println(lipgloss.NewStyle().Foreground(color).Render(
+						fmt.Sprintf("    🐛 [%s] %s", strings.ToUpper(string(b.Severity)), b.Title)))
+				}
+			}
+
+		case "exploit":
+			agentAct(fmt.Sprintf("Running ABHIMANYU exploit phase (focus: %s)...", decision.VulnFocus))
+			omegaLog("\n═══ AGENT: EXPLOIT ═══")
+
+			var huntCtxForAbhi hunt.HuntContext
+			if huntResult.Context != nil {
+				huntCtxForAbhi = *huntResult.Context
+			}
+
+			xssFound := huntCtxForAbhi.XSSFound
+			vulnsFound := huntCtxForAbhi.VulnsFound
+			paramsFound := huntCtxForAbhi.ParamsFound
+			openPorts := huntCtxForAbhi.OpenPorts
+			if len(openPorts) == 0 && reconResult.Context != nil {
+				openPorts = reconResult.Context.OpenPorts
+			}
+
+			runAbhimanyuFromHunt(target, huntCtxForAbhi, xssFound, vulnsFound, paramsFound, openPorts, allFindings)
+			state.AbhiDone = true
+			state.Phase = "exploit_done"
+
+		case "poc":
+			agentAct("Generating PoC for confirmed bugs...")
+			omegaLog("\n═══ AGENT: POC GENERATION ═══")
+
+			pocs := make(map[int]string)
+			for i, bug := range allBugs {
+				if bug.Severity == bugdetect.SeverityLow || bug.Severity == bugdetect.SeverityInfo {
+					continue
+				}
+				if bug.Evidence == "" {
+					continue
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+					fmt.Sprintf("  ⟳ PoC [%d/%d]: %s", i+1, len(allBugs), bug.Title)))
+				poc, pocErr := api.SendPoCGeneration(api.PoCRequest{
+					BugType:  bug.Title,
+					URL:      bug.URL,
+					Evidence: bug.Evidence,
+					Target:   target,
+					CVE:      bug.CVE,
+					CWE:      bug.CWE,
+					Severity: string(bug.Severity),
+					Tool:     bug.Tool,
+				})
+				if pocErr == nil && poc != "" {
+					pocs[i] = poc
+					fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
+						fmt.Sprintf("  ✓ PoC: %s", bug.Title)))
+				}
+			}
+
+			// Save report with PoCs
+			bugReport := bugdetect.BugReport{
+				Target:    target,
+				Bugs:      allBugs,
+				StartTime: time.Now().Add(-2 * time.Hour),
+				EndTime:   time.Now(),
+			}
+			content := bugdetect.GenerateReportWithPoC(bugReport, pocs)
+			ts := time.Now().Format("2006-01-02_15-04-05")
+			safeTarget := strings.ReplaceAll(target, ".", "_")
+			reportPath := fmt.Sprintf("cybermind_bugs_%s_%s.md", safeTarget, ts)
+			if err := os.WriteFile(reportPath, []byte(content), 0644); err == nil {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render(
+					"  ✓ Full bug report saved: " + reportPath))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+					"  " + bugdetect.GetBugBountyInfo(target)))
+			}
+			state.Phase = "poc_done"
+
+		case "report":
+			agentAct("Generating final report...")
+			runReport("markdown", localMode)
+			state.Phase = "report_done"
+
+		case "next_target":
+			agentAct("No bugs found — suggesting next target...")
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow2).Render(
+				"  ⚡ Agent recommends moving to next target"))
+			if decision.NextTarget != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan2).Render(
+					"  → Suggested: " + decision.NextTarget))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+					"  Run: sudo cybermind /plan " + decision.NextTarget))
+			} else {
+				nextTargets := bugdetect.SuggestNextTarget(target)
+				for i, t := range nextTargets {
+					fmt.Println(lipgloss.NewStyle().Foreground(cyan2).Render(
+						fmt.Sprintf("  %d. %s — %s", i+1, t, bugdetect.GetBugBountyInfo(t))))
+				}
+			}
+			return
+
+		case "done":
+			agentAct("Agent complete!")
+			break
+		}
+
+		// Update findings summary for next AI decision
+		state.Findings = make(map[string]string)
+		for k, v := range allFindings {
+			state.Findings[k] = truncate(v, 200)
+		}
+		state.LastAction = decision.Action
+
+		// ── Check if we should stop ───────────────────────────────────────
+		if decision.Action == "done" {
+			break
+		}
+
+		// If we have high-severity bugs and PoC is done, we're done
+		if state.Phase == "poc_done" && state.BugsFound > 0 {
+			break
+		}
+
+		// If all phases done and no bugs, suggest next target
+		if state.ReconDone && state.HuntDone && state.AbhiDone && state.BugsFound == 0 {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow2).Render(
+				"  ⚡ All phases complete — no confirmed bugs on this target"))
+			nextTargets := bugdetect.SuggestNextTarget(target)
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render("  Suggested next targets:"))
+			for i, t := range nextTargets {
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan2).Render(
+					fmt.Sprintf("  %d. %s — %s", i+1, t, bugdetect.GetBugBountyInfo(t))))
+			}
+			break
+		}
+	}
+
+	// ── Final summary ─────────────────────────────────────────────────────
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  🤖 OMEGA AGENT COMPLETE"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(
+		fmt.Sprintf("  Target: %s | Iterations: %d | Bugs: %d | Tools ran: %d",
+			target, state.Iteration, state.BugsFound, len(state.ToolsRan))))
+	if state.BugsFound > 0 {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+			fmt.Sprintf("  🎯 %d BUGS CONFIRMED — check cybermind_bugs_*.md", state.BugsFound)))
+	}
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
+	fmt.Println()
+}
+
+// localAgentDecision makes a decision without AI — pure logic fallback
+func localAgentDecision(state api.AgentState) *api.AgentDecision {
+	d := &api.AgentDecision{
+		VulnFocus:  "all",
+		Depth:      "deep",
+		Confidence: 60,
+	}
+
+	switch {
+	case !state.ReconDone:
+		d.Action = "recon"
+		d.Reason = "Recon not done yet — gather target intelligence first"
+	case !state.HuntDone:
+		d.Action = "hunt"
+		d.Reason = "Hunt not done yet — find vulnerabilities"
+		if state.WAFDetected {
+			d.WAFBypass = "random-agent,delay,tamper"
+		}
+	case state.BugsFound > 0 && !state.AbhiDone:
+		d.Action = "exploit"
+		d.Reason = fmt.Sprintf("Found %d bugs — running exploit phase", state.BugsFound)
+		d.VulnFocus = "all"
+		if len(state.BugTypes) > 0 {
+			d.VulnFocus = state.BugTypes[0]
+		}
+	case state.BugsFound > 0 && state.AbhiDone:
+		d.Action = "poc"
+		d.Reason = "Bugs confirmed — generating PoC"
+	case state.ReconDone && state.HuntDone && state.BugsFound == 0:
+		d.Action = "next_target"
+		d.Reason = "No bugs found — move to next target"
+	default:
+		d.Action = "done"
+		d.Reason = "All phases complete"
+	}
+
+	return d
+}
+
+// extractBugTypes returns unique vuln type names from bugs
+func extractBugTypes(bugs []bugdetect.Bug) []string {
+	seen := map[string]bool{}
+	var types []string
+	for _, b := range bugs {
+		t := strings.ToLower(b.CWE)
+		if t == "" {
+			t = strings.ToLower(b.Title)
+		}
+		if !seen[t] && t != "" {
+			seen[t] = true
+			types = append(types, t)
+		}
+	}
+	return types
+}
+
+// dedupBugs removes duplicate bugs by title+url
+func dedupBugs(bugs []bugdetect.Bug) []bugdetect.Bug {
+	seen := map[string]bool{}
+	var out []bugdetect.Bug
+	for _, b := range bugs {
+		key := b.Title + "|" + b.URL
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// truncate shortens a string to maxLen chars
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 // ─── OMEGA Planning Mode ──────────────────────────────────────────────────────
 
 // runOmegaPlan is the main entry point for /plan command
@@ -1028,332 +1473,35 @@ func runOmegaPlan(target string, localMode bool) {
 		return
 	}
 
-		// ── STEP 9: Execute — full plan-aware chained execution ─────────────
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
-		"  🚀 EXECUTING OMEGA PLAN — " + target))
+		// ── STEP 9: Execute — AGENTIC BRAIN LOOP ────────────────────────────
 	fmt.Println()
 
 	// Launch floating terminal if tmux available
 	launchFloatingTerminal(target)
 	omegaLogFile = fmt.Sprintf("/tmp/cybermind_omega_%s.log", strings.ReplaceAll(target, ".", "_"))
 
-	// Build skip set from plan phases
-	skipTools := make(map[string]bool)
-	// Also build per-phase focus args from plan — passed via env for tools to use
-	planFocusArgs := make(map[string]string)
+	// Apply plan WAF/stealth settings to env
 	if plan != nil {
-		for _, phase := range plan.Phases {
-			for _, skip := range phase.ToolsSkip {
-				skipTools[skip] = true
-			}
-			for tool, args := range phase.ToolsFocus {
-				planFocusArgs[tool] = args
-			}
-		}
 		if plan.WAFStrategy != "" && plan.WAFStrategy != "none" {
 			os.Setenv("CYBERMIND_WAF_STRATEGY", plan.WAFStrategy)
 		}
 		if plan.StealthMode {
 			os.Setenv("CYBERMIND_STEALTH", "true")
 		}
-		// Encode focus args as JSON env var so recon/hunt engines can read them
-		if len(planFocusArgs) > 0 {
-			if focusJSON, err := json.Marshal(planFocusArgs); err == nil {
-				os.Setenv("CYBERMIND_FOCUS_ARGS", string(focusJSON))
-			}
-		}
 	}
 
-	// ── PHASE 1: RECON (plan-aware) ──────────────────────────────────────
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
-		"  ═══ PHASE 1: RECON ═══"))
-	omegaLog("\n═══ PHASE 1: RECON ═══\nTarget: " + target)
-	if plan != nil && len(skipTools) > 0 {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			fmt.Sprintf("  ℹ  Plan-aware: skipping %d tools, focusing on AI-recommended tools", len(skipTools))))
+	// ── Hand off to the agentic brain loop ───────────────────────────────
+	skillLevel := os.Getenv("CYBERMIND_SKILL")
+	if skillLevel == "" {
+		skillLevel = "intermediate"
 	}
-	fmt.Println()
-
-	// Run recon silently (no interactive prompts) and capture result for context chaining
-	reconResult := runAutoReconSilent(target, buildRequestedTools(skipTools, "recon"))
-
-	// ── PHASE 2: HUNT (plan-aware, recon context fed in) ─────────────────
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
-		"  ═══ PHASE 2: HUNT ═══"))
-	omegaLog("\n═══ PHASE 2: HUNT ═══")
-
-	// Build hunt context from recon results — this is the key fix
-	// Hunt now knows: live URLs, open ports, WAF, subdomains from recon
-	var huntCtxFromRecon *hunt.HuntContext
-	if reconResult.Context != nil {
-		rc := reconResult.Context
-		liveURLs := rc.LiveURLs
-		if liveURLs == nil {
-			liveURLs = []string{}
-		}
-		openPorts := rc.OpenPorts
-		if openPorts == nil {
-			openPorts = []int{}
-		}
-		huntCtxFromRecon = &hunt.HuntContext{
-			Target:       target,
-			TargetType:   rc.TargetType,
-			LiveURLs:     liveURLs,
-			CrawledURLs:  rc.CrawledURLs,
-			OpenPorts:    openPorts,
-			WAFDetected:  rc.WAFDetected,
-			WAFVendor:    rc.WAFVendor,
-			Subdomains:   rc.Subdomains,
-			Technologies: rc.Technologies,
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			fmt.Sprintf("  ℹ  Recon context: %d live URLs, %d open ports, WAF=%v (%s)",
-				len(liveURLs), len(openPorts), rc.WAFDetected, rc.WAFVendor)))
-	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  ℹ  No recon context — hunt running in standalone mode"))
-	}
-	fmt.Println()
-
-	// Run hunt silently with recon context and plan-aware tool filter
-	huntResult := runHuntSilent(target, huntCtxFromRecon, buildRequestedTools(skipTools, "hunt"))
-
-	// ── BUG DETECTION: Parse hunt + recon output for confirmed vulnerabilities ──
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
-		"  🔍 BUG DETECTION — Analyzing tool output..."))
-
-	var allBugs []bugdetect.Bug
-	bugReport := bugdetect.BugReport{
-		Target:    target,
-		StartTime: time.Now().Add(-time.Hour), // approximate
-		EndTime:   time.Now(),
+	focusBugs := os.Getenv("CYBERMIND_FOCUS_BUGS")
+	execMode := os.Getenv("CYBERMIND_EXEC_MODE")
+	if execMode == "" {
+		execMode = "deep"
 	}
 
-	// Parse nuclei output from hunt
-	for _, tr := range huntResult.Results {
-		if tr.Output != "" {
-			bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
-			allBugs = append(allBugs, bugs...)
-		}
-	}
-	// Parse nuclei output from recon
-	for _, tr := range reconResult.Results {
-		if tr.Output != "" {
-			bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
-			allBugs = append(allBugs, bugs...)
-		}
-	}
-
-	bugReport.Bugs = allBugs
-
-	if len(allBugs) > 0 {
-		// Count by severity
-		critCount, highCount, medCount := 0, 0, 0
-		for _, b := range allBugs {
-			switch b.Severity {
-			case bugdetect.SeverityCritical:
-				critCount++
-			case bugdetect.SeverityHigh:
-				highCount++
-			case bugdetect.SeverityMedium:
-				medCount++
-			}
-		}
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-			fmt.Sprintf("  🐛 BUGS FOUND: %d total (Critical:%d High:%d Medium:%d)",
-				len(allBugs), critCount, highCount, medCount)))
-		omegaLog(fmt.Sprintf("🐛 BUGS FOUND: %d", len(allBugs)))
-		fmt.Println()
-
-		// Show each bug
-		for _, bug := range allBugs {
-			color := lipgloss.Color("#FFD700")
-			if bug.Severity == bugdetect.SeverityCritical {
-				color = lipgloss.Color("#FF4444")
-			} else if bug.Severity == bugdetect.SeverityHigh {
-				color = lipgloss.Color("#FF6600")
-			}
-			fmt.Println(lipgloss.NewStyle().Foreground(color).Render(
-				fmt.Sprintf("  [%s] %s", strings.ToUpper(string(bug.Severity)), bug.Title)))
-			if bug.URL != "" {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-					"    URL: " + bug.URL))
-			}
-		}
-		fmt.Println()
-
-		// ── AUTO PoC GENERATION ────────────────────────────────────────────
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
-			"  ⟳ Generating PoC for each confirmed bug..."))
-
-		pocs := make(map[int]string)
-		for i, bug := range allBugs {
-			// Only generate PoC for medium+ severity
-			if bug.Severity == bugdetect.SeverityLow || bug.Severity == bugdetect.SeverityInfo {
-				continue
-			}
-			// Skip PoC if evidence is empty or clearly negative — prevents hallucinated PoCs
-			if bug.Evidence == "" {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-					fmt.Sprintf("  - PoC skipped [%d/%d]: no evidence for %s", i+1, len(allBugs), bug.Title)))
-				continue
-			}
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
-				fmt.Sprintf("  ⟳ PoC [%d/%d]: %s", i+1, len(allBugs), bug.Title)))
-
-			poc, pocErr := api.SendPoCGeneration(api.PoCRequest{
-				BugType:  bug.Title,
-				URL:      bug.URL,
-				Evidence: bug.Evidence,
-				Target:   target,
-				CVE:      bug.CVE,
-				CWE:      bug.CWE,
-				Severity: string(bug.Severity),
-				Tool:     bug.Tool,
-			})
-			if pocErr == nil && poc != "" {
-				pocs[i] = poc
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-					fmt.Sprintf("  ✓ PoC generated for: %s", bug.Title)))
-			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-					fmt.Sprintf("  - PoC generation failed: %v", pocErr)))
-			}
-		}
-
-		// Save report with PoCs included
-		bugReport.Bugs = allBugs
-		bugReport.EndTime = time.Now()
-		content := bugdetect.GenerateReportWithPoC(bugReport, pocs)
-		ts := time.Now().Format("2006-01-02_15-04-05")
-		safeTarget := strings.ReplaceAll(target, ".", "_")
-		reportPath := fmt.Sprintf("cybermind_bugs_%s_%s.md", safeTarget, ts)
-		if err := os.WriteFile(reportPath, []byte(content), 0644); err == nil {
-			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
-				"  ✓ Full bug report with PoCs saved: " + reportPath))
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-				"  " + bugdetect.GetBugBountyInfo(target)))
-		}
-	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  No confirmed bugs detected yet — continuing to Abhimanyu exploitation phase..."))
-	}
-	fmt.Println()
-
-	// ── PHASE 3: ABHIMANYU (plan-aware, hunt context fed in) ─────────────
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-		"  ═══ PHASE 3: ABHIMANYU ═══"))
-	omegaLog("\n═══ PHASE 3: ABHIMANYU ═══")
-
-	// Build abhimanyu context from hunt results — full context chain
-	var huntCtx hunt.HuntContext
-	if huntResult.Context != nil {
-		huntCtx = *huntResult.Context
-	}
-
-	xssFound := huntCtx.XSSFound
-	if xssFound == nil {
-		xssFound = []string{}
-	}
-	vulnsFound := huntCtx.VulnsFound
-	if vulnsFound == nil {
-		vulnsFound = []string{}
-	}
-	paramsFound := huntCtx.ParamsFound
-	if paramsFound == nil {
-		paramsFound = []string{}
-	}
-	openPortsForAbhi := huntCtx.OpenPorts
-	if openPortsForAbhi == nil && reconResult.Context != nil {
-		openPortsForAbhi = reconResult.Context.OpenPorts
-	}
-	if openPortsForAbhi == nil {
-		openPortsForAbhi = []int{}
-	}
-	// Ensure huntCtx.LiveURLs is populated — fall back to recon live URLs if hunt didn't find any
-	if len(huntCtx.LiveURLs) == 0 && reconResult.Context != nil && len(reconResult.Context.LiveURLs) > 0 {
-		huntCtx.LiveURLs = reconResult.Context.LiveURLs
-	}
-
-	vulnCount := len(xssFound) + len(vulnsFound)
-	if vulnCount > 0 {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
-			fmt.Sprintf("  ℹ  Hunt found %d vulnerabilities — feeding into Abhimanyu", vulnCount)))
-	}
-	fmt.Println()
-
-	// Build hunt findings map for abhimanyu
-	huntFindings := make(map[string]string)
-	for _, tr := range huntResult.Results {
-		if tr.Output != "" {
-			huntFindings[tr.Tool] = tr.Output
-		}
-	}
-	// Also add recon findings
-	for _, tr := range reconResult.Results {
-		if tr.Output != "" && tr.Tool != "combined" {
-			huntFindings["recon_"+tr.Tool] = tr.Output
-		}
-	}
-
-	// Run abhimanyu with full context from recon+hunt chain
-	runAbhimanyuFromHunt(target, huntCtx, xssFound, vulnsFound, paramsFound, openPortsForAbhi, huntFindings)
-
-	// ── PHASE 4: REPORT ──────────────────────────────────────────────────
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).Render(
-		"  ═══ PHASE 4: REPORT ═══"))
-	fmt.Println()
-	runReport("markdown", localMode)
-
-	// ── FINAL SUMMARY ─────────────────────────────────────────────────────
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
-		"  ✓ OMEGA PLAN EXECUTION COMPLETE — " + target))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		fmt.Sprintf("  Recon: %d tools ran | Hunt: %d tools ran | Bugs: %d confirmed",
-			len(reconResult.Tools), len(huntResult.Tools), len(allBugs))))
-	fmt.Println()
-
-	// ── CONTINUOUS LOOP: Suggest next target if no high-severity bugs found ──
-	if !bugdetect.HasHighSeverityBugs(allBugs) {
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
-			"  ⚡ No medium/high/critical bugs found on this target."))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  Suggesting next bug bounty targets with better attack surface:"))
-		fmt.Println()
-
-		nextTargets := bugdetect.SuggestNextTarget(target)
-		for i, t := range nextTargets {
-			info := bugdetect.GetBugBountyInfo(t)
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
-				fmt.Sprintf("  %d. %s", i+1, t)))
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-				"     " + info))
-		}
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			"  Run: sudo cybermind /plan <next-target>"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  Tip: Choose targets with *.domain.com wildcard scope for maximum attack surface"))
-	} else {
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-			fmt.Sprintf("  🎯 %d bugs confirmed! Check the report file for details.", len(allBugs))))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  Next steps:"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			"  1. Review the bug report (cybermind_bugs_*.md)"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			"  2. Write PoC for each confirmed bug"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			"  3. Submit to HackerOne/Bugcrowd with full evidence"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  "+bugdetect.GetBugBountyInfo(target)))
-	}
+	runAgenticOmega(target, skillLevel, focusBugs, execMode, localMode)
 }
 
 // launchFloatingTerminal launches a live monitoring window during OMEGA execution.
