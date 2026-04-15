@@ -2,6 +2,7 @@ package hunt
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -673,6 +674,14 @@ var huntRegistry = []HuntToolSpec{
 					}
 					if ctx.WAFDetected {
 						args = append(args, "--delay", "1000", "--timeout", "30")
+					}
+					// Fix 3: use memory-proven payloads if available
+					if memPayloads := os.Getenv("CYBERMIND_MEMORY_XSS_PAYLOADS"); memPayloads != "" {
+						args = append(args, "--custom-payload", memPayloads)
+					}
+					// Fix 2: use adversarial payloads if available
+					if advPayloads := os.Getenv("CYBERMIND_ADVERSARIAL_PAYLOADS"); advPayloads != "" {
+						args = append(args, "--custom-payload", advPayloads)
 					}
 					return args
 				}

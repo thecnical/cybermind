@@ -1051,6 +1051,10 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				}
 			}
 
+			// ── Fix 3: Apply memory patterns to tool args ─────────────────
+			// Proven payloads from past scans → dalfox/sqlmap custom payloads
+			applyMemoryPatternsToHunt(target, bestPatterns)
+
 			// ── MULTI-AGENT PARALLELISM ───────────────────────────────────
 			// Run hunt + bizlogic + adversarial thinking simultaneously
 			type parallelResult struct {
@@ -1199,20 +1203,43 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				}()
 			}
 
-			// ── Show adversarial analysis ─────────────────────────────────
+			// ── Show adversarial analysis + FEED INTO NEXT HUNT ─────────
 			if pResult.adversarial != "" {
 				fmt.Println()
 				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
 					"  🎭 ADVERSARIAL ANALYSIS:"))
-				// Show first 500 chars
 				preview := pResult.adversarial
 				if len(preview) > 500 {
 					preview = preview[:500] + "..."
 				}
 				fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render("  " + strings.ReplaceAll(preview, "\n", "\n  ")))
+
 				// Save full analysis
 				advPath := fmt.Sprintf("/tmp/cybermind_adversarial_%s.txt", strings.ReplaceAll(target, ".", "_"))
 				os.WriteFile(advPath, []byte(pResult.adversarial), 0644)
+
+				// ── FEED adversarial output into next iteration ───────────
+				// Parse: extract specific endpoints, params, payloads to test
+				advEndpoints := extractAdversarialEndpoints(pResult.adversarial)
+				advPayloads := extractAdversarialPayloads(pResult.adversarial)
+
+				if len(advEndpoints) > 0 {
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+						fmt.Sprintf("  🎯 Adversarial: %d new endpoints to test next iteration", len(advEndpoints))))
+					// Add to allFindings so next AI decision knows about them
+					allFindings["adversarial_endpoints"] = strings.Join(advEndpoints, "\n")
+					// Also set as env var for nuclei/dalfox to pick up
+					os.Setenv("CYBERMIND_ADVERSARIAL_ENDPOINTS", strings.Join(advEndpoints[:min(5, len(advEndpoints))], ","))
+				}
+				if len(advPayloads) > 0 {
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+						fmt.Sprintf("  💉 Adversarial: %d custom payloads extracted", len(advPayloads))))
+					allFindings["adversarial_payloads"] = strings.Join(advPayloads, "\n")
+					// Write payloads to file for dalfox/sqlmap to use
+					payloadFile := "/tmp/cybermind_adversarial_payloads.txt"
+					os.WriteFile(payloadFile, []byte(strings.Join(advPayloads, "\n")), 0644)
+					os.Setenv("CYBERMIND_ADVERSARIAL_PAYLOADS", payloadFile)
+				}
 			}
 
 			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
@@ -1682,7 +1709,107 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// notifyBugsFound sends a Telegram notification via the backend Telegram agent.
+// extractAdversarialEndpoints parses adversarial analysis output for specific endpoints to test
+func extractAdversarialEndpoints(analysis string) []string {
+	var endpoints []string
+	seen := map[string]bool{}
+	lines := strings.Split(analysis, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Look for URL patterns: /api/v1/..., /admin/..., etc.
+		if strings.HasPrefix(line, "/") && len(line) > 3 && len(line) < 200 {
+			// Clean up — remove markdown, bullets
+			clean := strings.TrimLeft(line, "- *•→")
+			clean = strings.TrimSpace(clean)
+			if strings.HasPrefix(clean, "/") && !seen[clean] {
+				seen[clean] = true
+				endpoints = append(endpoints, clean)
+			}
+		}
+		// Also extract from "Try /path" patterns
+		if strings.Contains(line, "Try ") || strings.Contains(line, "test ") || strings.Contains(line, "check ") {
+			words := strings.Fields(line)
+			for _, w := range words {
+				if strings.HasPrefix(w, "/") && len(w) > 3 && !seen[w] {
+					seen[w] = true
+					endpoints = append(endpoints, w)
+				}
+			}
+		}
+	}
+	return endpoints
+}
+
+// extractAdversarialPayloads parses adversarial analysis for specific attack payloads
+func extractAdversarialPayloads(analysis string) []string {
+	var payloads []string
+	seen := map[string]bool{}
+	lines := strings.Split(analysis, "\n")
+	inCodeBlock := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "```") {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+		if inCodeBlock {
+			line = strings.TrimSpace(line)
+			if len(line) > 3 && len(line) < 500 && !seen[line] {
+				// Skip pure shell commands, keep injection payloads
+				if !strings.HasPrefix(line, "curl ") && !strings.HasPrefix(line, "nmap ") &&
+					!strings.HasPrefix(line, "sudo ") && !strings.HasPrefix(line, "#") {
+					seen[line] = true
+					payloads = append(payloads, line)
+				}
+			}
+		}
+	}
+	return payloads
+}
+
+// applyMemoryPatternsToHunt applies proven attack patterns from brain memory to hunt tools.
+// This is Fix 3: memory patterns → tool args.
+func applyMemoryPatternsToHunt(target string, patterns []brain.Pattern) {
+	if len(patterns) == 0 {
+		return
+	}
+
+	// Collect XSS payloads that worked before
+	var xssPayloads []string
+	var sqliPayloads []string
+	var ssrfEndpoints []string
+
+	for _, p := range patterns {
+		lower := strings.ToLower(p.Type)
+		if strings.Contains(lower, "xss") && p.Payload != "" {
+			xssPayloads = append(xssPayloads, p.Payload)
+		}
+		if strings.Contains(lower, "sqli") && p.Payload != "" {
+			sqliPayloads = append(sqliPayloads, p.Payload)
+		}
+		if strings.Contains(lower, "ssrf") && p.Endpoint != "" {
+			ssrfEndpoints = append(ssrfEndpoints, p.Endpoint)
+		}
+	}
+
+	// Write proven XSS payloads to file for dalfox
+	if len(xssPayloads) > 0 {
+		payloadFile := "/tmp/cybermind_memory_xss_payloads.txt"
+		os.WriteFile(payloadFile, []byte(strings.Join(xssPayloads, "\n")), 0644)
+		os.Setenv("CYBERMIND_MEMORY_XSS_PAYLOADS", payloadFile)
+	}
+
+	// Write proven SQLi payloads for sqlmap tamper
+	if len(sqliPayloads) > 0 {
+		payloadFile := "/tmp/cybermind_memory_sqli_payloads.txt"
+		os.WriteFile(payloadFile, []byte(strings.Join(sqliPayloads, "\n")), 0644)
+		os.Setenv("CYBERMIND_MEMORY_SQLI_PAYLOADS", payloadFile)
+	}
+
+	// Write SSRF endpoints that worked
+	if len(ssrfEndpoints) > 0 {
+		os.Setenv("CYBERMIND_MEMORY_SSRF_ENDPOINTS", strings.Join(ssrfEndpoints[:min(5, len(ssrfEndpoints))], ","))
+	}
+}
 // Uses the existing core/telegram.js infrastructure — no separate bot needed.
 func notifyBugsFound(target string, bugs []bugdetect.Bug, reportPath string) {
 	if len(bugs) == 0 {
