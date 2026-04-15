@@ -1780,3 +1780,58 @@ func SendAdversarialRefine(target, bugType, payload, endpoint string, techStack,
 	}
 	return result.Refinement, nil
 }
+
+// ─── Manual Testing Guide ─────────────────────────────────────────────────────
+
+// ManualGuideRequest asks AI to generate step-by-step manual testing guide
+type ManualGuideRequest struct {
+	Target      string            `json:"target"`
+	TechStack   []string          `json:"tech_stack"`
+	BugsFound   []map[string]string `json:"bugs_found"`
+	LiveURLs    []string          `json:"live_urls"`
+	OpenPorts   []int             `json:"open_ports"`
+	WAFDetected bool              `json:"waf_detected"`
+	WAFVendor   string            `json:"waf_vendor"`
+	ParamsFound []string          `json:"params_found"`
+	Subdomains  []string          `json:"subdomains"`
+	ScanSummary string            `json:"scan_summary"`
+	Focus       string            `json:"focus"` // business_logic|oauth|race|idor|all
+}
+
+// SendManualGuide generates a step-by-step manual testing guide
+func SendManualGuide(req ManualGuideRequest) (string, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequest("POST", getBaseURL()+"/manual-guide", bytes.NewBuffer(payload))
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: request build failed")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if key := getAPIKey(); key != "" {
+		httpReq.Header.Set("X-API-Key", key)
+	}
+	httpReq.Header.Set("X-Device-OS", getDeviceOS())
+	httpReq.Header.Set("X-Device-ID", getDeviceID())
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("_backend_down: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
+
+	var result struct {
+		Success bool   `json:"success"`
+		Guide   string `json:"guide"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("malformed response")
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	return result.Guide, nil
+}

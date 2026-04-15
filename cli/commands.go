@@ -1545,6 +1545,59 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			runReport("markdown", localMode)
 			state.Phase = "report_done"
 
+		case "guide":
+			agentAct("Generating manual testing guide for remaining 12%...")
+			omegaLog("\n═══ AGENT: MANUAL GUIDE ═══")
+
+			bugMaps := make([]map[string]string, 0, len(allBugs))
+			for _, b := range allBugs {
+				bugMaps = append(bugMaps, map[string]string{
+					"title": b.Title, "severity": string(b.Severity), "url": b.URL,
+				})
+			}
+			liveURLs := state.LiveURLs
+			if len(liveURLs) == 0 && reconResult.Context != nil {
+				liveURLs = reconResult.Context.LiveURLs
+			}
+			subdomains := []string{}
+			if reconResult.Context != nil {
+				subdomains = reconResult.Context.Subdomains
+			}
+			scanSummary := fmt.Sprintf(
+				"Automated scan complete. Recon: %d tools. Hunt: %d tools. Bugs: %d. Subdomains: %d. Live URLs: %d.",
+				len(reconResult.Tools), len(huntResult.Tools), len(allBugs), len(subdomains), len(liveURLs))
+
+			guide, guideErr := api.SendManualGuide(api.ManualGuideRequest{
+				Target:      target,
+				TechStack:   state.Technologies,
+				BugsFound:   bugMaps,
+				LiveURLs:    liveURLs,
+				OpenPorts:   state.OpenPorts,
+				WAFDetected: state.WAFDetected,
+				WAFVendor:   state.WAFVendor,
+				Subdomains:  subdomains,
+				Focus:       focusBugs,
+				ScanSummary: scanSummary,
+			})
+			if guideErr == nil && guide != "" {
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+					"  📋 MANUAL TESTING GUIDE:"))
+				preview := guide
+				if len(preview) > 2000 {
+					preview = preview[:2000] + "\n\n... [see full guide in file]"
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(preview))
+				ts := time.Now().Format("2006-01-02_15-04-05")
+				safeT := strings.ReplaceAll(target, ".", "_")
+				guidePath := fmt.Sprintf("cybermind_guide_%s_%s.md", safeT, ts)
+				if os.WriteFile(guidePath, []byte(guide), 0644) == nil {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render(
+						"  ✓ Full manual guide saved: " + guidePath))
+				}
+			}
+			state.Phase = "guide_done"
+
 		case "next_target":
 			agentAct("No bugs found — suggesting next target...")
 			fmt.Println()
@@ -1594,6 +1647,10 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 
 		// If we have high-severity bugs and PoC is done, we're done
 		if state.Phase == "poc_done" && state.BugsFound > 0 {
+			break
+		}
+		// If guide is done, we're fully complete
+		if state.Phase == "guide_done" {
 			break
 		}
 
@@ -1659,6 +1716,9 @@ func localAgentDecision(state api.AgentState) *api.AgentDecision {
 	case state.BugsFound > 0 && state.AbhiDone:
 		d.Action = "poc"
 		d.Reason = "Bugs confirmed — generating PoC + submitting"
+	case state.Phase == "poc_done":
+		d.Action = "guide"
+		d.Reason = "PoC done — generate manual testing guide for remaining attack surface"
 	case state.ReconDone && state.HuntDone && state.BugsFound == 0:
 		d.Action = "next_target"
 		d.Reason = "No bugs found — move to next target"

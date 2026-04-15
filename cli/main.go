@@ -154,6 +154,8 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /abhimanyu <target> lateral") + d.Render(" → Lateral movement"))
 		fmt.Println(g.Render("  cybermind /bizlogic <target>") + d.Render("   → 💰 Business logic bugs (price manipulation, IDOR, race conditions)"))
 		fmt.Println(g.Render("  cybermind /bizlogic <target> --cookie 'session=abc'") + d.Render(" → authenticated scan"))
+		fmt.Println(g.Render("  cybermind /guide <target>") + d.Render("      → 📋 AI manual testing guide (step-by-step for the 12% tools can't automate)"))
+		fmt.Println(g.Render("  cybermind /guide <target> --focus oauth") + d.Render(" → OAuth/SSO specific guide"))
 		fmt.Println()
 	}
 
@@ -2479,6 +2481,8 @@ func main() {
 			{"smuggler", "exploit", "venv:https://github.com/defparam/smuggler:/opt/smuggler:smuggler.py", false, false},
 			{"corscanner", "exploit", "pipx:corscanner", false, false},
 			{"h2csmuggler", "exploit", "pipx:h2csmuggler", false, false},
+			// ── Browser Automation (XSS verify + authenticated scanning) ─────────
+			{"node", "recon", "apt:nodejs", false, false},
 		}
 
 		var missing []toolEntry
@@ -3611,6 +3615,76 @@ rm -f /tmp/evilginx2.tar.gz`)
 				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
 					"  ✓ Report saved: " + reportPath))
 			}
+		}
+
+	case "/guide", "/manual":
+		// AI Step-by-Step Manual Testing Guide — for the 12% tools can't automate
+		if len(args) < 2 {
+			printError("Usage: cybermind /guide <target>")
+			printError("       cybermind /guide example.com --focus business_logic")
+			printError("       cybermind /guide example.com --focus oauth")
+			printError("       cybermind /guide example.com --focus race")
+			printError("       cybermind /guide example.com --focus idor")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+
+		guideTarget := args[1]
+		guideFocus := "all"
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--focus" && i+1 < len(args) {
+				guideFocus = args[i+1]
+				i++
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+			"  📋 MANUAL TESTING GUIDE — " + guideTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+			"  AI generating step-by-step guide for manual testing..."))
+		fmt.Println()
+
+		// Load brain memory for this target
+		mem := brain.LoadTarget(guideTarget)
+		bugMaps := make([]map[string]string, 0, len(mem.BugsFound))
+		for _, b := range mem.BugsFound {
+			bugMaps = append(bugMaps, map[string]string{
+				"title": b.Title, "severity": b.Severity, "url": b.URL,
+			})
+		}
+
+		guide, guideErr := api.SendManualGuide(api.ManualGuideRequest{
+			Target:      guideTarget,
+			TechStack:   mem.TechStack,
+			BugsFound:   bugMaps,
+			LiveURLs:    mem.LiveURLs,
+			OpenPorts:   mem.OpenPorts,
+			WAFDetected: mem.WAFDetected,
+			WAFVendor:   mem.WAFVendor,
+			Subdomains:  mem.SubdomainsFound,
+			Focus:       guideFocus,
+			ScanSummary: fmt.Sprintf("%d prior runs, %d bugs found, %d subdomains", mem.RunCount, len(mem.BugsFound), len(mem.SubdomainsFound)),
+		})
+
+		if guideErr != nil {
+			printError("Guide generation failed: " + guideErr.Error())
+			os.Exit(1)
+		}
+
+		// Print the guide
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(guide))
+
+		// Save to file
+		ts := time.Now().Format("2006-01-02_15-04-05")
+		safeT := strings.ReplaceAll(strings.TrimPrefix(strings.TrimPrefix(guideTarget, "https://"), "http://"), ".", "_")
+		guidePath := fmt.Sprintf("cybermind_guide_%s_%s.md", safeT, ts)
+		if err := os.WriteFile(guidePath, []byte(guide), 0644); err == nil {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
+				"  ✓ Guide saved: " + guidePath))
 		}
 
 	case "/scan":
