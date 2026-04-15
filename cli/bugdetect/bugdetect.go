@@ -53,23 +53,68 @@ var nucleiPattern = regexp.MustCompile(`\[(critical|high|medium|low|info)\]\s+\[
 // dalfoxPattern matches dalfox XSS confirmations
 var dalfoxPattern = regexp.MustCompile(`(?i)(POC|verified|found|XSS)\s*[:\-]?\s*(https?://\S+)`)
 
-// sqlmapPattern matches sqlmap injection confirmations
-var sqlmapPattern = regexp.MustCompile(`(?i)(parameter\s+'[^']+'\s+is\s+vulnerable|injectable|sql\s+injection)`)
+// sqlmapPattern matches CONFIRMED sqlmap injection — must be explicit confirmation lines
+// NOT: "not injectable", "NOT VULNERABLE", "does not seem to be injectable"
+var sqlmapPattern = regexp.MustCompile(`(?i)(parameter\s+'[^']+'\s+is\s+vulnerable|is\s+vulnerable\s+to|sqlmap\s+identified\s+the\s+following\s+injection)`)
 
-// ssrfPattern matches SSRF confirmations
-var ssrfPattern = regexp.MustCompile(`(?i)(ssrf|server.side.request.forgery|internal.*response|169\.254\.169\.254)`)
+// ssrfPattern matches CONFIRMED SSRF — actual internal response content, not just tool name
+var ssrfPattern = regexp.MustCompile(`(?i)(169\.254\.169\.254|metadata\.google\.internal|ssrf.*confirmed|internal.*service.*response|out-of-band.*interaction.*received)`)
 
-// lfiPattern matches LFI confirmations
-var lfiPattern = regexp.MustCompile(`(?i)(root:x:0:0|/etc/passwd|local.file.inclusion|path.traversal)`)
+// lfiPattern matches CONFIRMED LFI — actual file content leaked
+var lfiPattern = regexp.MustCompile(`(?i)(root:x:0:0|daemon:x:|bin:x:|/etc/passwd.*found|lfi.*confirmed|path.*traversal.*confirmed)`)
 
-// rcePattern matches RCE confirmations
-var rcePattern = regexp.MustCompile(`(?i)(remote.code.execution|command.injection|rce.*confirmed|uid=\d+\(|whoami.*root)`)
+// rcePattern matches CONFIRMED RCE — actual command output
+var rcePattern = regexp.MustCompile(`(?i)(uid=\d+\([a-z]+\)|rce.*confirmed|command.*injection.*confirmed|os-shell.*>|whoami.*=.*root)`)
 
 // idorPattern matches IDOR findings
 var idorPattern = regexp.MustCompile(`(?i)(idor|insecure.direct.object|unauthorized.access|403.*bypass|access.control)`)
 
 // cvePattern matches CVE IDs
 var cvePattern = regexp.MustCompile(`CVE-\d{4}-\d{4,7}`)
+
+// negativePatterns — if ANY of these appear in the output line, it is NOT a real finding.
+// These are explicit "not vulnerable" signals from tools.
+var negativePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)not\s+vulnerable`),
+	regexp.MustCompile(`(?i)not\s+injectable`),
+	regexp.MustCompile(`(?i)does\s+not\s+seem\s+to\s+be\s+injectable`),
+	regexp.MustCompile(`(?i)tested\s+parameters\s+appear\s+to\s+be\s+not\s+injectable`),
+	regexp.MustCompile(`(?i)no\s+injection\s+point`),
+	regexp.MustCompile(`(?i)state:\s*not\s+vulnerable`),
+	regexp.MustCompile(`(?i)no\s+results\s+found`),
+	regexp.MustCompile(`(?i)0\s+vulnerabilities`),
+	regexp.MustCompile(`(?i)nothing\s+found`),
+	regexp.MustCompile(`(?i)target\s+does\s+not\s+appear\s+to\s+be\s+vulnerable`),
+}
+
+// isNegativeOutput returns true if the output is a "not vulnerable" result — should be skipped.
+func isNegativeOutput(output string) bool {
+	for _, re := range negativePatterns {
+		if re.MatchString(output) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasMinimumEvidence checks that the output has enough real content to be a valid finding.
+// Rejects outputs that are just tool banners, logos, or empty results.
+func hasMinimumEvidence(output string) bool {
+	trimmed := strings.TrimSpace(output)
+	if len(trimmed) < 50 {
+		return false
+	}
+	// Reject if output is only ASCII art / banner lines (no alphanumeric content beyond 20%)
+	lines := strings.Split(trimmed, "\n")
+	contentLines := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) > 10 && regexp.MustCompile(`[a-zA-Z0-9]{3,}`).MatchString(line) {
+			contentLines++
+		}
+	}
+	return contentLines >= 2
+}
 
 // ParseNucleiOutput parses nuclei output and returns confirmed bugs
 func ParseNucleiOutput(output, target string) []Bug {
@@ -126,11 +171,16 @@ func ParseNucleiOutput(output, target string) []Bug {
 	return bugs
 }
 
-// ParseDalfoxOutput parses dalfox XSS output
+// ParseDalfoxOutput parses dalfox XSS output — only confirmed findings
 func ParseDalfoxOutput(output, target string) []Bug {
 	var bugs []Bug
-	lines := strings.Split(output, "\n")
 
+	// Skip if output is negative/empty
+	if isNegativeOutput(output) || !hasMinimumEvidence(output) {
+		return nil
+	}
+
+	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -138,8 +188,12 @@ func ParseDalfoxOutput(output, target string) []Bug {
 		}
 
 		lower := strings.ToLower(line)
-		if !strings.Contains(lower, "poc") && !strings.Contains(lower, "verified") &&
-			!strings.Contains(lower, "[v]") && !strings.Contains(lower, "found") {
+		// Must have explicit confirmation keywords AND not be a negative line
+		if (!strings.Contains(lower, "poc") && !strings.Contains(lower, "verified") &&
+			!strings.Contains(lower, "[v]") && !strings.Contains(lower, "[vuln]")) {
+			continue
+		}
+		if isNegativeOutput(line) {
 			continue
 		}
 
@@ -176,64 +230,87 @@ func ParseToolOutput(toolName, output, target string) []Bug {
 	}
 }
 
-// parseGenericOutput uses regex patterns to detect bugs in any tool output
+// parseGenericOutput uses regex patterns to detect bugs in any tool output.
+// Only reports findings with CONFIRMED positive evidence — never on "NOT VULNERABLE" output.
 func parseGenericOutput(toolName, output, target string) []Bug {
 	var bugs []Bug
 
+	// Hard gate: if output contains explicit "not vulnerable" signals, skip entirely
+	if isNegativeOutput(output) {
+		return nil
+	}
+
+	// Hard gate: output must have real content (not just a tool banner/logo)
+	if !hasMinimumEvidence(output) {
+		return nil
+	}
+
 	if sqlmapPattern.MatchString(output) {
-		bugs = append(bugs, Bug{
-			Title:       "SQL Injection — Confirmed",
-			Severity:    SeverityCritical,
-			Tool:        toolName,
-			Target:      target,
-			Description: "SQL injection vulnerability confirmed. Attacker can read/modify database, potentially achieve RCE.",
-			Evidence:    extractEvidence(output, sqlmapPattern),
-			CVSS:        9.8,
-			CWE:         "CWE-89",
-			FoundAt:     time.Now(),
-		})
+		evidence := extractEvidence(output, sqlmapPattern)
+		if evidence != "" && !isNegativeOutput(evidence) {
+			bugs = append(bugs, Bug{
+				Title:       "SQL Injection — Confirmed",
+				Severity:    SeverityCritical,
+				Tool:        toolName,
+				Target:      target,
+				Description: "SQL injection vulnerability confirmed. Attacker can read/modify database, potentially achieve RCE.",
+				Evidence:    evidence,
+				CVSS:        9.8,
+				CWE:         "CWE-89",
+				FoundAt:     time.Now(),
+			})
+		}
 	}
 
 	if ssrfPattern.MatchString(output) {
-		bugs = append(bugs, Bug{
-			Title:       "Server-Side Request Forgery (SSRF) — Confirmed",
-			Severity:    SeverityHigh,
-			Tool:        toolName,
-			Target:      target,
-			Description: "SSRF vulnerability confirmed. Attacker can make server-side requests to internal services.",
-			Evidence:    extractEvidence(output, ssrfPattern),
-			CVSS:        8.6,
-			CWE:         "CWE-918",
-			FoundAt:     time.Now(),
-		})
+		evidence := extractEvidence(output, ssrfPattern)
+		if evidence != "" && !isNegativeOutput(evidence) {
+			bugs = append(bugs, Bug{
+				Title:       "Server-Side Request Forgery (SSRF) — Confirmed",
+				Severity:    SeverityHigh,
+				Tool:        toolName,
+				Target:      target,
+				Description: "SSRF vulnerability confirmed. Server made a request to an internal/controlled endpoint.",
+				Evidence:    evidence,
+				CVSS:        8.6,
+				CWE:         "CWE-918",
+				FoundAt:     time.Now(),
+			})
+		}
 	}
 
 	if lfiPattern.MatchString(output) {
-		bugs = append(bugs, Bug{
-			Title:       "Local File Inclusion (LFI) — Confirmed",
-			Severity:    SeverityHigh,
-			Tool:        toolName,
-			Target:      target,
-			Description: "LFI vulnerability confirmed. Attacker can read arbitrary files from the server.",
-			Evidence:    extractEvidence(output, lfiPattern),
-			CVSS:        7.5,
-			CWE:         "CWE-22",
-			FoundAt:     time.Now(),
-		})
+		evidence := extractEvidence(output, lfiPattern)
+		if evidence != "" && !isNegativeOutput(evidence) {
+			bugs = append(bugs, Bug{
+				Title:       "Local File Inclusion (LFI) — Confirmed",
+				Severity:    SeverityHigh,
+				Tool:        toolName,
+				Target:      target,
+				Description: "LFI vulnerability confirmed. Attacker can read arbitrary files from the server.",
+				Evidence:    evidence,
+				CVSS:        7.5,
+				CWE:         "CWE-22",
+				FoundAt:     time.Now(),
+			})
+		}
 	}
 
 	if rcePattern.MatchString(output) {
-		bugs = append(bugs, Bug{
-			Title:       "Remote Code Execution (RCE) — Confirmed",
-			Severity:    SeverityCritical,
-			Tool:        toolName,
-			Target:      target,
-			Description: "RCE vulnerability confirmed. Attacker can execute arbitrary commands on the server.",
-			Evidence:    extractEvidence(output, rcePattern),
-			CVSS:        10.0,
-			CWE:         "CWE-78",
-			FoundAt:     time.Now(),
-		})
+		evidence := extractEvidence(output, rcePattern)
+		if evidence != "" && !isNegativeOutput(evidence) {
+			bugs = append(bugs, Bug{
+				Title:       "Remote Code Execution (RCE) — Confirmed",
+				Severity:    SeverityCritical,
+				Tool:        toolName,
+				Target:      target,
+				Description: "RCE vulnerability confirmed. Attacker can execute arbitrary commands on the server.",
+				Evidence:    evidence,
+				CVSS:        10.0,
+				CWE:         "CWE-78",
+				FoundAt:     time.Now(),
+			})
+		}
 	}
 
 	return bugs

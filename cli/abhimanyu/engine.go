@@ -258,6 +258,20 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 	// Get tools for this vuln type
 	tools := GetToolsByVulnType(ctx.VulnType)
 
+	// ── Smart phase filtering based on target type ────────────────────────
+	// For web/domain targets: skip post-exploit (phase 4), lateral (phase 5), exfil (phase 6)
+	// unless we actually have a shell or confirmed RCE — these tools hang on web targets
+	isWebTarget := ctx.TargetType == "domain" || (ctx.TargetType == "" && !isIPAddress(ctx.Target))
+	hasShell := ctx.ShellObtained
+	hasRCE := false
+	for _, v := range ctx.VulnsFound {
+		if strings.Contains(strings.ToLower(v), "rce") || strings.Contains(strings.ToLower(v), "command") {
+			hasRCE = true
+			break
+		}
+	}
+	skipPostExploit := isWebTarget && !hasShell && !hasRCE && ctx.VulnType == "all"
+
 	// Phase 0: Pre-install all missing tools
 	for _, spec := range tools {
 		if !isAvailable(spec.Name) {
@@ -270,6 +284,19 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 	findings := make(map[string]string)
 
 	for phase := 1; phase <= 6; phase++ {
+		// Skip post-exploit/lateral/exfil phases for web targets without shell
+		if skipPostExploit && phase >= 4 {
+			for _, spec := range tools {
+				if spec.Phase == phase {
+					progress(AbhimanyuStatus{
+						Tool:   spec.Name,
+						Kind:   StatusSkipped,
+						Reason: "post-exploit skipped — no shell/RCE confirmed on web target",
+					})
+				}
+			}
+			continue
+		}
 		for _, spec := range tools {
 			if spec.Phase != phase {
 				continue
@@ -379,4 +406,24 @@ func sanitizeTarget(target string) string {
 		".", "_",
 	)
 	return r.Replace(target)
+}
+
+// isIPAddress returns true if target looks like an IP address
+func isIPAddress(target string) bool {
+	// Simple check: all parts are numeric when split by "."
+	parts := strings.Split(target, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		if len(p) == 0 || len(p) > 3 {
+			return false
+		}
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }

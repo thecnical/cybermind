@@ -1194,6 +1194,12 @@ func runOmegaPlan(target string, localMode bool) {
 			if bug.Severity == bugdetect.SeverityLow || bug.Severity == bugdetect.SeverityInfo {
 				continue
 			}
+			// Skip PoC if evidence is empty or clearly negative — prevents hallucinated PoCs
+			if bug.Evidence == "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+					fmt.Sprintf("  - PoC skipped [%d/%d]: no evidence for %s", i+1, len(allBugs), bug.Title)))
+				continue
+			}
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
 				fmt.Sprintf("  ⟳ PoC [%d/%d]: %s", i+1, len(allBugs), bug.Title)))
 
