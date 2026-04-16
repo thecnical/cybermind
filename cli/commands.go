@@ -894,6 +894,21 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		Findings:   make(map[string]string),
 	}
 
+	// ── SELF-THINK: Independent reasoning before any AI call ─────────────
+	// Build target profile from memory for self-think engine
+	selfThinkProfile := brain.BuildTargetProfile(target, []string{}, []int{}, false, "", []string{}, nil, nil)
+	thinkResult := brain.SelfThink(selfThinkProfile)
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+		brain.FormatThinkResult(thinkResult)))
+
+	// Apply self-think tool priority to environment
+	if len(thinkResult.ToolPriority) > 0 {
+		os.Setenv("CYBERMIND_PRIORITY_TOOLS", strings.Join(thinkResult.ToolPriority, ","))
+	}
+	if thinkResult.Priority == "critical" || thinkResult.Priority == "high" {
+		os.Setenv("CYBERMIND_CONFIDENCE", thinkResult.Priority)
+	}
+
 	// ── Load memory context for self-improving prompts ────────────────────
 	memContext := brain.GetLearnedPromptContext(target)
 	if memContext != "" {
@@ -1025,7 +1040,17 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		} else {
 			// ── Reactive: ask AI what to do next ─────────────────────────
 			if !localMode {
-				decision, decErr = api.SendAgentDecision(state)
+				// Priority: Groq (if configured, fast + free) → Backend
+				if api.IsGroqConfigured() {
+					groqDecision, groqErr := sendGroqAgentDecision(state, memContext)
+					if groqErr == nil && groqDecision != nil {
+						decision = groqDecision
+					} else {
+						decision, decErr = api.SendAgentDecision(state)
+					}
+				} else {
+					decision, decErr = api.SendAgentDecision(state)
+				}
 			}
 			// Fallback: local decision logic if AI unavailable
 			if localMode || decErr != nil || decision == nil {
@@ -1083,6 +1108,95 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			state.BugsFound = len(allBugs)
 			state.BugTypes = extractBugTypes(allBugs)
 
+			// ── AGENT AUTO-TRIGGER: CVE Feed during recon ─────────────────
+			// As soon as we know the tech stack, check for known CVEs
+			if len(state.Technologies) > 0 {
+				go func() {
+					agentThink("Auto-checking CVE feed for detected tech stack...")
+					shodanVulns := ""
+					if reconResult.Context != nil {
+						// Extract Shodan vulns from findings if available
+						for _, tr := range reconResult.Results {
+							if strings.Contains(tr.Tool, "shodan") && strings.Contains(tr.Output, "CVE-") {
+								shodanVulns = tr.Output
+								break
+							}
+						}
+					}
+					cveResult := brain.MatchCVEsToTarget(target, state.Technologies, shodanVulns)
+					if cveResult.TotalFound > 0 {
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+							fmt.Sprintf("  🔴 CVE FEED: %d CVEs matched to target tech stack!", cveResult.TotalFound)))
+						// Add high-severity CVEs to findings for AI context
+						allFindings["cve_feed"] = brain.FormatCVEReport(cveResult)
+						// Auto-run nuclei templates for critical CVEs
+						criticalCVEs := []brain.CVEEntry{}
+						for _, cve := range cveResult.Matched {
+							if cve.CVSS >= 9.0 || cve.Severity == "CRITICAL" {
+								criticalCVEs = append(criticalCVEs, cve)
+							}
+						}
+						if len(criticalCVEs) > 0 {
+							fmt.Println(lipgloss.NewStyle().Foreground(red2).Render(
+								fmt.Sprintf("  ⚡ Auto-running nuclei for %d critical CVEs...", len(criticalCVEs))))
+							brain.RunCVEExploitation(target, criticalCVEs, func(cveID, result string) {
+								if strings.TrimSpace(result) != "" {
+									fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+										fmt.Sprintf("  🎯 CVE CONFIRMED: %s", cveID)))
+									allBugs = append(allBugs, bugdetect.Bug{
+										Title:    "CVE Confirmed: " + cveID,
+										Severity: bugdetect.SeverityCritical,
+										Tool:     "cve_feed+nuclei",
+										Target:   target,
+										Evidence: result[:min(500, len(result))],
+										CVSS:     9.8,
+										CWE:      "CVE",
+										FoundAt:  time.Now(),
+									})
+									state.BugsFound = len(allBugs)
+								}
+							})
+						}
+					}
+				}()
+			}
+
+			// ── AGENT AUTO-TRIGGER: Cloud misconfiguration scan ───────────
+			// Always run cloud scan — S3/GCS/Firebase misconfigs are high value
+			go func() {
+				agentThink("Auto-scanning for cloud misconfigurations...")
+				subdomains := []string{}
+				if reconResult.Context != nil {
+					subdomains = reconResult.Context.Subdomains
+				}
+				cloudResult := brain.ScanCloudMisconfigurations(target, subdomains)
+				if len(cloudResult.Findings) > 0 {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+						fmt.Sprintf("  ☁️  CLOUD: %d misconfigurations found!", len(cloudResult.Findings))))
+					allFindings["cloud_misconfig"] = brain.FormatCloudReport(cloudResult)
+					for _, f := range cloudResult.Findings {
+						sev := bugdetect.SeverityHigh
+						if f.Severity == "critical" {
+							sev = bugdetect.SeverityCritical
+						}
+						allBugs = append(allBugs, bugdetect.Bug{
+							Title:       f.Type + " — " + f.Provider,
+							Severity:    sev,
+							Tool:        "cloud_scanner",
+							Target:      target,
+							URL:         f.URL,
+							Description: f.Description,
+							Evidence:    f.Evidence,
+							CVSS:        9.0,
+							CWE:         "CWE-732",
+							FoundAt:     time.Now(),
+						})
+					}
+					state.BugsFound = len(allBugs)
+					state.BugTypes = extractBugTypes(allBugs)
+				}
+			}()
+
 			// ── Brain: record recon results ───────────────────────────────
 			if reconResult.Context != nil {
 				rc := reconResult.Context
@@ -1126,6 +1240,30 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		case "hunt":
 			agentAct(fmt.Sprintf("Running HUNT phase (focus: %s) — PARALLEL MODE...", decision.VulnFocus))
 			omegaLog("\n═══ AGENT: HUNT (PARALLEL) ═══")
+
+			// ── Update self-think with fresh recon data ───────────────────
+			if reconResult.Context != nil {
+				rc := reconResult.Context
+				freshProfile := brain.BuildTargetProfile(target, rc.LiveURLs, rc.OpenPorts,
+					rc.WAFDetected, rc.WAFVendor, rc.Technologies, nil, nil)
+				freshThink := brain.SelfThink(freshProfile)
+				if freshThink.Confidence > thinkResult.Confidence {
+					thinkResult = freshThink
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+						fmt.Sprintf("  🧠 Self-think updated: confidence %.0f%% [%s]",
+							freshThink.Confidence*100, freshThink.Priority)))
+					// Show business logic opportunities if found
+					if len(freshThink.BusinessLogic) > 0 {
+						fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600")).Render(
+							fmt.Sprintf("  💰 Business logic targets: %d patterns identified", len(freshThink.BusinessLogic))))
+					}
+					// Show OAuth angles if found
+					if len(freshThink.OAuthAngles) > 0 {
+						fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+							fmt.Sprintf("  🔐 OAuth attack vectors: %d identified", len(freshThink.OAuthAngles))))
+					}
+				}
+			}
 
 			// Build hunt context from recon
 			var huntCtx *hunt.HuntContext
@@ -1186,6 +1324,91 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 						}
 					})
 			}()
+
+			// Agent 4: OAuth/OIDC analysis (runs in parallel)
+			// Only run if OAuth endpoints detected by self-think or recon
+			if len(thinkResult.OAuthAngles) > 0 || strings.Contains(strings.ToLower(strings.Join(state.Technologies, " ")), "oauth") {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					liveURLs := state.LiveURLs
+					if reconResult.Context != nil {
+						liveURLs = reconResult.Context.LiveURLs
+					}
+					oauthResult := brain.AnalyzeOAuthFlows(target, liveURLs)
+					if len(oauthResult.Findings) > 0 {
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
+							fmt.Sprintf("  🔐 OAuth: %d vulnerabilities found!", len(oauthResult.Findings))))
+						for _, f := range oauthResult.Findings {
+							sev := bugdetect.SeverityHigh
+							if f.Severity == "critical" {
+								sev = bugdetect.SeverityCritical
+							} else if f.Severity == "medium" {
+								sev = bugdetect.SeverityMedium
+							}
+							allBugs = append(allBugs, bugdetect.Bug{
+								Title:       f.Type + " — OAuth/OIDC",
+								Severity:    sev,
+								Tool:        "oauth_engine",
+								Target:      target,
+								URL:         f.URL,
+								Description: f.Description,
+								Evidence:    f.Evidence,
+								CVSS:        8.5,
+								CWE:         "CWE-287",
+								FoundAt:     time.Now(),
+							})
+						}
+					}
+				}()
+			}
+
+			// Agent 5: ZAP passive scan (runs in parallel — always)
+			// ZAP passive scan catches things CLI tools miss: headers, cookies, info disclosure
+			if sandbox.IsZAPRunning() || mode == "deep" || mode == "overnight" {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					zapTarget := target
+					if !strings.HasPrefix(zapTarget, "http") {
+						zapTarget = "https://" + zapTarget
+					}
+					// Use passive scan during hunt (fast), active scan only in deep/overnight
+					zapScanType := "passive"
+					if mode == "overnight" {
+						zapScanType = "full"
+					} else if mode == "deep" {
+						zapScanType = "active"
+					}
+					agentThink(fmt.Sprintf("ZAP %s scan running in parallel...", zapScanType))
+					zapResult := sandbox.RunZAPScan(zapTarget, zapScanType, func(msg string) {
+						// Silent progress — don't spam output
+					})
+					if len(zapResult.Alerts) > 0 {
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
+							fmt.Sprintf("  🔍 ZAP: %d findings!", len(zapResult.Alerts))))
+						allFindings["zap_scan"] = sandbox.FormatZAPReport(zapResult)
+						for _, alert := range zapResult.Alerts {
+							sev := bugdetect.SeverityMedium
+							if alert.Risk == "High" || alert.Risk == "Critical" {
+								sev = bugdetect.SeverityHigh
+							}
+							allBugs = append(allBugs, bugdetect.Bug{
+								Title:       alert.Alert + " — ZAP",
+								Severity:    sev,
+								Tool:        "zap",
+								Target:      target,
+								URL:         alert.URL,
+								Description: alert.Description,
+								Evidence:    alert.Evidence,
+								CVSS:        7.5,
+								CWE:         "CWE-" + alert.CWEId,
+								FoundAt:     time.Now(),
+							})
+						}
+					}
+				}()
+			}
 
 			// Agent 3: Adversarial thinking (runs in parallel)
 			if !localMode {
@@ -2303,6 +2526,60 @@ func extractH1Handle(target string) string {
 		return parts[len(parts)-2] // second-to-last part = company name
 	}
 	return target
+}
+
+// sendGroqAgentDecision uses Groq to make an agent decision — fast, free, uncensored
+func sendGroqAgentDecision(state api.AgentState, memContext string) (*api.AgentDecision, error) {
+	prompt := fmt.Sprintf(`You are an elite bug bounty hunter AI making a tactical decision.
+
+TARGET: %s
+CURRENT STATE:
+- Phase: %s
+- Recon done: %v
+- Hunt done: %v  
+- Bugs found: %d (types: %v)
+- Technologies: %v
+- WAF: %v (%s)
+- Open ports: %v
+- Mode: %s
+
+MEMORY CONTEXT:
+%s
+
+Based on this state, decide the NEXT ACTION. Respond with ONLY a JSON object:
+{
+  "action": "recon|hunt|exploit|bizlogic|deep_hunt|poc|guide|done|next_target",
+  "vuln_focus": "all|xss|sqli|ssrf|rce|idor|ssti|lfi|auth|deserialization",
+  "reason": "brief tactical reason",
+  "confidence": 85,
+  "notes": "specific attack angle or tool to prioritize",
+  "waf_bypass": "tamper technique if WAF detected"
+}
+
+Think like a world-class hacker. Be aggressive. Prioritize high-value attack vectors.`,
+		state.Target, state.Phase, state.ReconDone, state.HuntDone,
+		state.BugsFound, state.BugTypes, state.Technologies,
+		state.WAFDetected, state.WAFVendor, state.OpenPorts, state.Mode,
+		memContext)
+
+	response, err := api.SendGroqSecurity(prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse JSON from response
+	start := strings.Index(response, "{")
+	end := strings.LastIndex(response, "}")
+	if start < 0 || end < 0 || end <= start {
+		return nil, fmt.Errorf("no JSON in Groq response")
+	}
+	jsonStr := response[start : end+1]
+
+	var decision api.AgentDecision
+	if err := json.Unmarshal([]byte(jsonStr), &decision); err != nil {
+		return nil, fmt.Errorf("Groq decision parse error: %v", err)
+	}
+	return &decision, nil
 }
 
 // ─── OMEGA Planning Mode ──────────────────────────────────────────────────────

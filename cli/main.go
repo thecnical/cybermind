@@ -20,6 +20,7 @@ import (
 	"cybermind-cli/brain"
 	"cybermind-cli/hunt"
 	"cybermind-cli/recon"
+	"cybermind-cli/sandbox"
 	"cybermind-cli/storage"
 	"cybermind-cli/ui"
 	"cybermind-cli/utils"
@@ -30,7 +31,7 @@ import (
 )
 
 var (
-	Version = "4.0.0"
+	Version = "4.2.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -4277,7 +4278,6 @@ rm -f /tmp/evilginx2.tar.gz`)
 			}
 			fmt.Println()
 
-			// Save to brain memory
 			brain.RecordBug(novelTarget, brain.Bug{
 				Title:    result.AttackType,
 				Type:     strings.ToLower(strings.ReplaceAll(result.AttackType, " ", "-")),
@@ -4297,6 +4297,235 @@ rm -f /tmp/evilginx2.tar.gz`)
 				fmt.Sprintf("  ✓ Found %d novel vulnerabilities!", foundCount)))
 		}
 		fmt.Println()
+
+	case "/zap":
+		// OWASP ZAP scan — free Burp Suite alternative
+		if runtime.GOOS != "linux" {
+			printError("/zap is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /zap <target> [scan-type]")
+			printError("  scan-type: passive (default), active, full, ajax")
+			printError("  Example: cybermind /zap https://example.com full")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		zapTarget := args[1]
+		if !strings.HasPrefix(zapTarget, "http") {
+			zapTarget = "https://" + zapTarget
+		}
+		zapScanType := "passive"
+		if len(args) >= 3 {
+			zapScanType = args[2]
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🔍 ZAP SCAN — " + zapTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Type: %s | Free Burp Suite alternative", zapScanType)))
+		fmt.Println()
+
+		zapResult := sandbox.RunZAPScan(zapTarget, zapScanType, func(msg string) {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ " + msg))
+		})
+
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(
+			sandbox.FormatZAPReport(zapResult)))
+
+		if len(zapResult.Alerts) > 0 {
+			// Save report
+			ts := time.Now().Format("2006-01-02_15-04-05")
+			safeT := strings.ReplaceAll(strings.TrimPrefix(strings.TrimPrefix(zapTarget, "https://"), "http://"), ".", "_")
+			reportPath := fmt.Sprintf("cybermind_zap_%s_%s.md", safeT, ts)
+			os.WriteFile(reportPath, []byte(sandbox.FormatZAPReport(zapResult)), 0644)
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ ZAP report saved: " + reportPath))
+
+			// Record in brain
+			for _, alert := range zapResult.Alerts {
+				brain.RecordBug(zapTarget, brain.Bug{
+					Title:    alert.Alert,
+					Type:     "zap-" + strings.ToLower(alert.Risk),
+					URL:      alert.URL,
+					Severity: strings.ToLower(alert.Risk),
+					Evidence: alert.Evidence,
+					Tool:     "zap",
+					Verified: true,
+				})
+			}
+		}
+
+	case "/cloud":
+		// Cloud misconfiguration scanner — S3, GCS, Azure, Firebase
+		if len(args) < 2 {
+			printError("Usage: cybermind /cloud <target>")
+			printError("  Example: cybermind /cloud shopify.com")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		cloudTarget := args[1]
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ☁️  CLOUD MISCONFIGURATION SCANNER — " + cloudTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Scanning: S3, GCS, Azure Blob, Firebase, Cloudflare R2, DigitalOcean Spaces"))
+		fmt.Println()
+
+		mem := brain.LoadTarget(cloudTarget)
+		cloudResult := brain.ScanCloudMisconfigurations(cloudTarget, mem.SubdomainsFound)
+
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(
+			brain.FormatCloudReport(cloudResult)))
+
+		if len(cloudResult.Findings) > 0 {
+			ts := time.Now().Format("2006-01-02_15-04-05")
+			safeT := strings.ReplaceAll(cloudTarget, ".", "_")
+			reportPath := fmt.Sprintf("cybermind_cloud_%s_%s.md", safeT, ts)
+			os.WriteFile(reportPath, []byte(brain.FormatCloudReport(cloudResult)), 0644)
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Cloud report saved: " + reportPath))
+
+			for _, f := range cloudResult.Findings {
+				brain.RecordBug(cloudTarget, brain.Bug{
+					Title:    f.Type + " — " + f.Provider,
+					Type:     f.Type,
+					URL:      f.URL,
+					Severity: f.Severity,
+					Evidence: f.Evidence,
+					PoC:      f.PoC,
+					Tool:     "cloud-scanner",
+					Verified: true,
+				})
+			}
+		}
+		_ = storage.AddEntry("/cloud "+cloudTarget, brain.FormatCloudReport(cloudResult))
+
+	case "/mobile":
+		// Mobile app security testing — APK analysis
+		if runtime.GOOS != "linux" {
+			printError("/mobile is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /mobile <apk-path>")
+			printError("  Example: cybermind /mobile /tmp/target.apk")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		apkPath := args[1]
+		if _, err := os.Stat(apkPath); err != nil {
+			printError("APK file not found: " + apkPath)
+			os.Exit(1)
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  📱 MOBILE APP ANALYSIS — " + filepath.Base(apkPath)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Running: APK decompile, secret scan, endpoint extraction, SSL pinning check"))
+		fmt.Println()
+
+		mobileResult := brain.AnalyzeAPK(apkPath)
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(
+			brain.FormatMobileReport(mobileResult)))
+
+		if len(mobileResult.Findings) > 0 || len(mobileResult.Endpoints) > 0 {
+			ts := time.Now().Format("2006-01-02_15-04-05")
+			reportPath := fmt.Sprintf("cybermind_mobile_%s_%s.md", strings.TrimSuffix(filepath.Base(apkPath), ".apk"), ts)
+			os.WriteFile(reportPath, []byte(brain.FormatMobileReport(mobileResult)), 0644)
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Mobile report saved: " + reportPath))
+		}
+
+	case "/cve-feed", "/cvefeed":
+		// Real-time CVE feed — match CVEs to target tech stack
+		if len(args) < 2 {
+			printError("Usage: cybermind /cve-feed <target>")
+			printError("  Example: cybermind /cve-feed example.com")
+			printError("  Fetches latest CVEs from NVD and matches to detected tech stack")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		cveTarget := args[1]
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  🔴 CVE INTELLIGENCE FEED — " + cveTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Fetching latest CVEs from NVD + matching to target tech stack..."))
+		fmt.Println()
+
+		mem := brain.LoadTarget(cveTarget)
+		shodanVulns := ""
+		if mem.WAFDetected {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  WAF detected: " + mem.WAFVendor))
+		}
+
+		cveResult := brain.MatchCVEsToTarget(cveTarget, mem.TechStack, shodanVulns)
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(
+			brain.FormatCVEReport(cveResult)))
+
+		// Auto-run nuclei templates for matched CVEs
+		if len(cveResult.Matched) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Running nuclei templates for matched CVEs..."))
+			brain.RunCVEExploitation(cveTarget, cveResult.Matched, func(cveID, result string) {
+				if strings.TrimSpace(result) != "" {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+						fmt.Sprintf("  🎯 CVE CONFIRMED: %s", cveID)))
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  " + result[:min(200, len(result))]))
+				}
+			})
+		}
+		_ = storage.AddEntry("/cve-feed "+cveTarget, brain.FormatCVEReport(cveResult))
+
+	case "/groq-setup", "/groq":
+		// Setup Groq API key for ultra-fast free AI (elite users)
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ⚡ GROQ AI SETUP — Ultra-fast Free AI"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Groq runs Llama 3.3 70B at 800 tokens/sec — faster than GPT-4, completely free"))
+		fmt.Println()
+
+		if len(args) >= 2 && strings.HasPrefix(args[1], "gsk_") {
+			// Save key directly
+			key := args[1]
+			if err := api.SaveGroqKey(key); err != nil {
+				printError("Failed to save Groq key: " + err.Error())
+				os.Exit(1)
+			}
+			// Test the key
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Testing Groq API key..."))
+			result, err := api.SendGroqSecurity("Say 'CyberMind Groq connected' in exactly 5 words.")
+			if err != nil {
+				printError("Groq key test failed: " + err.Error())
+				os.Exit(1)
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Groq connected: " + result))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Groq is now your primary AI for agentic mode."))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Models available: " + strings.Join(api.GetGroqModels(), ", ")))
+		} else {
+			// Show setup instructions
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Step 1: Get free Groq API key"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    → https://console.groq.com (free, no credit card)"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    → Sign up → API Keys → Create API Key"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Step 2: Save your key"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    cybermind /groq-setup gsk_xxxxxxxxxxxx"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Free tier limits:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • 14,400 requests/day"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • 500,000 tokens/day"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • 800 tokens/second (10x faster than GPT-4)"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Available models:"))
+			for _, m := range api.GetGroqModels() {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • " + m))
+			}
+			fmt.Println()
+			if api.IsGroqConfigured() {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Groq is already configured and active"))
+			}
+		}
 
 	case "report":
 		// Report writer — works on all OS

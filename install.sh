@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="4.1.0"
+VERSION="4.2.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -237,7 +237,7 @@ if command -v node &>/dev/null && ! node -e "require('playwright')" 2>/dev/null;
     sudo npx playwright install chromium --with-deps 2>/dev/null || true
 fi
 
-# ── Additional exploit tools ──────────────────────────────────────────────────
+# ── Additional exploit + intelligence tools ───────────────────────────────────
 echo -e "${DIM}  Installing additional tools...${NC}"
 # Slither (smart contract analysis)
 command -v slither &>/dev/null || pip3 install slither-analyzer --break-system-packages -q 2>/dev/null || true
@@ -248,23 +248,83 @@ command -v smuggler &>/dev/null || (git clone --depth=1 https://github.com/defpa
     pip3 install -r /opt/smuggler/requirements.txt --break-system-packages -q 2>/dev/null && \
     printf '#!/bin/bash\npython3 /opt/smuggler/smuggler.py "$@"\n' | sudo tee /usr/local/bin/smuggler > /dev/null && \
     sudo chmod +x /usr/local/bin/smuggler) 2>/dev/null || true
+# JWT Tool (OAuth/JWT attack engine)
+command -v jwt_tool &>/dev/null || (git clone --depth=1 https://github.com/ticarpi/jwt_tool /opt/jwt_tool 2>/dev/null && \
+    pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/jwt_tool/jwt_tool.py "$@"\n' | sudo tee /usr/local/bin/jwt_tool > /dev/null && \
+    sudo chmod +x /usr/local/bin/jwt_tool) 2>/dev/null || true
+# GraphQL attack tool
+command -v graphw00f &>/dev/null || pip3 install graphw00f --break-system-packages -q 2>/dev/null || true
+# SSRF map
+command -v ssrfmap &>/dev/null || (git clone --depth=1 https://github.com/swisskyrepo/SSRFmap /opt/ssrfmap 2>/dev/null && \
+    pip3 install -r /opt/ssrfmap/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/ssrfmap/ssrfmap.py "$@"\n' | sudo tee /usr/local/bin/ssrfmap > /dev/null && \
+    sudo chmod +x /usr/local/bin/ssrfmap) 2>/dev/null || true
+# SSTI exploitation (tplmap)
+command -v tplmap &>/dev/null || (git clone --depth=1 https://github.com/epinna/tplmap /opt/tplmap 2>/dev/null && \
+    pip3 install -r /opt/tplmap/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/tplmap/tplmap.py "$@"\n' | sudo tee /usr/local/bin/tplmap > /dev/null && \
+    sudo chmod +x /usr/local/bin/tplmap) 2>/dev/null || true
+# CORS scanner
+command -v corsy &>/dev/null || (git clone --depth=1 https://github.com/s0md3v/Corsy /opt/corsy 2>/dev/null && \
+    pip3 install -r /opt/corsy/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/corsy/corsy.py "$@"\n' | sudo tee /usr/local/bin/corsy > /dev/null && \
+    sudo chmod +x /usr/local/bin/corsy) 2>/dev/null || true
+# ParamSpider
+command -v paramspider &>/dev/null || (git clone --depth=1 https://github.com/devanshbatham/ParamSpider /opt/ParamSpider 2>/dev/null && \
+    pip3 install -r /opt/ParamSpider/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/ParamSpider/paramspider.py "$@"\n' | sudo tee /usr/local/bin/paramspider > /dev/null && \
+    sudo chmod +x /usr/local/bin/paramspider) 2>/dev/null || true
+# XSStrike
+command -v xsstrike &>/dev/null || (git clone --depth=1 https://github.com/s0md3v/XSStrike /opt/XSStrike 2>/dev/null && \
+    pip3 install -r /opt/XSStrike/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/XSStrike/xsstrike.py "$@"\n' | sudo tee /usr/local/bin/xsstrike > /dev/null && \
+    sudo chmod +x /usr/local/bin/xsstrike) 2>/dev/null || true
+# Mantra (JS secret finder), Cariddi (deep crawler), BXss (blind XSS)
+go install github.com/MrEmpy/mantra@latest 2>/dev/null && symlink_go_tool "mantra" || true
+go install github.com/edoardottt/cariddi/cmd/cariddi@latest 2>/dev/null && symlink_go_tool "cariddi" || true
+go install github.com/ethicalhackingplayground/bxss@latest 2>/dev/null && symlink_go_tool "bxss" || true
+# Mega Mode: Reconftw
+if ! command -v reconftw &>/dev/null && [ ! -f /opt/reconftw/reconftw.sh ]; then
+    echo -e "${DIM}  Installing reconftw (Mega Mode — 5-10 min)...${NC}"
+    git clone --depth=1 https://github.com/six2dez/reconftw.git /opt/reconftw 2>/dev/null && \
+    chmod +x /opt/reconftw/reconftw.sh /opt/reconftw/install.sh && \
+    (cd /opt/reconftw && bash install.sh 2>/dev/null || true) && \
+    printf '#!/bin/bash\nexec bash /opt/reconftw/reconftw.sh "$@"\n' | sudo tee /usr/local/bin/reconftw > /dev/null && \
+    sudo chmod +x /usr/local/bin/reconftw 2>/dev/null || true
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BOLD}${GREEN}⚡ CyberMind CLI v${VERSION} installed!${NC}"
 echo ""
-echo -e "  ${CYAN}Verify:${NC}        cybermind --version"
-echo -e "  ${CYAN}AI Chat:${NC}       cybermind"
-echo -e "  ${CYAN}Doctor:${NC}        sudo cybermind /doctor"
-echo -e "  ${CYAN}Recon:${NC}         sudo cybermind /recon example.com"
-echo -e "  ${CYAN}Hunt:${NC}          sudo cybermind /hunt example.com"
-echo -e "  ${CYAN}OMEGA Plan:${NC}    sudo cybermind /plan --auto-target"
-echo -e "  ${CYAN}Auto-Target:${NC}   sudo cybermind /plan --auto-target --skill intermediate --focus idor,xss"
-echo -e "  ${CYAN}Overnight:${NC}     sudo cybermind /plan --auto-target --mode overnight --continuous"
-echo -e "  ${CYAN}BizLogic:${NC}      sudo cybermind /bizlogic example.com"
-echo -e "  ${CYAN}Manual Guide:${NC}  sudo cybermind /guide example.com"
-echo -e "  ${CYAN}Vibe Coder:${NC}    cybermind /vibe"
+echo -e "  ${CYAN}Verify:${NC}          cybermind --version"
+echo -e "  ${CYAN}AI Chat:${NC}         cybermind"
+echo -e "  ${CYAN}Doctor:${NC}          sudo cybermind /doctor"
+echo -e "  ${CYAN}Recon:${NC}           sudo cybermind /recon example.com"
+echo -e "  ${CYAN}Hunt:${NC}            sudo cybermind /hunt example.com"
+echo -e "  ${CYAN}OMEGA Plan:${NC}      sudo cybermind /plan example.com"
+echo -e "  ${CYAN}Auto-Target:${NC}     sudo cybermind /plan --auto-target --skill intermediate"
+echo -e "  ${CYAN}Mega Mode:${NC}       sudo cybermind /plan --auto-target --mode overnight --continuous"
+echo -e "  ${CYAN}BizLogic:${NC}        sudo cybermind /bizlogic example.com"
+echo -e "  ${CYAN}OAuth Scan:${NC}      sudo cybermind /guide example.com --focus oauth"
+echo -e "  ${CYAN}Novel Attacks:${NC}   sudo cybermind /novel example.com"
+echo -e "  ${CYAN}ZAP Scan:${NC}        sudo cybermind /zap https://example.com full"
+echo -e "  ${CYAN}Cloud Scan:${NC}      cybermind /cloud example.com"
+echo -e "  ${CYAN}Mobile APK:${NC}      sudo cybermind /mobile /tmp/app.apk"
+echo -e "  ${CYAN}CVE Feed:${NC}        cybermind /cve-feed example.com"
+echo -e "  ${CYAN}Abhimanyu:${NC}       sudo cybermind /abhimanyu example.com"
+echo -e "  ${CYAN}Manual Guide:${NC}    sudo cybermind /guide example.com"
+echo -e "  ${CYAN}Vibe Coder:${NC}      cybermind /vibe"
+echo ""
+echo -e "  ${BOLD}${YELLOW}NEW in v4.2:${NC}"
+echo -e "  ${DIM}  • Self-thinking engine — independent reasoning without AI backend${NC}"
+echo -e "  ${DIM}  • OAuth/OIDC attack engine — state bypass, PKCE downgrade, JWT confusion${NC}"
+echo -e "  ${DIM}  • Business logic brain — price manipulation, race conditions, IDOR chains${NC}"
+echo -e "  ${DIM}  • Mega mode — overnight autonomous hunting with parallel agents${NC}"
+echo -e "  ${DIM}  • Tech-aware planning — tools selected based on target tech stack${NC}"
+echo -e "  ${DIM}  • Auto Abhimanyu trigger — exploit phase runs automatically after hunt${NC}"
 echo ""
 echo -e "  ${DIM}Full tool install: sudo cybermind /doctor${NC}"
 echo -e "  ${DIM}Browser tests:     Playwright auto-installed above${NC}"
