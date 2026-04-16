@@ -621,3 +621,4 @@ func extractJWTsFromURLs(urls []string) []string {
 	}
 	return jwts
 }
+	
