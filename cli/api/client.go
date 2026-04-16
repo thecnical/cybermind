@@ -2163,3 +2163,60 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// ─── Free Mode — No API Key Required ─────────────────────────────────────────
+// Uses /free/chat endpoint — HuggingFace public models, no signup needed.
+// Rate limited: 10 req/min. After fine-tuning: uses cybermind-security model.
+
+// SendFree sends a prompt without any API key — free for everyone.
+func SendFree(prompt string) (string, error) {
+	payload, err := json.Marshal(map[string]interface{}{
+		"prompt":   prompt,
+		"messages": []interface{}{},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", getBaseURL()+"/free/chat", bytes.NewBuffer(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Device-OS", getDeviceOS())
+
+	freeClient := &http.Client{Timeout: 60 * time.Second}
+	resp, err := freeClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("free endpoint unreachable: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		Success  bool   `json:"success"`
+		Response string `json:"response"`
+		Model    string `json:"model"`
+		Note     string `json:"note"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("invalid response: %v", err)
+	}
+	if !result.Success {
+		return "", fmt.Errorf("%s", result.Error)
+	}
+	if result.Note != "" {
+		return result.Response + "\n\n[" + result.Note + "]", nil
+	}
+	return result.Response, nil
+}
+
+// IsFreeMode returns true if --free flag is set or no API key configured
+func IsFreeMode() bool {
+	return os.Getenv("CYBERMIND_FREE") == "true" || getAPIKey() == ""
+}

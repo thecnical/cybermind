@@ -2090,13 +2090,16 @@ func main() {
 		// TUI handles key prompt automatically if no key is set
 		// FIX: prompt for key BEFORE launching TUI — better UX
 		if api.GetAPIKey() == "" {
-			key := promptForAPIKey()
-			if key == "" {
-				// User skipped — still launch TUI in limited mode
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-					"  Launching in limited mode. Set key anytime: cybermind --key cp_live_xxxxx"))
-				fmt.Println()
-			}
+			// Show free mode option first
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render(
+				"  ✓ FREE MODE available — no API key needed!"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Try: cybermind \"how do I find XSS vulnerabilities?\""))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  For full features (recon/hunt/plan): cybermind --key cp_live_xxxxx"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Get free key: https://cybermindcli1.vercel.app/dashboard"))
+			fmt.Println()
 		}
 
 		p := tea.NewProgram(ui.NewModel(getLocalIP()))
@@ -4562,6 +4565,23 @@ rm -f /tmp/evilginx2.tar.gz`)
 				os.Exit(1)
 			}
 			printResult("[LOCAL] Response", result)
+			_ = storage.AddEntry(prompt, result)
+		} else if api.IsFreeMode() {
+			// ── FREE MODE: no API key needed ─────────────────────────────
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88")).Render("  ⟳ CyberMind FREE mode (HuggingFace)..."))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Get a free API key for faster responses: cybermindcli1.vercel.app"))
+			result, err := api.SendFree(prompt)
+			if err != nil {
+				// Free mode failed — show how to get a key
+				printError("Free mode unavailable: " + err.Error())
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Get a free API key (30 seconds):"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1. Visit: https://cybermindcli1.vercel.app/dashboard"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  2. Sign up free → New key → copy it"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  3. Run: cybermind --key cp_live_xxxxx"))
+				os.Exit(1)
+			}
+			printResult("Response [FREE]", result)
 			_ = storage.AddEntry(prompt, result)
 		} else {
 			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Asking CyberMind AI..."))
