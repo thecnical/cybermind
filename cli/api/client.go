@@ -2220,3 +2220,140 @@ func SendFree(prompt string) (string, error) {
 func IsFreeMode() bool {
 	return os.Getenv("CYBERMIND_FREE") == "true" || getAPIKey() == ""
 }
+
+// ─── CyberMind Local Model — Direct HuggingFace Inference ────────────────────
+// Uses thecnical/cybermindcli directly via HuggingFace Inference API.
+// No backend needed — direct model call.
+// Alpaca prompt format: "Below is a security research question. Write an expert response.\n\n### Instruction:\n{}\n\n### Response:\n"
+
+const cybermindModelID = "thecnical/cybermindcli"
+const hfInferenceBase = "https://api-inference.huggingface.co/models"
+const cybermindAlpacaPrompt = "Below is a security research question. Write an expert response.\n\n### Instruction:\n%s\n\n### Response:\n"
+
+// GetHFToken returns HuggingFace token from env or config
+func GetHFToken() string {
+	if tok := os.Getenv("HF_TOKEN"); tok != "" {
+		return tok
+	}
+	homedir, _ := os.UserHomeDir()
+	data, err := os.ReadFile(homedir + "/.cybermind/config.json")
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		HFToken string `json:"hf_token"`
+	}
+	if json.Unmarshal(data, &cfg) == nil {
+		return cfg.HFToken
+	}
+	return ""
+}
+
+// SaveHFToken saves HuggingFace token to config
+func SaveHFToken(token string) error {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	configPath := homedir + "/.cybermind/config.json"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		data = []byte("{}")
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		cfg = make(map[string]interface{})
+	}
+	cfg["hf_token"] = token
+	updated, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, updated, 0600)
+}
+
+// SendCyberMindLocal sends a prompt directly to thecnical/cybermindcli on HuggingFace.
+// Uses Alpaca prompt format — the exact format the model was trained on.
+// Falls back to SendFree if HF inference fails.
+func SendCyberMindLocal(prompt string) (string, error) {
+	fullPrompt := fmt.Sprintf(cybermindAlpacaPrompt, prompt)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"inputs": fullPrompt,
+		"parameters": map[string]interface{}{
+			"max_new_tokens":      1024,
+			"temperature":         0.7,
+			"return_full_text":    false,
+			"do_sample":           true,
+			"top_p":               0.9,
+			"repetition_penalty":  1.1,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	url := fmt.Sprintf("%s/%s", hfInferenceBase, cybermindModelID)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := GetHFToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+
+	hfClient := &http.Client{Timeout: 90 * time.Second}
+	resp, err := hfClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("HuggingFace unreachable: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if err != nil {
+		return "", err
+	}
+
+	// Model loading — HF cold start (first request after idle)
+	var errResp struct {
+		Error            string `json:"error"`
+		EstimatedTime    float64 `json:"estimated_time"`
+	}
+	if json.Unmarshal(body, &errResp) == nil && errResp.Error != "" {
+		if strings.Contains(errResp.Error, "loading") || strings.Contains(errResp.Error, "currently loading") {
+			return "", fmt.Errorf("cybermindcli is loading (%.0fs) — retry in 20s", errResp.EstimatedTime)
+		}
+		return "", fmt.Errorf("HF error: %s", errResp.Error)
+	}
+
+	var result []struct {
+		GeneratedText string `json:"generated_text"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("HF response parse error: %v", err)
+	}
+	if len(result) == 0 || result[0].GeneratedText == "" {
+		return "", fmt.Errorf("cybermindcli returned empty response")
+	}
+	return strings.TrimSpace(result[0].GeneratedText), nil
+}
+
+// IsCyberMindLocalAvailable checks if cybermindcli is reachable on HuggingFace
+func IsCyberMindLocalAvailable() bool {
+	url := fmt.Sprintf("%s/%s", hfInferenceBase, cybermindModelID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false
+	}
+	if tok := GetHFToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	c := &http.Client{Timeout: 5 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == 200
+}

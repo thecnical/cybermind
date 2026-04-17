@@ -1040,8 +1040,22 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		} else {
 			// ── Reactive: ask AI what to do next ─────────────────────────
 			if !localMode {
-				// Priority: Groq (if configured, fast + free) → Backend
-				if api.IsGroqConfigured() {
+				// Priority: cybermindcli (our fine-tuned model) → Groq → Backend
+				if api.IsCyberMindLocalAvailable() || api.GetHFToken() != "" {
+					cmDecision, cmErr := sendCyberMindAgentDecision(state, memContext)
+					if cmErr == nil && cmDecision != nil {
+						decision = cmDecision
+					} else if api.IsGroqConfigured() {
+						groqDecision, groqErr := sendGroqAgentDecision(state, memContext)
+						if groqErr == nil && groqDecision != nil {
+							decision = groqDecision
+						} else {
+							decision, decErr = api.SendAgentDecision(state)
+						}
+					} else {
+						decision, decErr = api.SendAgentDecision(state)
+					}
+				} else if api.IsGroqConfigured() {
 					groqDecision, groqErr := sendGroqAgentDecision(state, memContext)
 					if groqErr == nil && groqDecision != nil {
 						decision = groqDecision
@@ -2578,6 +2592,60 @@ Think like a world-class hacker. Be aggressive. Prioritize high-value attack vec
 	var decision api.AgentDecision
 	if err := json.Unmarshal([]byte(jsonStr), &decision); err != nil {
 		return nil, fmt.Errorf("Groq decision parse error: %v", err)
+	}
+	return &decision, nil
+}
+
+// sendCyberMindAgentDecision uses thecnical/cybermindcli to make agent decisions.
+// This is our fine-tuned model — purpose-built for bug bounty agentic decisions.
+// Uses Alpaca prompt format (the exact format it was trained on).
+func sendCyberMindAgentDecision(state api.AgentState, memContext string) (*api.AgentDecision, error) {
+	prompt := fmt.Sprintf(`You are CyberMind, an elite bug bounty hunter AI making a tactical decision.
+
+TARGET: %s
+CURRENT STATE:
+- Phase: %s
+- Recon done: %v
+- Hunt done: %v
+- Bugs found: %d (types: %v)
+- Technologies: %v
+- WAF: %v (%s)
+- Open ports: %v
+- Mode: %s
+
+MEMORY CONTEXT:
+%s
+
+Based on this state, decide the NEXT ACTION. Respond with ONLY a JSON object:
+{
+  "action": "recon|hunt|exploit|bizlogic|deep_hunt|poc|guide|done|next_target",
+  "vuln_focus": "all|xss|sqli|ssrf|rce|idor|ssti|lfi|auth|deserialization",
+  "reason": "brief tactical reason",
+  "confidence": 85,
+  "notes": "specific attack angle or tool to prioritize",
+  "waf_bypass": "tamper technique if WAF detected"
+}`,
+		state.Target, state.Phase, state.ReconDone, state.HuntDone,
+		state.BugsFound, state.BugTypes, state.Technologies,
+		state.WAFDetected, state.WAFVendor, state.OpenPorts, state.Mode,
+		memContext)
+
+	response, err := api.SendCyberMindLocal(prompt)
+	if err != nil {
+		return nil, fmt.Errorf("cybermindcli: %v", err)
+	}
+
+	// Parse JSON from response
+	start := strings.Index(response, "{")
+	end := strings.LastIndex(response, "}")
+	if start < 0 || end < 0 || end <= start {
+		return nil, fmt.Errorf("no JSON in cybermindcli response")
+	}
+	jsonStr := response[start : end+1]
+
+	var decision api.AgentDecision
+	if err := json.Unmarshal([]byte(jsonStr), &decision); err != nil {
+		return nil, fmt.Errorf("cybermindcli decision parse error: %v", err)
 	}
 	return &decision, nil
 }

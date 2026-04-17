@@ -4530,6 +4530,65 @@ rm -f /tmp/evilginx2.tar.gz`)
 			}
 		}
 
+	case "/local-model", "/cybermindcli", "/hf-setup":
+		// Setup HuggingFace token to use thecnical/cybermindcli directly
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🧠 CYBERMINDCLI — Local Fine-Tuned Model"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Uses thecnical/cybermindcli — our fine-tuned security AI via HuggingFace"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Trained on 15k+ security examples — no safety filters, bug bounty focused"))
+		fmt.Println()
+
+		if len(args) >= 2 && strings.HasPrefix(args[1], "hf_") {
+			// Save HF token
+			token := args[1]
+			if err := api.SaveHFToken(token); err != nil {
+				printError("Failed to save HF token: " + err.Error())
+				os.Exit(1)
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Testing cybermindcli connection..."))
+			result, err := api.SendCyberMindLocal("Who are you and who created you?")
+			if err != nil {
+				// Model might be loading — that's OK
+				if strings.Contains(err.Error(), "loading") {
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⟳ Model is loading (cold start ~20s) — token saved successfully"))
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  First request takes ~20s, subsequent requests are fast"))
+				} else {
+					printError("Connection test failed: " + err.Error())
+					os.Exit(1)
+				}
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ cybermindcli connected!"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Response: " + truncate(result, 100)))
+			}
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermindcli is now your PRIMARY agentic brain."))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Model: huggingface.co/thecnical/cybermindcli"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Trained by: CyberMind Team under Sanjay Pandey"))
+		} else {
+			// Show setup instructions
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Step 1: Get free HuggingFace token"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    → https://huggingface.co/settings/tokens"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    → New token → Read access → Copy token"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Step 2: Save your token"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    cybermind /local-model hf_xxxxxxxxxxxx"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  What cybermindcli does:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • Agentic decisions — what to scan next, which tools to use"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • Attack planning — full attack chain generation"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • No safety filters — answers all security questions"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • Trained on 15k+ real bug bounty examples"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Model info:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • huggingface.co/thecnical/cybermindcli"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • Base: Llama 3.2 3B + LoRA fine-tuning"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • Created by: CyberMind Team under Sanjay Pandey"))
+			fmt.Println()
+			if api.GetHFToken() != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ HuggingFace token already configured"))
+			}
+		}
+
 	case "report":
 		// Report writer — works on all OS
 		if err := storage.Load(); err != nil {
