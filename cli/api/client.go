@@ -467,6 +467,10 @@ func doPostURL(fullURL string, payload []byte) (string, error) {
 	if name := getUserName(); name != "" {
 		req.Header.Set("X-User-Name", name)
 	}
+	// Send cached plan so backend can route Elite users to Bedrock/Zai
+	if plan := GetCachedPlan(); plan != "" {
+		req.Header.Set("X-User-Plan", plan)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
