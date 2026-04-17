@@ -138,7 +138,25 @@ func isAPIKeyError(errStr string) bool {
 		strings.Contains(errStr, "Authorization required") ||
 		strings.Contains(errStr, "Invalid API key") ||
 		strings.Contains(errStr, "invalid api key") ||
-		strings.Contains(errStr, "key is required")
+		strings.Contains(errStr, "key is required") ||
+		strings.Contains(errStr, "Invalid or revoked") ||
+		strings.Contains(errStr, "revoked API key")
+}
+
+func isEmailNotVerifiedError(errStr string) bool {
+	return strings.Contains(errStr, "Email not verified") ||
+		strings.Contains(errStr, "email not verified") ||
+		strings.Contains(errStr, "EMAIL_NOT_VERIFIED") ||
+		strings.Contains(errStr, "verify your email") ||
+		strings.Contains(errStr, "Check your inbox")
+}
+
+func isDailyLimitError(errStr string) bool {
+	return strings.Contains(errStr, "Daily limit") ||
+		strings.Contains(errStr, "daily limit") ||
+		strings.Contains(errStr, "Monthly limit") ||
+		strings.Contains(errStr, "Request limit") ||
+		strings.Contains(errStr, "limit reached")
 }
 
 func isOSMismatchError(errStr string) bool {
@@ -317,6 +335,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg += " | " + parts[1]
 				}
 				m.errMsg += " → https://cybermindcli1.vercel.app/plans"
+			} else if isEmailNotVerifiedError(errStr) {
+				// Email not verified — show clear message, don't ask for key again
+				m.errMsg = "✉  Email not verified. Check your inbox and click the verification link.\n  Then try again. Resend at: https://cybermindcli1.vercel.app/dashboard"
+				m.state = stateInput
+				m.input.Focus()
+			} else if isDailyLimitError(errStr) {
+				m.errMsg = "⚠  " + errStr + "\n  Upgrade at: https://cybermindcli1.vercel.app/plans"
+				m.state = stateInput
+				m.input.Focus()
 			} else if isAPIKeyError(errStr) {
 				// Switch to inline key prompt mode
 				m.state = stateKeyPrompt

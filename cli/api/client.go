@@ -305,6 +305,8 @@ type promptResponse struct {
 	Time     string `json:"time"`
 	Error    string `json:"error"`
 	Action   string `json:"action"` // migration/upgrade message
+	Code     string `json:"code"`   // error code: EMAIL_NOT_VERIFIED, OS_MISMATCH, etc.
+	Help     string `json:"help"`   // additional help text
 }
 
 // WakeUp pings /ping to check if backend is alive.
@@ -489,6 +491,14 @@ func doPostURL(fullURL string, payload []byte) (string, error) {
 	if !result.Success {
 		if result.Error == "" {
 			return "", fmt.Errorf("backend error (status %d)", resp.StatusCode)
+		}
+		// Email not verified — pass through clearly
+		if result.Code == "EMAIL_NOT_VERIFIED" {
+			msg := result.Error
+			if result.Help != "" {
+				msg += " " + result.Help
+			}
+			return "", fmt.Errorf("%s", msg)
 		}
 		// Check for legacy/migration error — show upgrade steps
 		if result.Action != "" {
