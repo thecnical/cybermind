@@ -252,16 +252,26 @@ func TestDetectTools_CascadeGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(available) != 1 || available[0].Name != "rustscan" {
-		t.Errorf("expected only rustscan available, got %v", available)
+	// Current behavior: primary (rustscan) + backups (naabu, nmap) all in available,
+	// backups marked as CascadeBackup=true and skipped at runtime if primary succeeds.
+	// Total available = 3 (1 primary + 2 backups), skipped = 0 at detect time.
+	if len(available) != 3 {
+		t.Errorf("expected 3 available (1 primary + 2 backups), got %v", available)
 	}
-	if len(skipped) != 2 {
-		t.Errorf("expected 2 skipped, got %d", len(skipped))
+	if available[0].Name != "rustscan" {
+		t.Errorf("expected rustscan as first (primary), got %s", available[0].Name)
 	}
-	for _, s := range skipped {
-		if s.Reason != "cascade: rustscan used" {
-			t.Errorf("expected cascade reason, got %q", s.Reason)
+	if available[0].CascadeBackup {
+		t.Errorf("expected rustscan to NOT be a cascade backup")
+	}
+	for _, a := range available[1:] {
+		if !a.CascadeBackup {
+			t.Errorf("expected %s to be a cascade backup", a.Name)
 		}
+	}
+	// No tools skipped at detect time — backups are skipped at runtime
+	if len(skipped) != 0 {
+		t.Errorf("expected 0 skipped at detect time, got %d", len(skipped))
 	}
 }
 
