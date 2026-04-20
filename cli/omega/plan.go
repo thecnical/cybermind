@@ -404,7 +404,23 @@ cmd2 := exec.Command("pip3", "install", aptName, "--break-system-packages", "-q"
 cmd2.Stdout = os.Stdout
 cmd2.Stderr = os.Stderr
 cmd2.Stdin = nil
-return cmd2.Run()
+if cmd2.Run() == nil {
+return nil
+}
+// Try pipx as fallback
+cmd3 := exec.Command("pipx", "install", aptName)
+cmd3.Stdout = os.Stdout
+cmd3.Stderr = os.Stderr
+cmd3.Stdin = nil
+if cmd3.Run() == nil {
+return nil
+}
+// Try snap as last resort
+cmd4 := exec.Command("sudo", "snap", "install", aptName, "--classic")
+cmd4.Stdout = os.Stdout
+cmd4.Stderr = os.Stderr
+cmd4.Stdin = nil
+return cmd4.Run()
 }
 
 
@@ -771,6 +787,29 @@ fmt.Println(s(lipgloss.Color("#555555"), "      $ "+cmd))
 
 fmt.Println()
 fmt.Println(s(lipgloss.Color("#333333"), "  "+strings.Repeat("─", 60)))
+
+// ── ALWAYS show Abhimanyu as the final guaranteed phase ──────────────
+fmt.Println()
+fmt.Println(bold(red, "  ⚔️  ABHIMANYU MODE — GUARANTEED FINAL PHASE:"))
+fmt.Println(s(lipgloss.Color("#333333"), "  "+strings.Repeat("─", 60)))
+fmt.Println()
+fmt.Println(s(dim, "  Abhimanyu runs AUTOMATICALLY after hunt, regardless of bug count."))
+fmt.Println(s(dim, "  It installs its own tools and may find what hunt missed."))
+fmt.Println()
+abhimanyuPhases := []struct{ phase, tools, desc string }{
+{"Phase 1 — Web Exploitation", "sqlmap, commix, nikto, tplmap, nosqlmap, xxeinjector", "SQLi, RCE, CMDi, SSTI, XXE, NoSQL injection"},
+{"Phase 2 — Auth Attacks",     "hydra, john, hashcat, kerbrute, sprayhound",            "Brute force, hash cracking, Kerberos attacks"},
+{"Phase 3 — CVE Search",       "searchsploit, msfconsole",                              "Known CVEs for detected services"},
+{"Phase 4 — Post-Exploit",     "linpeas, pspy, bloodhound, certipy, bloodyAD",          "Privilege escalation, AD attacks (if shell obtained)"},
+{"Phase 5 — Lateral Movement", "crackmapexec, netexec, evil-winrm, impacket",           "SMB, WinRM, LDAP lateral movement"},
+{"Phase 6 — Persistence",      "chisel, ligolo-ng, evilginx2, donut",                  "Tunneling, phishing, shellcode (if needed)"},
+}
+for _, p := range abhimanyuPhases {
+fmt.Println(bold(red, "  "+p.phase+":"))
+fmt.Println(s(orange, "    Tools: "+p.tools))
+fmt.Println(s(dim, "    → "+p.desc))
+fmt.Println()
+}
 
 fmt.Println()
 fmt.Println(bold(lipgloss.Color("#FF6600"), "  🧠 HACKER BRAIN — 6-ANGLE ATTACK ANALYSIS:"))
