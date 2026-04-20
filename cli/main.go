@@ -1045,7 +1045,7 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 	}
 
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to Abhimanyu AI for exploit analysis..."))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to Abhimanyu AI for exploit analysis + remediation..."))
 
 	exploit, exploitErr := api.SendAbhimanyu(target, vulnType, abhimanyuPayload)
 	if exploitErr == nil {
@@ -1054,6 +1054,44 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 		_ = storage.AddEntry("/abhimanyu "+target, cleanExploit)
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 			"  Copy any commands above and run them manually in your terminal."))
+
+		// ── Generate remediation guide ────────────────────────────────────
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render(
+			"  🛡️  REMEDIATION GUIDE — How to fix these vulnerabilities:"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render(
+			"  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		remediationPrompt := fmt.Sprintf(
+			"For the following vulnerabilities found on %s (vuln type: %s), provide:\n"+
+				"1. Root cause explanation\n"+
+				"2. Exact code fix (with before/after examples)\n"+
+				"3. Security headers to add\n"+
+				"4. WAF rules to block the attack\n"+
+				"5. Testing steps to verify the fix\n\n"+
+				"Findings:\n%s",
+			target, vulnType, exploit[:min(2000, len(exploit))])
+
+		remediation, remErr := api.SendPrompt(remediationPrompt)
+		if remErr == nil && remediation != "" {
+			cleanRemediation := utils.StripMarkdown(remediation)
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88")).Render(cleanRemediation))
+
+			// Save remediation to file
+			ts := time.Now().Format("2006-01-02_15-04-05")
+			safeTarget := strings.ReplaceAll(strings.ReplaceAll(target, ".", "_"), "/", "_")
+			remPath := fmt.Sprintf("cybermind_remediation_%s_%s.md", safeTarget, ts)
+			remContent := fmt.Sprintf("# Remediation Guide — %s\n\n## Vulnerabilities Found\n%s\n\n## How to Fix\n%s\n",
+				target, exploit, remediation)
+			if os.WriteFile(remPath, []byte(remContent), 0644) == nil {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render(
+					"  ✓ Remediation guide saved: " + remPath))
+			}
+		} else {
+			// Fallback: show generic remediation based on vuln type
+			printGenericRemediation(vulnType)
+		}
 	} else {
 		printError("Abhimanyu AI failed: " + exploitErr.Error())
 		// Print raw findings anyway — don't leave user with nothing
@@ -1071,6 +1109,58 @@ func runAbhimanyuFromHunt(target string, ctx hunt.HuntContext, xssFound, vulnsFo
 		fmt.Sprintf("  💾 Session saved: %s/session.json", abhCtx.SessionDir)))
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 		"  Resume next session: cybermind /abhimanyu " + target))
+}
+
+// printGenericRemediation prints a generic remediation guide based on vuln type.
+// Used as fallback when AI remediation fails.
+func printGenericRemediation(vulnType string) {
+	remediations := map[string]string{
+		"sqli": `SQL Injection Remediation:
+  1. Use parameterized queries / prepared statements (NEVER string concatenation)
+  2. Apply input validation and whitelist allowed characters
+  3. Use an ORM (SQLAlchemy, Hibernate, ActiveRecord)
+  4. Principle of least privilege for DB accounts
+  5. Enable WAF rules: ModSecurity CRS SQLi rules
+  Fix: db.query("SELECT * FROM users WHERE id = ?", [userId])`,
+		"xss": `XSS Remediation:
+  1. Encode all output: HTML entity encoding for HTML context
+  2. Use Content-Security-Policy header: script-src 'self'
+  3. Set X-XSS-Protection: 1; mode=block
+  4. Use HttpOnly and Secure flags on cookies
+  5. Validate and sanitize all user input server-side
+  Fix: response.setHeader("Content-Security-Policy", "default-src 'self'")`,
+		"rce": `RCE/Command Injection Remediation:
+  1. NEVER pass user input to shell commands
+  2. Use language-native APIs instead of shell (os.path, subprocess with list args)
+  3. Whitelist allowed commands/parameters
+  4. Run application with minimal OS privileges
+  5. Use containers/sandboxing to limit blast radius
+  Fix: subprocess.run(["ls", user_input], shell=False)  # NOT shell=True`,
+		"ssrf": `SSRF Remediation:
+  1. Whitelist allowed URLs/domains (allowlist, not blocklist)
+  2. Block requests to 169.254.169.254 (cloud metadata)
+  3. Block requests to 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+  4. Use a URL parser to validate scheme (only http/https)
+  5. Disable HTTP redirects or validate redirect destinations`,
+		"auth": `Authentication Bypass Remediation:
+  1. Implement proper session management (secure, httponly, samesite cookies)
+  2. Use strong password hashing (bcrypt, argon2)
+  3. Implement MFA for sensitive operations
+  4. Rate limit login attempts (3-5 per 15 min)
+  5. Validate JWT signatures server-side, never trust client-side claims`,
+		"all": `General Security Remediation:
+  1. Keep all dependencies updated (npm audit, pip-audit, go mod tidy)
+  2. Enable security headers: CSP, HSTS, X-Frame-Options, X-Content-Type-Options
+  3. Use HTTPS everywhere with valid certificates
+  4. Implement proper input validation and output encoding
+  5. Follow OWASP Top 10 guidelines: https://owasp.org/www-project-top-ten/`,
+	}
+
+	guide, ok := remediations[vulnType]
+	if !ok {
+		guide = remediations["all"]
+	}
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88")).Render("  " + strings.ReplaceAll(guide, "\n", "\n  ")))
 }
 
 // deduplicateStrings returns a deduplicated copy of a string slice.

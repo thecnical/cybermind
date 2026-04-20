@@ -316,21 +316,53 @@ return nil
 }
 
 if t.IsPip {
-// Try pipx first, then pip3
-if _, err := exec.LookPath("pipx"); err == nil {
-cmd := exec.Command("pipx", "install", t.Name)
+// Extract package name from install command (may differ from tool name)
+// e.g. "pip3 install wafw00f --break-system-packages" → "wafw00f"
+pkgName := t.Name
+installParts := strings.Fields(t.Install)
+for i, p := range installParts {
+if (p == "install") && i+1 < len(installParts) {
+candidate := installParts[i+1]
+if !strings.HasPrefix(candidate, "-") {
+pkgName = candidate
+break
+}
+}
+}
+
+// 1. Ensure pipx is available — install it if missing
+if _, pipxErr := exec.LookPath("pipx"); pipxErr != nil {
+exec.Command("pip3", "install", "pipx", "--break-system-packages", "-q").Run()
+exec.Command("python3", "-m", "pipx", "ensurepath").Run()
+}
+
+// 2. Try pipx first — isolated venv, no system conflicts (best for modern Kali/Ubuntu)
+if _, pipxErr := exec.LookPath("pipx"); pipxErr == nil {
+cmd := exec.Command("pipx", "install", pkgName)
+cmd.Stdout = os.Stdout
+cmd.Stderr = os.Stderr
+cmd.Stdin = nil
+if cmd.Run() == nil {
+exec.Command("pipx", "ensurepath").Run()
+return nil
+}
+}
+
+// 3. Fallback: pip3 with --break-system-packages (works on older systems)
+cmd := exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q")
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
 cmd.Stdin = nil
 if cmd.Run() == nil {
 return nil
 }
-}
-cmd := exec.Command("pip3", "install", t.Name, "--break-system-packages", "-q")
-cmd.Stdout = os.Stdout
-cmd.Stderr = os.Stderr
-cmd.Stdin = nil
-return cmd.Run()
+
+// 4. Last resort: pip3 with --user flag
+cmd2 := exec.Command("pip3", "install", pkgName, "--user", "-q")
+cmd2.Stdout = os.Stdout
+cmd2.Stderr = os.Stderr
+cmd2.Stdin = nil
+return cmd2.Run()
 }
 
 if t.IsCargo {
@@ -355,7 +387,12 @@ return err
 // Install requirements if present
 reqFile := t.GitDir + "/requirements.txt"
 if _, err := os.Stat(reqFile); err == nil {
+// Try pipx inject first, then pip3
+if _, pipxErr := exec.LookPath("pipx"); pipxErr == nil {
 exec.Command("pip3", "install", "-r", reqFile, "--break-system-packages", "-q").Run()
+} else {
+exec.Command("pip3", "install", "-r", reqFile, "--break-system-packages", "-q").Run()
+}
 }
 // Create wrapper script
 if t.MainScript != "" {
