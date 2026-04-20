@@ -2356,7 +2356,7 @@ func main() {
 		// ── Step 1: Tool health check (Linux only) ────────────────────────────
 		if runtime.GOOS != "linux" {
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ CLI is up to date. Recon/hunt tools are Linux-only."))
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows/macOS: AI chat + CBM Code are fully functional."))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows/macOS: AI chat + Vibe Coder + VSCode extension are fully functional."))
 			fmt.Println()
 			return
 		}
@@ -4606,8 +4606,8 @@ rm -f /tmp/evilginx2.tar.gz`)
 		}
 		runReport(format, localMode)
 
-	case "vibe", "neural", "cbm-code", "cbmcode", "code":
-		// CBM Code (formerly Vibe Coder) — all aliases supported
+	case "vibe", "neural", "code":
+		// Vibe Coder TUI — AI coding assistant (Windows/macOS/Linux)
 		runVibeCoder(args[1:])
 
 	default:

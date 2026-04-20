@@ -978,11 +978,11 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	var allFindings = make(map[string]string)
 	_ = bestPatterns // used in future iterations
 
-	maxIterations := 10 // prevent infinite loops — enough for: recon+hunt+exploit+poc+guide
+	maxIterations := 15 // prevent infinite loops — enough for: recon+hunt+bizlogic+deep_hunt+exploit+poc+guide
 	if mode == "overnight" {
-		maxIterations = 25
+		maxIterations = 30
 	} else if mode == "quick" {
-		maxIterations = 6 // quick: recon+hunt+exploit+poc minimum
+		maxIterations = 8 // quick: recon+hunt+exploit+poc minimum
 	}
 
 	for iter := 0; iter < maxIterations; iter++ {
@@ -2237,6 +2237,23 @@ func localAgentDecision(state api.AgentState) *api.AgentDecision {
 			d.Action = "deep_hunt"
 			d.Reason = "Standard hunt + bizlogic found nothing — running deep second-pass scan"
 			d.Depth = "exhaustive"
+		}
+
+	// ── FIX: After deep_hunt, if bugs found → exploit; if still 0 → force Abhimanyu anyway ──
+	// Elite/Pro users always get Abhimanyu — it may find things hunt missed
+	case state.HuntDone && state.LastAction == "deep_hunt" && !state.AbhiDone:
+		d.Action = "exploit"
+		if state.BugsFound > 0 {
+			d.Reason = fmt.Sprintf("Deep hunt found %d bugs — running Abhimanyu exploit phase", state.BugsFound)
+			d.VulnFocus = selectExploitFocusByBugs(state.BugTypes)
+		} else {
+			// Force Abhimanyu even with 0 bugs — tools may have been missing during hunt
+			// Abhimanyu runs its own tool installs and may find what hunt missed
+			d.Reason = "Deep hunt found 0 bugs — forcing Abhimanyu anyway (may find what hunt missed)"
+			d.VulnFocus = selectVulnFocusByTech(state.Technologies)
+		}
+		if state.WAFDetected {
+			d.WAFBypass = "tamper,random-agent,chunked"
 		}
 
 	case state.BugsFound > 0 && !state.AbhiDone:
