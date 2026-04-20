@@ -25,6 +25,7 @@ import (
 	"cybermind-cli/ui"
 	"cybermind-cli/utils"
 	"cybermind-cli/vibecoder"
+	_ "cybermind-cli/aegis" // imported for side effects — aegis package registers itself
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -157,6 +158,9 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /bizlogic <target> --cookie 'session=abc'") + d.Render(" → authenticated scan"))
 		fmt.Println(g.Render("  cybermind /guide <target>") + d.Render("      → 📋 AI manual testing guide (step-by-step for the 12% tools can't automate)"))
 		fmt.Println(g.Render("  cybermind /guide <target> --focus oauth") + d.Render(" → OAuth/SSO specific guide"))
+		fmt.Println(g.Render("  cybermind /aegis <target>") + d.Render("      → ⚔️  Aegis deep scan (HTTP smuggling, OOB SSRF, cloud, MSF, CVE, HTML report)"))
+		fmt.Println(g.Render("  cybermind /aegis <target> --auto") + d.Render("  → Full autonomous Aegis pentest"))
+		fmt.Println(g.Render("  cybermind /aegis --setup") + d.Render("         → Install/update Aegis platform"))
 		fmt.Println(g.Render("  cybermind /platform --setup") + d.Render("         → 🎯 Save HackerOne/Bugcrowd credentials for auto-submit"))
 		fmt.Println(g.Render("  cybermind /platform --programs") + d.Render("      → List your HackerOne programs"))
 		fmt.Println(g.Render("  cybermind /platform --status") + d.Render("        → Check saved credentials"))
@@ -3749,6 +3753,48 @@ rm -f /tmp/evilginx2.tar.gz`)
 		}
 
 		runOmegaPlan(planTarget, localMode)
+
+	case "/aegis":
+		// Aegis — AI-driven autonomous pentest platform (Python, isolated venv)
+		if runtime.GOOS != "linux" {
+			printError("Aegis is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) >= 2 && (args[1] == "--setup" || args[1] == "setup") {
+			runAegisSetup()
+			return
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /aegis <target>")
+			printError("       cybermind /aegis <target> --auto   (full autonomous pentest)")
+			printError("       cybermind /aegis <target> --recon  (recon only)")
+			printError("       cybermind /aegis <target> --vuln   (vuln scan only)")
+			printError("       cybermind /aegis <target> --exploit (exploit phase)")
+			printError("       cybermind /aegis --setup           (install/update Aegis)")
+			os.Exit(1)
+		}
+		aegisTarget := args[1]
+		aegisMode := "default"
+		for _, a := range args[2:] {
+			switch a {
+			case "--auto", "--full":
+				aegisMode = "auto"
+			case "--recon":
+				aegisMode = "recon"
+			case "--vuln":
+				aegisMode = "vuln"
+			case "--exploit":
+				aegisMode = "exploit"
+			}
+		}
+		if err := recon.ValidateTarget(aegisTarget); err != nil {
+			printError(err.Error())
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		runAegisIntegration(aegisTarget, aegisMode)
 
 	case "/bizlogic", "/biz":
 		// Business Logic Bug Hunter — automated price manipulation, IDOR, race conditions, etc.

@@ -28,6 +28,7 @@ import (
 	"cybermind-cli/sandbox"
 	"cybermind-cli/storage"
 	"cybermind-cli/utils"
+	"cybermind-cli/aegis"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -2925,6 +2926,28 @@ func runOmegaPlan(target string, localMode bool) {
 	}
 
 	runAgenticOmega(target, skillLevel, focusBugs, execMode, localMode)
+
+	// ── STEP 10: Aegis Deep Scan — runs after OMEGA agentic loop ─────────
+	// Aegis adds unique capabilities: HTTP smuggling, OOB SSRF/XXE,
+	// cloud asset discovery, Metasploit auto-mapping, CVE correlation,
+	// SARIF export, D3.js HTML report with attack path graph.
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
+		"  ⚔️  AEGIS DEEP SCAN — Additional attack surface coverage"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Aegis adds: HTTP smuggling, OOB SSRF/XXE, cloud assets, MSF, CVE correlation, HTML report"))
+	fmt.Println()
+
+	aegisAns := readWithTimeout(
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Run Aegis deep scan? [Y/n] → "),
+		"y", 15)
+
+	if strings.ToLower(strings.TrimSpace(aegisAns)) != "n" {
+		runAegisIntegration(target, "default")
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Skipped. Run manually: cybermind /aegis " + target))
+	}
 }
 
 // launchFloatingTerminal launches a live monitoring window during OMEGA execution.
@@ -3030,3 +3053,214 @@ func launchFloatingTerminal(target string) {
 		"  ℹ  In another terminal: tail -f "+logFile))
 }
 
+
+// ─── Aegis Integration ────────────────────────────────────────────────────────
+
+// runAegisIntegration runs Aegis as a deep scan layer after OMEGA completes.
+// Aegis adds: HTTP smuggling, OOB SSRF/XXE, cloud asset discovery,
+// Metasploit auto-mapping, CVE correlation, SARIF export, D3.js HTML report.
+func runAegisIntegration(target string, mode string) {
+	cyan2 := lipgloss.Color("#00FFFF")
+	green2 := lipgloss.Color("#00FF00")
+	red2 := lipgloss.Color("#FF4444")
+	yellow2 := lipgloss.Color("#FFD700")
+	dim2 := lipgloss.Color("#777777")
+	purple2 := lipgloss.Color("#8A2BE2")
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  ⚔️  AEGIS DEEP SCAN — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render("  AI-driven autonomous pentest: HTTP smuggling, OOB SSRF/XXE, cloud assets, MSF, CVE correlation"))
+	fmt.Println()
+
+	// Ensure Aegis is installed
+	if !aegis.IsInstalled() {
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow2).Render("  ⟳ Aegis not installed — setting up isolated Python environment..."))
+		fmt.Println()
+
+		err := aegis.EnsureInstalled(func(status aegis.AegisStatus) {
+			if status.Error {
+				fmt.Println(lipgloss.NewStyle().Foreground(red2).Render("  ✗ " + status.Message))
+			} else if status.Done {
+				fmt.Println(lipgloss.NewStyle().Foreground(green2).Render("  ✓ " + status.Message))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ " + status.Message))
+			}
+		})
+
+		if err != nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(red2).Render("  ✗ Aegis setup failed: " + err.Error()))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render("  Skipping Aegis deep scan. CyberMind results are still complete."))
+			return
+		}
+		fmt.Println()
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(green2).Render("  ✓ Aegis installed and ready"))
+		fmt.Println()
+	}
+
+	onLine := func(line string) {
+		if line == "" {
+			return
+		}
+		// Color-code Aegis output
+		switch {
+		case strings.Contains(line, "✓") || strings.Contains(line, "SUCCESS") || strings.Contains(line, "FOUND"):
+			fmt.Println(lipgloss.NewStyle().Foreground(green2).Render("  " + line))
+		case strings.Contains(line, "✗") || strings.Contains(line, "ERROR") || strings.Contains(line, "FAIL"):
+			fmt.Println(lipgloss.NewStyle().Foreground(red2).Render("  " + line))
+		case strings.Contains(line, "⟳") || strings.Contains(line, "Running") || strings.Contains(line, "Scanning"):
+			fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  " + line))
+		case strings.Contains(line, "WARNING") || strings.Contains(line, "WARN"):
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow2).Render("  " + line))
+		default:
+			fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render("  " + line))
+		}
+	}
+
+	switch mode {
+	case "auto", "full":
+		// Full autonomous pentest
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  🤖 Running full autonomous pentest..."))
+		fmt.Println()
+		if err := aegis.RunAuto(target, onLine); err != nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(red2).Render("  ✗ Aegis auto failed: " + err.Error()))
+		}
+
+	case "recon":
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  🔍 Running Aegis recon..."))
+		aegis.RunRecon(target, onLine)
+
+	case "vuln":
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  🔎 Running Aegis web vuln scan..."))
+		aegis.RunVulnWeb(target, "", onLine)
+
+	case "exploit":
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  💥 Running Aegis exploit phase..."))
+		// HTTP smuggling
+		fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ HTTP Request Smuggling detection..."))
+		aegis.RunSmuggling("https://"+target, onLine)
+		// OOB SSRF/XXE
+		fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ OOB SSRF/XXE detection (interactsh)..."))
+		aegis.RunExploitOOB("https://"+target, onLine)
+		// Cloud assets
+		fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ Cloud asset discovery (S3/Azure/GCP)..."))
+		aegis.RunCloudRecon(target, onLine)
+		// Metasploit auto-mapping
+		fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ Metasploit module auto-mapping..."))
+		aegis.RunExploitMSF(target, onLine)
+
+	default:
+		// Default: recon + vuln + key exploits
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  🔍 Phase 1: Aegis Recon..."))
+		aegis.RunRecon(target, onLine)
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  🔎 Phase 2: Aegis Web Vuln Scan..."))
+		aegis.RunVulnWeb(target, "", onLine)
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  💥 Phase 3: Advanced Exploits..."))
+		fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ HTTP Request Smuggling..."))
+		aegis.RunSmuggling("https://"+target, onLine)
+		fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ OOB SSRF/XXE (interactsh)..."))
+		aegis.RunExploitOOB("https://"+target, onLine)
+		fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ Cloud asset discovery..."))
+		aegis.RunCloudRecon(target, onLine)
+	}
+
+	// CVE correlation
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ CVE correlation (NVD API)..."))
+	aegis.RunCVECorrelate(1, onLine)
+
+	// AI triage
+	fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ AI triage of findings..."))
+	aegis.RunAITriage(1, onLine)
+
+	// Generate HTML report with D3.js attack path graph
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ Generating HTML report with attack path graph..."))
+	reportPath, err := aegis.RunReport(target, "html", onLine)
+	if err == nil && reportPath != "" {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render("  ✓ HTML report: " + reportPath))
+	}
+
+	// SARIF export for GitHub Code Scanning
+	sarifPath := aegis.GetAegisDir() + "/data/reports/" + strings.ReplaceAll(target, ".", "_") + ".sarif"
+	aegis.RunSARIFExport(1, sarifPath, onLine)
+	if _, err := os.Stat(sarifPath); err == nil {
+		fmt.Println(lipgloss.NewStyle().Foreground(green2).Render("  ✓ SARIF export: " + sarifPath))
+	}
+
+	// Read and display findings summary
+	fmt.Println()
+	summary := aegis.GetFindingsSummary(target)
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  📊 AEGIS FINDINGS SUMMARY"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).MarginLeft(2).Render(summary))
+	fmt.Println()
+
+	// Feed Aegis findings into CyberMind brain memory
+	findings, _ := aegis.GetFindings(target)
+	if len(findings) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render(
+			fmt.Sprintf("  🧠 Feeding %d Aegis findings into CyberMind brain memory...", len(findings))))
+		for _, f := range findings {
+			brain.RecordBug(target, brain.Bug{
+				Title:    f.Title,
+				Type:     f.Category,
+				URL:      f.URL,
+				Severity: f.Severity,
+				Evidence: f.Evidence,
+				Tool:     "aegis/" + f.Tool,
+				Verified: true,
+			})
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(green2).Render("  ✓ Aegis findings saved to brain memory"))
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  ✓ AEGIS DEEP SCAN COMPLETE"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render("  Aegis data: " + aegis.GetAegisDir()))
+	fmt.Println()
+}
+
+// runAegisSetup installs Aegis and all its dependencies
+func runAegisSetup() {
+	cyan2 := lipgloss.Color("#00FFFF")
+	green2 := lipgloss.Color("#00FF00")
+	red2 := lipgloss.Color("#FF4444")
+	purple2 := lipgloss.Color("#8A2BE2")
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render("  🔧 AEGIS SETUP — Installing AI Pentest Platform"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Installing in isolated Python venv: ~/.cybermind/aegis/"))
+	fmt.Println()
+
+	err := aegis.EnsureInstalled(func(status aegis.AegisStatus) {
+		if status.Error {
+			fmt.Println(lipgloss.NewStyle().Foreground(red2).Render("  ✗ " + status.Message))
+		} else if status.Done {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render("  ✓ " + status.Message))
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(purple2).Render("  ⟳ " + status.Message))
+		}
+	})
+
+	if err != nil {
+		fmt.Println(lipgloss.NewStyle().Foreground(red2).Render("  ✗ Setup failed: " + err.Error()))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Manual install: pip install aegis-cli"))
+		return
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render("  ✓ Aegis fully installed!"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Usage:"))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan2).Render("  cybermind /aegis <target>          → deep scan (recon + vuln + exploits)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan2).Render("  cybermind /aegis <target> --auto   → full autonomous pentest"))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan2).Render("  cybermind /aegis --setup           → reinstall/update Aegis"))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan2).Render("  cybermind /plan <target>           → OMEGA + Aegis combined (recommended)"))
+	fmt.Println()
+}
