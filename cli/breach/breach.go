@@ -1,12 +1,17 @@
 // Package breach — CyberMind Breach Intelligence Module
-// 90% API-based (HIBP, LeakCheck, IntelX, DeHashed, BreachDirectory)
-// 10% local dump fallback (SQLite-indexed user-provided dumps)
+// Sources:
+//   1. HIBP v3 (Have I Been Pwned) — free + paid key
+//   2. BreachDirectory via RapidAPI — X-RapidAPI-Key
+//   3. LeakCheck.io — free public API
+//   4. WhatsApp OSINT via RapidAPI — phone number intelligence
+//   5. Local SQLite — user-indexed breach dumps
 //
-// Integrated into /osint-deep Phase 2 automatically.
-// Also callable standalone via runBreachCheck() in commands.go
+// RapidAPI Key stored in: ~/.cybermind/config.json → rapidapi_key
+// Or env: RAPIDAPI_KEY
 package breach
 
 import (
+	"bufio"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -26,36 +31,90 @@ import (
 // BreachResult holds findings from all breach sources.
 type BreachResult struct {
 	Target   string
-	Type     string // "email" | "domain" | "username"
+	Type     string // "email" | "domain" | "phone"
 	Breaches []BreachEntry
-	Sources  []string // which APIs returned data
+	Sources  []string
 	Error    string
 }
 
 // BreachEntry is a single breach record.
 type BreachEntry struct {
-	Source    string    // "hibp" | "leakcheck" | "dehashed" | "local"
-	Name      string    // breach name (e.g. "LinkedIn")
-	Date      string    // breach date
-	Count     int64     // number of records
-	DataTypes []string  // what was leaked (email, password, phone, etc.)
-	Password  string    // leaked password (if available from local dump)
-	Hash      string    // leaked hash (if available)
+	Source    string
+	Name      string
+	Date      string
+	Count     int64
+	DataTypes []string
+	Password  string
+	Hash      string
 	Found     time.Time
 }
 
-// ─── API Clients ──────────────────────────────────────────────────────────────
+// WhatsAppInfo holds WhatsApp OSINT results for a phone number.
+type WhatsAppInfo struct {
+	Phone    string
+	Name     string
+	About    string
+	Photo    string
+	Business bool
+	Found    bool
+}
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
-// CheckHIBP queries Have I Been Pwned API (free, no key for basic check).
-// Returns breach list for an email address.
+// ─── Key Management ───────────────────────────────────────────────────────────
+
+// GetRapidAPIKey returns RapidAPI key from env or config file.
+func GetRapidAPIKey() string {
+	if k := os.Getenv("RAPIDAPI_KEY"); k != "" {
+		return k
+	}
+	home, _ := os.UserHomeDir()
+	data, err := os.ReadFile(filepath.Join(home, ".cybermind", "config.json"))
+	if err != nil {
+		return ""
+	}
+	var cfg map[string]interface{}
+	if json.Unmarshal(data, &cfg) == nil {
+		if k, ok := cfg["rapidapi_key"].(string); ok {
+			return k
+		}
+	}
+	return ""
+}
+
+// SaveRapidAPIKey saves RapidAPI key to config file.
+func SaveRapidAPIKey(key string) error {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".cybermind")
+	os.MkdirAll(dir, 0700)
+	cfgPath := filepath.Join(dir, "config.json")
+
+	var cfg map[string]interface{}
+	data, err := os.ReadFile(cfgPath)
+	if err == nil {
+		json.Unmarshal(data, &cfg)
+	}
+	if cfg == nil {
+		cfg = make(map[string]interface{})
+	}
+	cfg["rapidapi_key"] = key
+	updated, _ := json.MarshalIndent(cfg, "", "  ")
+	return os.WriteFile(cfgPath, updated, 0600)
+}
+
+func getHIBPKey() string {
+	return os.Getenv("HIBP_API_KEY")
+}
+
+// ─── 1. HIBP v3 ───────────────────────────────────────────────────────────────
+
+// CheckHIBP queries Have I Been Pwned v3 API.
+// Free tier: breach names only. Paid key: full details.
 func CheckHIBP(email string) ([]BreachEntry, error) {
 	if !strings.Contains(email, "@") {
-		return nil, fmt.Errorf("HIBP requires email address")
+		return nil, nil
 	}
 
-	// HIBP v3 API — truncated response (no passwords, just breach names)
 	reqURL := fmt.Sprintf("https://haveibeenpwned.com/api/v3/breachedaccount/%s?truncateResponse=false",
 		url.PathEscape(email))
 
@@ -64,7 +123,9 @@ func CheckHIBP(email string) ([]BreachEntry, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "CyberMind-OSINT/1.0")
-	req.Header.Set("hibp-api-key", getHIBPKey()) // optional — works without key for basic
+	if k := getHIBPKey(); k != "" {
+		req.Header.Set("hibp-api-key", k)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -73,52 +134,50 @@ func CheckHIBP(email string) ([]BreachEntry, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 404 {
-		return nil, nil // not found = no breaches
+		return nil, nil // clean — not found
 	}
 	if resp.StatusCode == 401 {
-		// No API key — use free endpoint
-		return checkHIBPFree(email)
+		// No key — try without truncation flag
+		return checkHIBPBasic(email)
+	}
+	if resp.StatusCode == 429 {
+		return nil, fmt.Errorf("HIBP rate limited — wait 1.5s between requests")
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HIBP API returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("HIBP: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if err != nil {
-		return nil, err
-	}
-
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	var raw []map[string]interface{}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, err
+	if json.Unmarshal(body, &raw) != nil {
+		return nil, nil
 	}
 
 	var entries []BreachEntry
 	for _, b := range raw {
-		entry := BreachEntry{Source: "hibp", Found: time.Now()}
-		if name, ok := b["Name"].(string); ok {
-			entry.Name = name
+		e := BreachEntry{Source: "hibp", Found: time.Now()}
+		if v, ok := b["Name"].(string); ok {
+			e.Name = v
 		}
-		if date, ok := b["BreachDate"].(string); ok {
-			entry.Date = date
+		if v, ok := b["BreachDate"].(string); ok {
+			e.Date = v
 		}
-		if count, ok := b["PwnCount"].(float64); ok {
-			entry.Count = int64(count)
+		if v, ok := b["PwnCount"].(float64); ok {
+			e.Count = int64(v)
 		}
 		if types, ok := b["DataClasses"].([]interface{}); ok {
 			for _, t := range types {
 				if s, ok := t.(string); ok {
-					entry.DataTypes = append(entry.DataTypes, s)
+					e.DataTypes = append(e.DataTypes, s)
 				}
 			}
 		}
-		entries = append(entries, entry)
+		entries = append(entries, e)
 	}
 	return entries, nil
 }
 
-// checkHIBPFree uses the free HIBP search (no API key, limited).
-func checkHIBPFree(email string) ([]BreachEntry, error) {
+func checkHIBPBasic(email string) ([]BreachEntry, error) {
 	reqURL := fmt.Sprintf("https://haveibeenpwned.com/api/v3/breachedaccount/%s",
 		url.PathEscape(email))
 	req, _ := http.NewRequest("GET", reqURL, nil)
@@ -134,27 +193,106 @@ func checkHIBPFree(email string) ([]BreachEntry, error) {
 		return nil, nil
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HIBP free API: %d", resp.StatusCode)
+		return nil, fmt.Errorf("HIBP basic: %d", resp.StatusCode)
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
 	var raw []map[string]interface{}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, err
+	if json.Unmarshal(body, &raw) != nil {
+		return nil, nil
 	}
 
 	var entries []BreachEntry
 	for _, b := range raw {
-		entry := BreachEntry{Source: "hibp-free", Found: time.Now()}
-		if name, ok := b["Name"].(string); ok {
-			entry.Name = name
+		e := BreachEntry{Source: "hibp", Found: time.Now()}
+		if v, ok := b["Name"].(string); ok {
+			e.Name = v
 		}
-		entries = append(entries, entry)
+		entries = append(entries, e)
 	}
 	return entries, nil
 }
 
-// CheckLeakCheck queries LeakCheck.io free API (5B+ records).
+// ─── 2. BreachDirectory via RapidAPI ─────────────────────────────────────────
+
+// CheckBreachDirectory queries BreachDirectory via RapidAPI.
+// Requires RapidAPI key. Returns emails, passwords, hashes.
+func CheckBreachDirectory(target string) ([]BreachEntry, error) {
+	key := GetRapidAPIKey()
+	if key == "" {
+		return nil, fmt.Errorf("RapidAPI key not set — run: cybermind /breach --setup")
+	}
+
+	reqURL := fmt.Sprintf("https://breachdirectory.p.rapidapi.com/?func=auto&term=%s",
+		url.QueryEscape(target))
+
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-RapidAPI-Key", key)
+	req.Header.Set("X-RapidAPI-Host", "breachdirectory.p.rapidapi.com")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 403 || resp.StatusCode == 401 {
+		return nil, fmt.Errorf("BreachDirectory: invalid RapidAPI key")
+	}
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("BreachDirectory: %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+
+	var result struct {
+		Success bool `json:"success"`
+		Found   int  `json:"found"`
+		Result  []struct {
+			Email    string   `json:"email"`
+			Password string   `json:"password"`
+			SHA1     string   `json:"sha1"`
+			Hash     string   `json:"hash"`
+			Sources  []string `json:"sources"`
+		} `json:"result"`
+	}
+
+	if json.Unmarshal(body, &result) != nil {
+		return nil, nil
+	}
+	if !result.Success || result.Found == 0 {
+		return nil, nil
+	}
+
+	var entries []BreachEntry
+	for _, r := range result.Result {
+		e := BreachEntry{
+			Source: "breachdirectory",
+			Found:  time.Now(),
+		}
+		if len(r.Sources) > 0 {
+			e.Name = strings.Join(r.Sources, ", ")
+		}
+		if r.Password != "" {
+			e.Password = r.Password
+		}
+		if r.SHA1 != "" {
+			e.Hash = r.SHA1
+		} else if r.Hash != "" {
+			e.Hash = r.Hash
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+// ─── 3. LeakCheck.io ─────────────────────────────────────────────────────────
+
+// CheckLeakCheck queries LeakCheck.io free public API.
 func CheckLeakCheck(target string) ([]BreachEntry, error) {
 	reqURL := fmt.Sprintf("https://leakcheck.io/api/public?check=%s", url.QueryEscape(target))
 
@@ -168,99 +306,72 @@ func CheckLeakCheck(target string) ([]BreachEntry, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("LeakCheck API: %d", resp.StatusCode)
+		return nil, fmt.Errorf("LeakCheck: %d", resp.StatusCode)
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
 
 	var result struct {
-		Success bool                     `json:"success"`
-		Found   int                      `json:"found"`
-		Sources []map[string]interface{} `json:"sources"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
+		Success bool `json:"success"`
+		Found   int  `json:"found"`
+		Sources []struct {
+			Name string `json:"name"`
+			Date string `json:"date"`
+		} `json:"sources"`
 	}
 
+	if json.Unmarshal(body, &result) != nil {
+		return nil, nil
+	}
 	if !result.Success || result.Found == 0 {
 		return nil, nil
 	}
 
 	var entries []BreachEntry
 	for _, s := range result.Sources {
-		entry := BreachEntry{Source: "leakcheck", Found: time.Now()}
-		if name, ok := s["name"].(string); ok {
-			entry.Name = name
-		}
-		if date, ok := s["date"].(string); ok {
-			entry.Date = date
-		}
-		entries = append(entries, entry)
+		entries = append(entries, BreachEntry{
+			Source: "leakcheck",
+			Name:   s.Name,
+			Date:   s.Date,
+			Found:  time.Now(),
+		})
 	}
 	return entries, nil
 }
 
-// CheckBreachDirectory queries BreachDirectory.org free API.
-func CheckBreachDirectory(email string) ([]BreachEntry, error) {
-	if !strings.Contains(email, "@") {
-		return nil, nil
+// ─── 4. WhatsApp OSINT via RapidAPI ──────────────────────────────────────────
+
+// CheckWhatsApp queries WhatsApp OSINT API for phone number intelligence.
+// Returns name, about, profile photo, business status.
+func CheckWhatsApp(phone string) (*WhatsAppInfo, error) {
+	key := GetRapidAPIKey()
+	if key == "" {
+		return nil, fmt.Errorf("RapidAPI key not set")
 	}
 
-	reqURL := fmt.Sprintf("https://breachdirectory.org/api?func=auto&term=%s", url.QueryEscape(email))
-	req, _ := http.NewRequest("GET", reqURL, nil)
-	req.Header.Set("User-Agent", "CyberMind-OSINT/1.0")
-	req.Header.Set("X-Api-Key", getBreachDirKey())
+	// Clean phone number — remove spaces, dashes, keep + and digits
+	clean := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' || r == '+' {
+			return r
+		}
+		return -1
+	}, phone)
 
-	resp, err := httpClient.Do(req)
+	if len(clean) < 10 {
+		return nil, fmt.Errorf("invalid phone number: %s", phone)
+	}
+
+	// WhatsApp OSINT API — Business Insights endpoint
+	reqURL := "https://whatsapp-osint.p.rapidapi.com/bios"
+	payload := fmt.Sprintf(`{"phone":"%s"}`, clean)
+
+	req, err := http.NewRequest("POST", reqURL, strings.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("BreachDirectory API: %d", resp.StatusCode)
-	}
-
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
-
-	var result struct {
-		Success bool                     `json:"success"`
-		Found   int                      `json:"found"`
-		Result  []map[string]interface{} `json:"result"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
-	var entries []BreachEntry
-	for _, r := range result.Result {
-		entry := BreachEntry{Source: "breachdirectory", Found: time.Now()}
-		if src, ok := r["sources"].([]interface{}); ok && len(src) > 0 {
-			if s, ok := src[0].(string); ok {
-				entry.Name = s
-			}
-		}
-		if hash, ok := r["sha1"].(string); ok {
-			entry.Hash = hash
-		}
-		if pass, ok := r["password"].(string); ok {
-			entry.Password = pass
-		}
-		entries = append(entries, entry)
-	}
-	return entries, nil
-}
-
-// CheckIntelX queries IntelX.io free tier.
-func CheckIntelX(target string) ([]BreachEntry, error) {
-	// IntelX search API
-	searchURL := "https://2.intelx.io/intelligent/search"
-	payload := fmt.Sprintf(`{"term":"%s","buckets":[],"lookuplevel":0,"maxresults":10,"timeout":0,"datefrom":"","dateto":"","sort":4,"media":0,"terminate":[]}`, target)
-
-	req, _ := http.NewRequest("POST", searchURL, strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "CyberMind-OSINT/1.0")
-	req.Header.Set("x-key", getIntelXKey())
+	req.Header.Set("X-RapidAPI-Key", key)
+	req.Header.Set("X-RapidAPI-Host", "whatsapp-osint.p.rapidapi.com")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -268,100 +379,127 @@ func CheckIntelX(target string) ([]BreachEntry, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == 403 || resp.StatusCode == 401 {
+		return nil, fmt.Errorf("WhatsApp OSINT: invalid RapidAPI key")
+	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("IntelX API: %d", resp.StatusCode)
+		return nil, fmt.Errorf("WhatsApp OSINT: %d", resp.StatusCode)
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
 
-	var result struct {
-		ID     string `json:"id"`
-		Status int    `json:"status"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
-	if result.ID == "" {
+	var result map[string]interface{}
+	if json.Unmarshal(body, &result) != nil {
 		return nil, nil
 	}
 
-	// Get results
-	resultsURL := fmt.Sprintf("https://2.intelx.io/intelligent/search/result?id=%s&limit=10&offset=0", result.ID)
-	req2, _ := http.NewRequest("GET", resultsURL, nil)
-	req2.Header.Set("x-key", getIntelXKey())
+	info := &WhatsAppInfo{Phone: clean}
 
-	resp2, err := httpClient.Do(req2)
-	if err != nil {
-		return nil, err
+	// Parse response fields
+	if name, ok := result["name"].(string); ok && name != "" {
+		info.Name = name
+		info.Found = true
 	}
-	defer resp2.Body.Close()
+	if about, ok := result["about"].(string); ok {
+		info.About = about
+	}
+	if photo, ok := result["photo"].(string); ok {
+		info.Photo = photo
+	}
+	if biz, ok := result["isBusiness"].(bool); ok {
+		info.Business = biz
+	}
+	// Some APIs return status field
+	if status, ok := result["status"].(string); ok && status != "" {
+		info.About = status
+		info.Found = true
+	}
 
-	body2, _ := io.ReadAll(io.LimitReader(resp2.Body, 32*1024))
-
-	var results struct {
-		Records []map[string]interface{} `json:"records"`
-	}
-	if err := json.Unmarshal(body2, &results); err != nil {
-		return nil, err
-	}
-
-	var entries []BreachEntry
-	for _, r := range results.Records {
-		entry := BreachEntry{Source: "intelx", Found: time.Now()}
-		if name, ok := r["name"].(string); ok {
-			entry.Name = name
-		}
-		if date, ok := r["date"].(string); ok {
-			entry.Date = date
-		}
-		entries = append(entries, entry)
-	}
-	return entries, nil
+	return info, nil
 }
 
-// ─── Local Dump Index ─────────────────────────────────────────────────────────
+// CheckWhatsAppFetchOSINT uses the "Fetch osint info" endpoint.
+func CheckWhatsAppFetchOSINT(phone string) (string, error) {
+	key := GetRapidAPIKey()
+	if key == "" {
+		return "", fmt.Errorf("RapidAPI key not set")
+	}
 
-// IndexLocalDump indexes a breach dump file into SQLite for fast searching.
+	clean := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' || r == '+' {
+			return r
+		}
+		return -1
+	}, phone)
+
+	reqURL := fmt.Sprintf("https://whatsapp-osint.p.rapidapi.com/osint?phone=%s", url.QueryEscape(clean))
+
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("X-RapidAPI-Key", key)
+	req.Header.Set("X-RapidAPI-Host", "whatsapp-osint.p.rapidapi.com")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("WhatsApp OSINT fetch: %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	return string(body), nil
+}
+
+// ─── 5. Local SQLite Dump ─────────────────────────────────────────────────────
+
+// IndexLocalDump indexes a breach dump file into SQLite.
 // Supports: email:password, email:hash, plain email lists.
+// Large files (100M+ lines) handled via streaming + batch inserts.
 func IndexLocalDump(dumpPath string) error {
-	dbPath := getLocalDBPath()
-	db, err := sql.Open("sqlite3", dbPath)
+	dbPath := GetLocalDBPath()
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL")
 	if err != nil {
 		return fmt.Errorf("open db: %v", err)
 	}
 	defer db.Close()
 
-	// Create table
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS breaches (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		email TEXT NOT NULL,
+		id       INTEGER PRIMARY KEY AUTOINCREMENT,
+		email    TEXT NOT NULL,
 		password TEXT,
-		hash TEXT,
-		source TEXT,
-		indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		hash     TEXT,
+		source   TEXT,
+		indexed  DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	if err != nil {
 		return fmt.Errorf("create table: %v", err)
 	}
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_email ON breaches(email)`)
 
-	// Read and index dump file
-	data, err := os.ReadFile(dumpPath)
-	if err != nil {
-		return fmt.Errorf("read dump: %v", err)
-	}
-
 	source := filepath.Base(dumpPath)
-	lines := strings.Split(string(data), "\n")
+
+	// Stream file line by line — handles huge dumps without OOM
+	f, err := os.Open(dumpPath)
+	if err != nil {
+		return fmt.Errorf("open dump: %v", err)
+	}
+	defer f.Close()
 
 	tx, _ := db.Begin()
 	stmt, _ := tx.Prepare(`INSERT OR IGNORE INTO breaches (email, password, hash, source) VALUES (?, ?, ?, ?)`)
-	defer stmt.Close()
 
 	count := 0
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	skipped := 0
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB line buffer
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -372,7 +510,6 @@ func IndexLocalDump(dumpPath string) error {
 			parts := strings.SplitN(line, ":", 2)
 			email = strings.ToLower(strings.TrimSpace(parts[0]))
 			val := strings.TrimSpace(parts[1])
-			// Detect if it's a hash (32+ hex chars) or password
 			if len(val) >= 32 && isHex(val) {
 				hash = val
 			} else {
@@ -381,36 +518,43 @@ func IndexLocalDump(dumpPath string) error {
 		} else if strings.Contains(line, "@") {
 			email = strings.ToLower(strings.TrimSpace(line))
 		} else {
+			skipped++
 			continue
 		}
 
-		if !strings.Contains(email, "@") {
+		if !strings.Contains(email, "@") || len(email) > 254 {
+			skipped++
 			continue
 		}
 
 		stmt.Exec(email, password, hash, source)
 		count++
 
-		if count%10000 == 0 {
+		// Commit every 50K records
+		if count%50000 == 0 {
+			stmt.Close()
 			tx.Commit()
+			fmt.Printf("\r  ⟳ Indexed %d records...", count)
 			tx, _ = db.Begin()
 			stmt, _ = tx.Prepare(`INSERT OR IGNORE INTO breaches (email, password, hash, source) VALUES (?, ?, ?, ?)`)
 		}
 	}
+
+	stmt.Close()
 	tx.Commit()
 
-	fmt.Printf("Indexed %d records from %s\n", count, source)
-	return nil
+	fmt.Printf("\r  ✓ Indexed %d records from %s (%d skipped)\n", count, source, skipped)
+	return scanner.Err()
 }
 
 // SearchLocalDump searches the local SQLite breach database.
 func SearchLocalDump(target string) ([]BreachEntry, error) {
-	dbPath := getLocalDBPath()
+	dbPath := GetLocalDBPath()
 	if _, err := os.Stat(dbPath); err != nil {
-		return nil, nil // no local db
+		return nil, nil
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		return nil, err
 	}
@@ -419,14 +563,13 @@ func SearchLocalDump(target string) ([]BreachEntry, error) {
 	var query string
 	var args []interface{}
 
-	if strings.Contains(target, "@") {
-		// Email search
+	if strings.Contains(target, "@") && !strings.HasPrefix(target, "@") {
 		query = `SELECT email, password, hash, source FROM breaches WHERE email = ? LIMIT 50`
 		args = []interface{}{strings.ToLower(target)}
-	} else if strings.Contains(target, ".") {
-		// Domain search
+	} else if strings.HasPrefix(target, "@") || strings.Contains(target, ".") {
+		domain := strings.TrimPrefix(target, "@")
 		query = `SELECT email, password, hash, source FROM breaches WHERE email LIKE ? LIMIT 100`
-		args = []interface{}{"%" + target}
+		args = []interface{}{"%" + domain}
 	} else {
 		return nil, nil
 	}
@@ -440,29 +583,56 @@ func SearchLocalDump(target string) ([]BreachEntry, error) {
 	var entries []BreachEntry
 	for rows.Next() {
 		var email, password, hash, source string
-		if err := rows.Scan(&email, &password, &hash, &source); err != nil {
+		if rows.Scan(&email, &password, &hash, &source) != nil {
 			continue
 		}
-		entry := BreachEntry{
+		entries = append(entries, BreachEntry{
 			Source:   "local:" + source,
 			Name:     source,
 			Password: password,
 			Hash:     hash,
 			Found:    time.Now(),
-		}
-		entries = append(entries, entry)
+		})
 	}
 	return entries, nil
 }
 
+// GetLocalDBStats returns stats about the local breach database.
+func GetLocalDBStats() (totalRecords int64, sources []string, err error) {
+	dbPath := GetLocalDBPath()
+	if _, err := os.Stat(dbPath); err != nil {
+		return 0, nil, nil
+	}
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer db.Close()
+
+	db.QueryRow(`SELECT COUNT(*) FROM breaches`).Scan(&totalRecords)
+
+	rows, _ := db.Query(`SELECT DISTINCT source FROM breaches ORDER BY source`)
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var s string
+			if rows.Scan(&s) == nil {
+				sources = append(sources, s)
+			}
+		}
+	}
+	return totalRecords, sources, nil
+}
+
 // ─── Main Check Function ──────────────────────────────────────────────────────
 
-// CheckAll runs all breach APIs + local dump for a target.
-// Priority: HIBP → LeakCheck → BreachDirectory → IntelX → Local
+// CheckAll runs all breach sources concurrently for a target.
+// Priority: HIBP → BreachDirectory (RapidAPI) → LeakCheck → Local
 func CheckAll(target string) BreachResult {
 	result := BreachResult{
 		Target: target,
-		Type:   detectBreachTargetType(target),
+		Type:   DetectTargetType(target),
 	}
 
 	type apiResult struct {
@@ -471,37 +641,33 @@ func CheckAll(target string) BreachResult {
 		err     error
 	}
 
-	// Run APIs concurrently
-	ch := make(chan apiResult, 5)
+	ch := make(chan apiResult, 4)
 
+	// 1. HIBP
 	go func() {
 		entries, err := CheckHIBP(target)
 		ch <- apiResult{"hibp", entries, err}
 	}()
 
-	go func() {
-		entries, err := CheckLeakCheck(target)
-		ch <- apiResult{"leakcheck", entries, err}
-	}()
-
+	// 2. BreachDirectory via RapidAPI
 	go func() {
 		entries, err := CheckBreachDirectory(target)
 		ch <- apiResult{"breachdirectory", entries, err}
 	}()
 
+	// 3. LeakCheck free
 	go func() {
-		entries, err := CheckIntelX(target)
-		ch <- apiResult{"intelx", entries, err}
+		entries, err := CheckLeakCheck(target)
+		ch <- apiResult{"leakcheck", entries, err}
 	}()
 
-	// Local dump (10% fallback)
+	// 4. Local SQLite
 	go func() {
 		entries, err := SearchLocalDump(target)
 		ch <- apiResult{"local", entries, err}
 	}()
 
-	// Collect results
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 4; i++ {
 		r := <-ch
 		if r.err == nil && len(r.entries) > 0 {
 			result.Breaches = append(result.Breaches, r.entries...)
@@ -519,7 +685,7 @@ func FormatBreachResult(result BreachResult) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("⚠ BREACHES FOUND for %s (%d total)\n\n", result.Target, len(result.Breaches)))
+	sb.WriteString(fmt.Sprintf("⚠ BREACHES FOUND for %s (%d records)\n\n", result.Target, len(result.Breaches)))
 
 	for _, b := range result.Breaches {
 		sb.WriteString(fmt.Sprintf("  [%s] %s", b.Source, b.Name))
@@ -536,43 +702,36 @@ func FormatBreachResult(result BreachResult) string {
 			sb.WriteString(fmt.Sprintf(" — PASSWORD: %s", b.Password))
 		}
 		if b.Hash != "" {
-			sb.WriteString(fmt.Sprintf(" — HASH: %s", b.Hash[:min(16, len(b.Hash))]+"..."))
+			h := b.Hash
+			if len(h) > 16 {
+				h = h[:16] + "..."
+			}
+			sb.WriteString(fmt.Sprintf(" — HASH: %s", h))
 		}
 		sb.WriteString("\n")
 	}
-
 	return sb.String()
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-func detectBreachTargetType(target string) string {
+// DetectTargetType returns "email", "domain", or "phone".
+func DetectTargetType(target string) string {
+	if strings.HasPrefix(target, "+") {
+		return "phone"
+	}
 	if strings.Contains(target, "@") {
 		return "email"
 	}
-	if strings.Contains(target, ".") {
-		return "domain"
-	}
-	return "username"
+	return "domain"
 }
 
-func getLocalDBPath() string {
+// GetLocalDBPath returns path to local breach SQLite database.
+func GetLocalDBPath() string {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".cybermind", "breach")
 	os.MkdirAll(dir, 0700)
 	return filepath.Join(dir, "breaches.db")
-}
-
-func getHIBPKey() string {
-	return os.Getenv("HIBP_API_KEY")
-}
-
-func getIntelXKey() string {
-	return os.Getenv("INTELX_API_KEY")
-}
-
-func getBreachDirKey() string {
-	return os.Getenv("BREACHDIR_API_KEY")
 }
 
 func isHex(s string) bool {
@@ -584,7 +743,7 @@ func isHex(s string) bool {
 	return true
 }
 
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}

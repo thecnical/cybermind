@@ -17,6 +17,7 @@ import (
 	"cybermind-cli/abhimanyu"
 	"cybermind-cli/api"
 	"cybermind-cli/bizlogic"
+	"cybermind-cli/breach"
 	"cybermind-cli/brain"
 	"cybermind-cli/hunt"
 	"cybermind-cli/recon"
@@ -186,7 +187,9 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /portscan <target>") + d.Render("    → port scan + netstat analysis"))
 	fmt.Println(g.Render("  cybermind /osint <domain>") + d.Render("       → DNS + Shodan OSINT (free, no key)"))
 	fmt.Println(g.Render("  cybermind /breach <email|domain>") + d.Render("  → breach intelligence (HIBP + LeakCheck + IntelX)"))
+	fmt.Println(g.Render("  cybermind /breach +91XXXXXXXXXX") + d.Render("    → WhatsApp OSINT (name, about, photo)"))
 	fmt.Println(g.Render("  cybermind /breach --index /dump.txt") + d.Render(" → index local breach dump to SQLite"))
+	fmt.Println(g.Render("  cybermind /breach --setup") + d.Render("          → save RapidAPI key (BreachDirectory + WhatsApp)"))
 	fmt.Println(g.Render("  cybermind /locate <ip|domain|file>") + d.Render(" → geolocation (IP/EXIF/WiFi/Social)"))
 	fmt.Println(g.Render("  cybermind /payload <os> <arch>") + d.Render("  → AI payload generator (no msfvenom)"))
 	fmt.Println(g.Render("  cybermind /cve <CVE-ID>") + d.Render("         → CVE intelligence from NVD"))
@@ -3285,6 +3288,34 @@ rm -f /tmp/evilginx2.tar.gz`)
 		}
 		fmt.Println()
 
+		// ── RapidAPI key setup (BreachDirectory + WhatsApp OSINT) ────────────
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🔑 Breach Intelligence Setup (RapidAPI)"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  BreachDirectory + WhatsApp OSINT require a RapidAPI key."))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Get your free key: rapidapi.com → Apps → default-application → X-RapidAPI-Key"))
+		fmt.Println()
+
+		existingKey := breach.GetRapidAPIKey()
+		if existingKey != "" {
+			masked := existingKey[:min(8, len(existingKey))] + strings.Repeat("•", 20)
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ RapidAPI key already configured: " + masked))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  To update: cybermind /breach --setup"))
+		} else {
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Enter RapidAPI Key (press Enter to skip): "))
+			var rapidKey string
+			fmt.Scanln(&rapidKey)
+			rapidKey = strings.TrimSpace(rapidKey)
+			if rapidKey != "" {
+				if err := breach.SaveRapidAPIKey(rapidKey); err != nil {
+					fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ Failed to save key: " + err.Error()))
+				} else {
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ RapidAPI key saved — BreachDirectory + WhatsApp OSINT enabled"))
+				}
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Skipped. Run: cybermind /breach --setup  to add later"))
+			}
+		}
+		fmt.Println()
+
 	case "/abhimanyu":
 		// Abhimanyu Mode — standalone exploit engine
 		if runtime.GOOS != "linux" {
@@ -4150,11 +4181,12 @@ rm -f /tmp/evilginx2.tar.gz`)
 	case "/breach":
 		// Breach Intelligence — works on all OS (API-based)
 		if len(args) < 2 {
-			printError("Usage: cybermind /breach <email|domain>")
-			printError("       cybermind /breach --index /path/to/dump.txt")
-			printError("       cybermind /breach --keys  (configure API keys)")
+			printError("Usage: cybermind /breach <email|domain|+phone>")
+			printError("       cybermind /breach --setup              (save RapidAPI key)")
+			printError("       cybermind /breach --index /path/dump.txt (index local dump)")
 			printError("Examples:")
 			printError("  cybermind /breach user@gmail.com")
+			printError("  cybermind /breach +91XXXXXXXXXX")
 			printError("  cybermind /breach @company.com")
 			printError("  cybermind /breach --index /tmp/linkedin_dump.txt")
 			os.Exit(1)
@@ -4162,8 +4194,11 @@ rm -f /tmp/evilginx2.tar.gz`)
 		if err := storage.Load(); err != nil {
 			fmt.Println("Warning:", err)
 		}
-		if !localMode && !requireAPIKey() {
-			os.Exit(1)
+		// --setup doesn't need API key
+		if args[1] != "--setup" {
+			if !localMode && !requireAPIKey() {
+				os.Exit(1)
+			}
 		}
 		runBreachCheck(args[1:], localMode)
 

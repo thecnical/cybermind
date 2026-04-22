@@ -1296,44 +1296,95 @@ func runBreachCheck(args []string, localMode bool) {
 		return
 	}
 
-	// Handle --keys flag (show API key setup instructions)
-	if args[0] == "--keys" {
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔑 Breach API Keys Setup"))
+	// Handle --setup flag (save RapidAPI key)
+	if args[0] == "--setup" {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔑 Breach Intelligence Setup"))
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  HIBP API Key (optional — free tier works without key):"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  1. Get key: https://haveibeenpwned.com/API/Key"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  2. export HIBP_API_KEY=your_key_here"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Your RapidAPI key gives access to:"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ BreachDirectory — email:password breach lookup"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ WhatsApp OSINT — phone number intelligence"))
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  IntelX API Key (free tier available):"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  1. Register: https://intelx.io/signup"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  2. export INTELX_API_KEY=your_key_here"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Get your key: rapidapi.com → Dashboard → Apps → default-application → X-RapidAPI-Key"))
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  BreachDirectory API Key (free tier available):"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  1. Register: https://breachdirectory.org"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  2. export BREACHDIR_API_KEY=your_key_here"))
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Add to ~/.bashrc or ~/.zshrc for persistence"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  No keys needed — free tier works for basic checks"))
+		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Enter RapidAPI Key: "))
+		var key string
+		fmt.Scanln(&key)
+		key = strings.TrimSpace(key)
+		if key == "" {
+			printError("No key entered")
+			return
+		}
+		if err := breach.SaveRapidAPIKey(key); err != nil {
+			printError("Failed to save key: " + err.Error())
+			return
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ RapidAPI key saved to ~/.cybermind/config.json"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Test: cybermind /breach user@gmail.com"))
 		return
 	}
 
 	target := args[0]
 
-	// Show what we're checking
-	targetType := "email"
-	if strings.HasPrefix(target, "@") || (!strings.Contains(target, "@") && strings.Contains(target, ".")) {
-		targetType = "domain"
-	}
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		fmt.Sprintf("  Target: %s | Type: %s", target, targetType)))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  Sources: HIBP + LeakCheck + BreachDirectory + IntelX + Local"))
-	fmt.Println()
+	// Phone number → WhatsApp OSINT
+	if breach.DetectTargetType(target) == "phone" {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			fmt.Sprintf("  Target: %s | Type: phone → WhatsApp OSINT", target)))
+		fmt.Println()
 
-	// Show API key status
-	hibpKey := "not set (free tier)"
-	if os.Getenv("HIBP_API_KEY") != "" {
-		hibpKey = "configured ✓"
+		rapidKey := breach.GetRapidAPIKey()
+		if rapidKey == "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				"  ⚠ RapidAPI key not set — run: cybermind /breach --setup"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				"  WhatsApp OSINT requires RapidAPI key (rapidapi.com)"))
+			return
+		}
+
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ WhatsApp OSINT lookup..."))
+		info, err := breach.CheckWhatsApp(target)
+		if err != nil {
+			printError("WhatsApp OSINT failed: " + err.Error())
+		} else if info != nil && info.Found {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
+				"  ✓ WhatsApp account found!"))
+			if info.Name != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  Name:     " + info.Name))
+			}
+			if info.About != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  About:    " + info.About))
+			}
+			if info.Business {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Type:     Business Account"))
+			}
+			if info.Photo != "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Photo:    " + info.Photo))
+			}
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				"  No WhatsApp account found for " + target))
+		}
+
+		// Also try full OSINT fetch
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Full OSINT fetch..."))
+		osintData, err := breach.CheckWhatsAppFetchOSINT(target)
+		if err == nil && osintData != "" && osintData != "{}" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("  " + func() string { n := len(osintData); if n > 500 { n = 500 }; return osintData[:n] }()))
+		}
+		return
+	}
+	// Determine target type
+tType := breach.DetectTargetType(target)
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+fmt.Sprintf("  Target: %s | Type: %s", target, tType)))
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+"  Sources: HIBP + BreachDirectory (RapidAPI) + LeakCheck + Local SQLite"))
+fmt.Println()
+
+// Show API key status
+hibpKey := "free tier (breach names only)"
+if os.Getenv("HIBP_API_KEY") != "" {
+hibpKey = "configured ✓ (full details)"
 	}
 	intelxKey := "not set (free tier)"
 	if os.Getenv("INTELX_API_KEY") != "" {
