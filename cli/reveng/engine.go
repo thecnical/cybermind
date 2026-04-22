@@ -209,6 +209,27 @@ func getPhasesForMode(mode string) []int {
 func updateRevEngContext(tool, output string, ctx *RevEngContext) {
 	lines := strings.Split(output, "\n")
 	switch tool {
+	case "sha256sum":
+		// Parse: "abc123...  filename" → extract hash
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if len(line) >= 64 {
+				parts := strings.Fields(line)
+				if len(parts) >= 1 && len(parts[0]) == 64 {
+					allHex := true
+					for _, c := range parts[0] {
+						if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+							allHex = false
+							break
+						}
+					}
+					if allHex {
+						ctx.SHA256Hash = parts[0]
+					}
+				}
+			}
+		}
+
 	case "file":
 		ctx.FileType = strings.TrimSpace(output)
 		lower := strings.ToLower(output)

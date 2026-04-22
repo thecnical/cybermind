@@ -110,13 +110,44 @@ var locateRegistry = []LocateToolSpec{
 	// ══════════════════════════════════════════════════════════════════════════
 
 	{
-		// tshark — capture WiFi SSIDs → wigle.net lookup
+		// tshark — capture WiFi SSIDs → Google Geolocation API lookup
 		Name: "tshark", Level: 3, Timeout: 60,
 		InstallHint: "sudo apt install tshark -y",
 		InstallCmd:  "sudo apt install tshark -y",
 		UseShell:    true,
 		ShellCmd: func(target string, ctx *LocateContext) string {
-			return `timeout 30 tshark -i wlan0 -Y "wlan.fc.type_subtype == 0x04" -T fields -e wlan.ssid 2>/dev/null | sort -u | head -50`
+			// Capture probe requests (SSIDs) from nearby WiFi networks
+			// Then query Google Geolocation API with collected BSSIDs
+			return `
+IFACE=$(iw dev 2>/dev/null | awk '/Interface/{print $2}' | head -1)
+if [ -z "$IFACE" ]; then IFACE="wlan0"; fi
+echo "[*] Scanning WiFi on $IFACE for 30 seconds..."
+timeout 30 tshark -i "$IFACE" -Y "wlan.fc.type_subtype == 0x08 || wlan.fc.type_subtype == 0x04 || wlan.fc.type_subtype == 0x05" \
+  -T fields -e wlan.ssid -e wlan.bssid -e radiotap.dbm_antsignal 2>/dev/null | \
+  sort -u | grep -v "^$" | head -100
+`
+		},
+		BuildArgs: func(target string, ctx *LocateContext) []string { return nil },
+	},
+	{
+		// nmcli — scan WiFi networks (no monitor mode needed)
+		Name: "nmcli", Level: 3, Timeout: 30,
+		InstallHint: "sudo apt install network-manager -y",
+		InstallCmd:  "sudo apt install network-manager -y",
+		UseShell:    true,
+		ShellCmd: func(target string, ctx *LocateContext) string {
+			return `nmcli -t -f SSID,BSSID,SIGNAL,FREQ,SECURITY dev wifi list 2>/dev/null | head -50`
+		},
+		BuildArgs: func(target string, ctx *LocateContext) []string { return nil },
+	},
+	{
+		// iwlist — scan WiFi (works without monitor mode)
+		Name: "iwlist", Level: 3, Timeout: 30,
+		InstallHint: "sudo apt install wireless-tools -y",
+		InstallCmd:  "sudo apt install wireless-tools -y",
+		UseShell:    true,
+		ShellCmd: func(target string, ctx *LocateContext) string {
+			return `IFACE=$(iw dev 2>/dev/null | awk '/Interface/{print $2}' | head -1); [ -z "$IFACE" ] && IFACE="wlan0"; sudo iwlist "$IFACE" scan 2>/dev/null | grep -E "ESSID|Address|Signal|Frequency" | head -100`
 		},
 		BuildArgs: func(target string, ctx *LocateContext) []string { return nil },
 	},

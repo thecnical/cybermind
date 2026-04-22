@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -192,6 +193,68 @@ func ipinfoLookup(ip string) string {
 	return strings.Join(parts, " | ")
 }
 
+// googleGeolocate queries Google Geolocation API with WiFi BSSIDs for real triangulation.
+// Free tier: 1 request/second. Key from: console.cloud.google.com → Geolocation API
+func googleGeolocate(bssids []string) string {
+	apiKey := os.Getenv("GOOGLE_GEOLOCATION_KEY")
+	if apiKey == "" {
+		// Try config file
+		home, _ := os.UserHomeDir()
+		data, err := os.ReadFile(filepath.Join(home, ".cybermind", "config.json"))
+		if err == nil {
+			var cfg map[string]interface{}
+			if json.Unmarshal(data, &cfg) == nil {
+				if k, ok := cfg["google_geolocation_key"].(string); ok {
+					apiKey = k
+				}
+			}
+		}
+	}
+	if apiKey == "" || len(bssids) == 0 {
+		return ""
+	}
+
+	// Build WiFi access points array
+	type wifiAP struct {
+		MacAddress string `json:"macAddress"`
+	}
+	type geoReq struct {
+		WifiAccessPoints []wifiAP `json:"wifiAccessPoints"`
+	}
+	req := geoReq{}
+	for _, bssid := range bssids {
+		// Normalize BSSID format: xx:xx:xx:xx:xx:xx
+		clean := strings.TrimSpace(bssid)
+		if len(clean) >= 17 {
+			req.WifiAccessPoints = append(req.WifiAccessPoints, wifiAP{MacAddress: clean[:17]})
+		}
+	}
+	if len(req.WifiAccessPoints) == 0 {
+		return ""
+	}
+
+	body, _ := json.Marshal(req)
+	apiURL := fmt.Sprintf("https://www.googleapis.com/geolocation/v1/geolocate?key=%s", apiKey)
+	resp, err := http.Post(apiURL, "application/json", strings.NewReader(string(body)))
+	if err != nil || resp.StatusCode != 200 {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Location struct {
+			Lat float64 `json:"lat"`
+			Lng float64 `json:"lng"`
+		} `json:"location"`
+		Accuracy float64 `json:"accuracy"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return ""
+	}
+	return fmt.Sprintf("Google WiFi Geolocation: %.6f,%.6f (accuracy: %.0fm)",
+		result.Location.Lat, result.Location.Lng, result.Accuracy)
+}
+
 // opencellIDLookup queries OpenCellID API for cell tower location.
 func opencellIDLookup(mcc, mnc, lac, cellID string) string {
 	client := &http.Client{Timeout: 8 * time.Second}
@@ -238,10 +301,29 @@ func updateLocateContext(tool, output string, ctx *LocateContext) {
 				ctx.ExifGPS += strings.TrimSpace(line) + "\n"
 			}
 		}
-	case "tshark", "kismet":
+	case "tshark", "kismet", "nmcli", "iwlist":
+		var bssids []string
 		for _, line := range strings.Split(output, "\n") {
-			if strings.Contains(line, "SSID") || strings.Contains(line, "ssid") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			// Extract SSID
+			if strings.Contains(line, "ESSID:") || strings.Contains(line, "SSID") {
 				ctx.WiFiSSIDs = append(ctx.WiFiSSIDs, strings.TrimSpace(line))
+			}
+			// Extract BSSID/MAC for Google Geolocation
+			// Format: XX:XX:XX:XX:XX:XX
+			for _, field := range strings.Fields(line) {
+				if len(field) == 17 && strings.Count(field, ":") == 5 {
+					bssids = append(bssids, field)
+				}
+			}
+		}
+		// Real WiFi triangulation via Google Geolocation API
+		if len(bssids) > 0 {
+			if geoResult := googleGeolocate(bssids); geoResult != "" {
+				ctx.Coordinates = append(ctx.Coordinates, geoResult)
 			}
 		}
 	case "grgsm_livemon":

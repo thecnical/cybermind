@@ -921,15 +921,33 @@ var huntRegistry = []HuntToolSpec{
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			u := target
 			if len(ctx.LiveURLs) > 0 {
-				u = ctx.LiveURLs[0]
+				// Find a URL with parameters — best candidate for SSRF
+				for _, lu := range ctx.LiveURLs {
+					if strings.Contains(lu, "=") {
+						u = lu
+						break
+					}
+				}
+				if u == target {
+					u = ctx.LiveURLs[0]
+				}
 			}
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
+			// Auto-generate HTTP request file for ssrfmap
+			reqFile := "/tmp/cybermind_ssrf_request.txt"
+			host := strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+			if idx := strings.Index(host, "/"); idx > 0 {
+				host = host[:idx]
+			}
+			reqContent := fmt.Sprintf("GET %s HTTP/1.1\nHost: %s\nUser-Agent: Mozilla/5.0\n\n",
+				strings.TrimPrefix(u, "https://"+host), host)
+			os.WriteFile(reqFile, []byte(reqContent), 0600)
 			return []string{
-				"-r", "/tmp/cybermind_ssrf_request.txt",
+				"-r", reqFile,
 				"-p", "url",
-				"-m", "readfiles,portscan,networkscan",
+				"-m", "readfiles,portscan",
 				"--lhost", "127.0.0.1",
 				"--lport", "4444",
 			}
@@ -943,7 +961,13 @@ var huntRegistry = []HuntToolSpec{
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}
-				return []string{"-r", "/tmp/cybermind_ssrf_request.txt", "-p", "url", "-m", "readfiles"}
+				reqFile := "/tmp/cybermind_ssrf_request.txt"
+				host := strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+				if idx := strings.Index(host, "/"); idx > 0 {
+					host = host[:idx]
+				}
+				os.WriteFile(reqFile, []byte(fmt.Sprintf("GET / HTTP/1.1\nHost: %s\n\n", host)), 0600)
+				return []string{"-r", reqFile, "-p", "url", "-m", "readfiles"}
 			},
 		},
 	},
@@ -956,9 +980,19 @@ var huntRegistry = []HuntToolSpec{
 		DomainOnly:  true,
 		InstallHint: "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Find a URL with parameters — best SSTI candidate
 			u := target
-			if len(ctx.LiveURLs) > 0 {
-				u = ctx.LiveURLs[0]
+			for _, lu := range ctx.LiveURLs {
+				if strings.Contains(lu, "=") {
+					u = lu
+					break
+				}
+			}
+			for _, lu := range ctx.AllURLs {
+				if strings.Contains(lu, "=") {
+					u = lu
+					break
+				}
 			}
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u

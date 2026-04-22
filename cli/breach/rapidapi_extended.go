@@ -1,12 +1,14 @@
 ﻿package breach
 
 import (
+"bytes"
 "encoding/json"
 "fmt"
 "io"
 "net/http"
 "net/url"
 "os"
+"os/exec"
 "path/filepath"
 "strings"
 "sync"
@@ -86,50 +88,146 @@ URL      string
 Error    string
 }
 
-// CheckSocialMediaScanner checks username/email across all major platforms in one call.
-// Uses: social-media-scanner1.p.rapidapi.com
+// CheckSocialMediaScanner checks username across major platforms.
+// Uses sherlock CLI if available (real), falls back to direct HTTP checks.
 func CheckSocialMediaScanner(username string) ([]SocialMediaResult, error) {
-// Clean username — remove @ prefix
-u := strings.TrimPrefix(username, "@")
-if strings.Contains(u, "@") {
-u = strings.Split(u, "@")[0]
+	u := strings.TrimPrefix(username, "@")
+	if strings.Contains(u, "@") {
+		u = strings.Split(u, "@")[0]
+	}
+	if u == "" {
+		return nil, fmt.Errorf("empty username")
+	}
+
+	// Try sherlock CLI first — real tool, installed on Kali
+	if sherlockPath, err := exec.LookPath("sherlock"); err == nil {
+		out, runErr := runSocialCmd(30, sherlockPath, u, "--print-found", "--timeout", "10", "--no-color")
+		if runErr == nil && strings.TrimSpace(out) != "" {
+			return parseSherlock(u, out), nil
+		}
+	}
+
+	// Fallback: direct HTTP checks for top platforms (no API key needed)
+	return checkPlatformsDirect(u), nil
 }
 
-endpoint := fmt.Sprintf("https://social-media-scanner1.p.rapidapi.com/check?username=%s", url.QueryEscape(u))
-body, err := rapidAPIGet(endpoint, "social-media-scanner1.p.rapidapi.com")
-if err != nil {
-return nil, err
+// runSocialCmd runs a command with timeout for social media checks
+func runSocialCmd(timeoutSec int, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	cmd.Stdin = nil
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		return out.String(), err
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		return out.String(), nil
+	}
 }
 
-var raw map[string]interface{}
-if json.Unmarshal(body, &raw) != nil {
-return nil, nil
+// parseSherlock parses sherlock output into SocialMediaResult slice
+func parseSherlock(username, output string) []SocialMediaResult {
+	var results []SocialMediaResult
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "[+]") && strings.Contains(line, "http") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				platform := strings.TrimSpace(strings.TrimPrefix(parts[0], "[+]"))
+				profileURL := strings.TrimSpace(parts[1])
+				if strings.HasPrefix(profileURL, "//") {
+					profileURL = "https:" + profileURL
+				}
+				results = append(results, SocialMediaResult{
+					Platform: platform,
+					Username: username,
+					Found:    true,
+					URL:      profileURL,
+				})
+			}
+		}
+	}
+	return results
 }
 
-var results []SocialMediaResult
-platforms := []string{"instagram", "facebook", "twitter", "snapchat", "google", "microsoft", "tiktok", "linkedin", "github", "reddit"}
-for _, platform := range platforms {
-if val, ok := raw[platform]; ok {
-result := SocialMediaResult{Platform: platform, Username: u}
-switch v := val.(type) {
-case bool:
-result.Found = v
-case map[string]interface{}:
-if found, ok := v["found"].(bool); ok {
-result.Found = found
+// checkPlatformsDirect does direct HTTP GET checks for top platforms
+func checkPlatformsDirect(username string) []SocialMediaResult {
+	type platformCheck struct {
+		name string
+		url  string
+	}
+	platforms := []platformCheck{
+		{"GitHub", fmt.Sprintf("https://github.com/%s", username)},
+		{"Twitter/X", fmt.Sprintf("https://x.com/%s", username)},
+		{"Instagram", fmt.Sprintf("https://www.instagram.com/%s/", username)},
+		{"Reddit", fmt.Sprintf("https://www.reddit.com/user/%s", username)},
+		{"TikTok", fmt.Sprintf("https://www.tiktok.com/@%s", username)},
+		{"YouTube", fmt.Sprintf("https://www.youtube.com/@%s", username)},
+		{"Twitch", fmt.Sprintf("https://www.twitch.tv/%s", username)},
+		{"Pinterest", fmt.Sprintf("https://www.pinterest.com/%s/", username)},
+		{"Medium", fmt.Sprintf("https://medium.com/@%s", username)},
+		{"HackerOne", fmt.Sprintf("https://hackerone.com/%s", username)},
+	}
+
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+
+	type checkResult struct {
+		platform string
+		purl     string
+		found    bool
+	}
+	ch := make(chan checkResult, len(platforms))
+
+	for _, p := range platforms {
+		go func(pc platformCheck) {
+			req, err := http.NewRequest("GET", pc.url, nil)
+			if err != nil {
+				ch <- checkResult{pc.name, pc.url, false}
+				return
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Googlebot/2.1)")
+			resp, err := client.Do(req)
+			if err != nil {
+				ch <- checkResult{pc.name, pc.url, false}
+				return
+			}
+			resp.Body.Close()
+			found := resp.StatusCode == 200
+			if resp.StatusCode == 302 || resp.StatusCode == 301 {
+				loc := resp.Header.Get("Location")
+				found = !strings.Contains(loc, "login") && !strings.Contains(loc, "404") && !strings.Contains(loc, "signup")
+			}
+			ch <- checkResult{pc.name, pc.url, found}
+		}(p)
+	}
+
+	var results []SocialMediaResult
+	for range platforms {
+		r := <-ch
+		results = append(results, SocialMediaResult{
+			Platform: r.platform,
+			Username: username,
+			Found:    r.found,
+			URL:      r.purl,
+		})
+	}
+	return results
 }
-if profileURL, ok := v["url"].(string); ok {
-result.URL = profileURL
-}
-case string:
-result.Found = v != "" && v != "false" && v != "not found"
-result.URL = v
-}
-results = append(results, result)
-}
-}
-return results, nil
-}
+
 
 // CheckInstagram checks if email/username exists on Instagram
 func CheckInstagram(target string) (bool, string, error) {
