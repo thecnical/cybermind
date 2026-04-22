@@ -24,9 +24,45 @@
 
 *Created by [Chandan Pandey](https://github.com/thecnical)*
 
-**CyberMind is an open-source AI-powered offensive security CLI built for Kali Linux — featuring OMEGA Planning Mode (AI-first attack planning), a fully automated 20-tool recon pipeline, an 11-tool vulnerability hunt engine, and a full 6-phase Abhimanyu exploit mode. Built for penetration testers, bug bounty hunters, and red teamers.**
+**CyberMind is an open-source AI-powered offensive security CLI built for Kali Linux — featuring OMEGA Planning Mode (AI-first attack planning), a fully automated 20-tool recon pipeline, an 11-tool vulnerability hunt engine, a full 6-phase Abhimanyu exploit mode, OSINT Deep (45 tools, 9 phases), Reverse Engineering (30 tools), Breach Intelligence (HIBP + RapidAPI), and Geolocation (Level 1-5 SDR). Built for penetration testers, bug bounty hunters, and red teamers.**
 
 </div>
+
+---
+
+## 🆕 What's New in v4.3.0
+
+### 🔍 OSINT Deep — 45 Tools, 9 Phases
+```bash
+cybermind /osint-deep target.com          # domain OSINT
+cybermind /osint-deep user@gmail.com      # email + breach check
+cybermind /osint-deep johndoe             # username hunt (3000+ sites)
+cybermind /osint-deep +91XXXXXXXXXX       # phone OSINT
+cybermind /osint-deep "Company Name"      # company intel
+```
+
+### ⚙️ Reverse Engineering — 30 Tools, 6 Phases
+```bash
+cybermind /reveng /path/to/binary         # full RE pipeline
+cybermind /reveng binary --mode static    # static analysis only
+cybermind /reveng binary --mode malware   # malware analysis
+cybermind /reveng app.apk --mode mobile   # APK decompile
+```
+
+### 🔓 Breach Intelligence
+```bash
+cybermind /breach user@gmail.com          # HIBP + BreachDirectory + LeakCheck
+cybermind /breach +91XXXXXXXXXX           # WhatsApp OSINT (RapidAPI)
+cybermind /breach --setup                 # save RapidAPI key
+cybermind /breach --index /dump.txt       # index local breach dump
+```
+
+### 🌍 Geolocation
+```bash
+cybermind /locate 8.8.8.8                 # IP geolocation
+cybermind /locate photo.jpg               # EXIF GPS extraction
+cybermind /locate-advanced +91XXXXXXXXXX  # SDR cell tower (Pro plan)
+```
 
 ---
 
@@ -81,22 +117,31 @@ curl -sL https://cybermindcli1.vercel.app/install.sh | bash
 # 2. Save API key
 cybermind --key cp_live_xxxxx
 
-# 3. Install all tools (one time)
+# 3. Install all tools (one time) — also prompts for RapidAPI key
 cybermind /install-tools
 
-# 4. OMEGA Planning Mode — AI builds your attack plan
+# 4. OMEGA Planning Mode — Phase 0 OSINT + AI attack plan
 cybermind /plan target.com
 
-# 5. Deep recon (if manual control needed)
+# 5. Deep OSINT (standalone)
+cybermind /osint-deep target.com
+
+# 6. Breach check
+cybermind /breach user@target.com
+
+# 7. Deep recon
 cybermind /recon target.com
 
-# 6. Vulnerability hunt
+# 8. Vulnerability hunt
 cybermind /hunt target.com
 
-# 7. Exploit confirmed vulnerabilities (Elite plan)
+# 9. Reverse engineer a binary
+cybermind /reveng /path/to/binary
+
+# 10. Exploit confirmed vulnerabilities (Elite plan)
 cybermind /abhimanyu target.com
 
-# 8. Generate pentest report
+# 11. Generate pentest report
 cybermind report
 ```
 
