@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"bytes"
@@ -21,9 +21,13 @@ import (
 	"cybermind-cli/api"
 	"cybermind-cli/bizlogic"
 	"cybermind-cli/brain"
+	"cybermind-cli/breach"
 	"cybermind-cli/bugdetect"
 	"cybermind-cli/hunt"
 	"cybermind-cli/omega"
+	locatePkg "cybermind-cli/locate"
+	osintPkg "cybermind-cli/osint"
+	revengPkg "cybermind-cli/reveng"
 	"cybermind-cli/recon"
 	"cybermind-cli/sandbox"
 	"cybermind-cli/storage"
@@ -817,6 +821,442 @@ var _ = base64.StdEncoding
 var _ = filepath.Join
 var _ = exec.LookPath
 var _ = runtime.GOOS
+
+// ─── New Imports for OSINT/RevEng/Locate ─────────────────────────────────────
+// These are used by the new command handlers below.
+// Import them in the import block at the top of this file.
+
+// ─── OSINT Deep Command Handler ───────────────────────────────────────────────
+
+func runOSINTDeep(target string, requested []string, localMode bool) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔍 OSINT DEEP — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+
+	// Auto-detect target type
+	targetType := osintPkg.DetectTargetType(target)
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  ℹ  Target type: %s | Tools: %d available", targetType, len(osintPkg.OSINTToolNames()))))
+	fmt.Println()
+
+	result := osintPkg.RunOSINTDeep(target, requested, func(status osintPkg.OSINTStatus) {
+		switch status.Kind {
+		case osintPkg.OSINTRunning:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				fmt.Sprintf("  ⟳ %-18s running...", status.Tool)))
+		case osintPkg.OSINTDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  ✓ %-18s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case osintPkg.OSINTPartial:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  ⚡ %-18s partial output kept", status.Tool)))
+		case osintPkg.OSINTFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  ✗ %-18s failed — %s", status.Tool, status.Reason)))
+		case osintPkg.OSINTKindSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				fmt.Sprintf("  - %-18s skipped — %s", status.Tool, status.Reason)))
+		case osintPkg.OSINTRetry:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  ↻ %-18s %s", status.Tool, status.Reason)))
+		}
+	})
+
+	// Print summary
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  📋 OSINT Summary"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	if result.Context != nil {
+		ctx := result.Context
+		if len(ctx.EmailsFound) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  📧 Emails found:      %d", len(ctx.EmailsFound))))
+			for _, e := range ctx.EmailsFound[:min(5, len(ctx.EmailsFound))] {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("     → " + e))
+			}
+		}
+		if len(ctx.SubdomainsFound) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  🌐 Subdomains found:  %d", len(ctx.SubdomainsFound))))
+		}
+		if len(ctx.SocialProfiles) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  👤 Social profiles:   %d", len(ctx.SocialProfiles))))
+			for _, p := range ctx.SocialProfiles[:min(5, len(ctx.SocialProfiles))] {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("     → " + p))
+			}
+		}
+		if len(ctx.BreachesFound) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  🔓 BREACHES FOUND:    %d", len(ctx.BreachesFound))))
+			for _, b := range ctx.BreachesFound[:min(3, len(ctx.BreachesFound))] {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("     ⚠ " + b))
+			}
+		}
+		if len(ctx.EmployeesFound) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  👥 Employees found:   %d", len(ctx.EmployeesFound))))
+		}
+		if len(ctx.GitHubLeaks) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  🔑 GitHub leaks:      %d", len(ctx.GitHubLeaks))))
+		}
+	}
+
+	if len(result.Tools) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("  ✗ No OSINT tools produced output."))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Run: cybermind /doctor to install OSINT tools"))
+		return
+	}
+
+	// Build structured payload for dedicated API endpoint
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Sending to AI for OSINT analysis..."))
+
+	findings := make(map[string]string)
+	for _, tr := range result.Results {
+		if tr.Output != "" {
+			out := tr.Output
+			if len(out) > 5000 {
+				out = out[:5000] + "\n...[truncated]"
+			}
+			findings[tr.Tool] = out
+		}
+	}
+
+	combined := osintPkg.GetOSINTCombinedOutput(result)
+	if len(combined) > 50000 {
+		combined = combined[:50000] + "\n...[truncated]"
+	}
+
+	osintPayload := api.OSINTPayload{
+		Target:      target,
+		TargetType:  result.TargetType,
+		ToolsRun:    result.Tools,
+		Findings:    findings,
+		RawCombined: combined,
+	}
+	if result.Context != nil {
+		ctx := result.Context
+		osintPayload.EmailsFound = ctx.EmailsFound
+		osintPayload.SubdomainsFound = ctx.SubdomainsFound
+		osintPayload.EmployeesFound = ctx.EmployeesFound
+		osintPayload.SocialProfiles = ctx.SocialProfiles
+		osintPayload.BreachesFound = ctx.BreachesFound
+		osintPayload.GitHubLeaks = ctx.GitHubLeaks
+
+		// Run breach check on found emails (90% API + 10% local)
+		if len(ctx.EmailsFound) > 0 && !localMode {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  ⟳ Breach check on %d emails...", len(ctx.EmailsFound))))
+			checkEmails := ctx.EmailsFound
+			if len(checkEmails) > 5 {
+				checkEmails = checkEmails[:5] // limit to 5 to avoid rate limits
+			}
+			for _, email := range checkEmails {
+				breachResult := breach.CheckAll(email)
+				if len(breachResult.Breaches) > 0 {
+					formatted := breach.FormatBreachResult(breachResult)
+					ctx.BreachesFound = append(ctx.BreachesFound, formatted)
+					osintPayload.BreachesFound = append(osintPayload.BreachesFound, formatted)
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+						fmt.Sprintf("  ⚠ BREACH: %s — %d breaches found!", email, len(breachResult.Breaches))))
+				}
+			}
+		}
+	}
+
+	var aiResult string
+	var aiErr error
+	if localMode {
+		aiResult, aiErr = runLocalChat(combined, nil)
+	} else {
+		aiResult, aiErr = api.SendOSINTDeep(osintPayload)
+	}
+	if aiErr != nil {
+		printError("AI analysis failed: " + aiErr.Error())
+		return
+	}
+	clean := utils.StripMarkdown(aiResult)
+	printResult("🔍 OSINT Deep → "+target, clean)
+	_ = storage.AddEntry("/osint-deep "+target, clean)
+}
+
+// ─── Reverse Engineering Command Handler ──────────────────────────────────────
+
+func runRevEng(target, mode string, requested []string, localMode bool) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  ⚙️  REVERSE ENGINEERING — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  ℹ  Mode: %s | Tools: %d available", mode, len(revengPkg.RevEngToolNames()))))
+	fmt.Println()
+
+	result := revengPkg.RunRevEng(target, mode, requested, func(status revengPkg.RevEngStatus) {
+		switch status.Kind {
+		case revengPkg.RevEngRunning:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				fmt.Sprintf("  ⟳ %-18s running...", status.Tool)))
+		case revengPkg.RevEngDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  ✓ %-18s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case revengPkg.RevEngPartial:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  ⚡ %-18s partial", status.Tool)))
+		case revengPkg.RevEngFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  ✗ %-18s failed — %s", status.Tool, status.Reason)))
+		case revengPkg.RevEngKindSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				fmt.Sprintf("  - %-18s skipped — %s", status.Tool, status.Reason)))
+		case revengPkg.RevEngRetry:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  ↻ %-18s %s", status.Tool, status.Reason)))
+		}
+	})
+
+	// Print summary
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  ⚙️  RE Summary"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	if result.Context != nil {
+		ctx := result.Context
+		if ctx.FileType != "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+				fmt.Sprintf("  File type:     %s (%s %s)", ctx.FileType, ctx.Architecture, ctx.Bitness)))
+		}
+		secProps := []string{}
+		if ctx.PIE {
+			secProps = append(secProps, "PIE")
+		}
+		if ctx.NX {
+			secProps = append(secProps, "NX")
+		}
+		if ctx.Canary {
+			secProps = append(secProps, "Canary")
+		}
+		if ctx.RELRO != "" {
+			secProps = append(secProps, "RELRO="+ctx.RELRO)
+		}
+		if ctx.Stripped {
+			secProps = append(secProps, "Stripped")
+		}
+		if len(secProps) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+				"  Security:      "+strings.Join(secProps, " | ")))
+		}
+		if len(ctx.VulnFunctions) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  ⚠ Vuln funcs:  %s", strings.Join(ctx.VulnFunctions, ", "))))
+		}
+		if len(ctx.SuspiciousStrings) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  Suspicious:    %d strings found", len(ctx.SuspiciousStrings))))
+		}
+		if len(ctx.YARAMatches) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  🦠 YARA hits:  %d matches", len(ctx.YARAMatches))))
+		}
+		if len(ctx.ROPGadgets) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  ROP gadgets:   %d found", len(ctx.ROPGadgets))))
+		}
+		if ctx.SessionDir != "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				"  Session:       "+ctx.SessionDir))
+		}
+	}
+
+	if len(result.Tools) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("  ✗ No RE tools produced output."))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Run: cybermind /doctor to install RE tools"))
+		return
+	}
+
+	// Build structured payload for dedicated API endpoint
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Sending to AI for reverse engineering analysis..."))
+
+	findings := make(map[string]string)
+	for _, tr := range result.Results {
+		if tr.Output != "" {
+			out := tr.Output
+			if len(out) > 8000 {
+				out = out[:8000] + "\n...[truncated]"
+			}
+			findings[tr.Tool] = out
+		}
+	}
+
+	combined := revengPkg.GetRevEngCombinedOutput(result)
+	if len(combined) > 80000 {
+		combined = combined[:80000] + "\n...[truncated]"
+	}
+
+	revPayload := api.RevEngPayload{
+		Target:      target,
+		AnalysisMode: mode,
+		ToolsRun:    result.Tools,
+		Findings:    findings,
+		RawCombined: combined,
+	}
+	if result.Context != nil {
+		ctx := result.Context
+		revPayload.FileType = ctx.FileType
+		revPayload.Architecture = ctx.Architecture
+		revPayload.Bitness = ctx.Bitness
+		revPayload.PIE = ctx.PIE
+		revPayload.NX = ctx.NX
+		revPayload.Canary = ctx.Canary
+		revPayload.RELRO = ctx.RELRO
+		revPayload.Stripped = ctx.Stripped
+		revPayload.VulnFunctions = ctx.VulnFunctions
+		revPayload.YARAMatches = ctx.YARAMatches
+		revPayload.ROPGadgets = ctx.ROPGadgets
+		revPayload.SuspiciousStrings = ctx.SuspiciousStrings
+	}
+
+	var aiResult string
+	var aiErr error
+	if localMode {
+		aiResult, aiErr = runLocalChat(combined, nil)
+	} else {
+		aiResult, aiErr = api.SendRevEng(revPayload)
+	}
+	if aiErr != nil {
+		printError("AI analysis failed: " + aiErr.Error())
+		return
+	}
+	clean := utils.StripMarkdown(aiResult)
+	printResult("⚙️  RevEng → "+target, clean)
+	_ = storage.AddEntry("/reveng "+target, clean)
+}
+
+// ─── Locate Command Handler ───────────────────────────────────────────────────
+
+func runLocate(target string, advanced bool, localMode bool) {
+	label := "🌍 LOCATE"
+	if advanced {
+		label = "🛰️  LOCATE ADVANCED (SDR)"
+	}
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render("  "+label+" — "+target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	result := locatePkg.RunLocate(target, advanced, nil, func(status locatePkg.LocateStatus) {
+		switch status.Kind {
+		case locatePkg.LocateRunning:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				fmt.Sprintf("  ⟳ %-18s running...", status.Tool)))
+		case locatePkg.LocateDone:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+				fmt.Sprintf("  ✓ %-18s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+		case locatePkg.LocateFailed:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  ✗ %-18s failed", status.Tool)))
+		case locatePkg.LocateKindSkipped:
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				fmt.Sprintf("  - %-18s skipped — %s", status.Tool, status.Reason)))
+		}
+	})
+
+	// Print findings
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render("  🌍 Location Findings"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	if result.Context != nil {
+		ctx := result.Context
+		if ctx.City != "" || ctx.Country != "" {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render(
+				fmt.Sprintf("  📍 Location:   %s, %s", ctx.City, ctx.Country)))
+		}
+		if ctx.ISP != "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+				"  🏢 ISP/Org:    "+ctx.ISP))
+		}
+		if len(ctx.Coordinates) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+				"  🗺️  GPS:        "+strings.Join(ctx.Coordinates, " | ")))
+		}
+		if ctx.ExifGPS != "" {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+				"  📸 EXIF GPS:   "+strings.TrimSpace(ctx.ExifGPS)))
+		}
+		if len(ctx.WiFiSSIDs) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  📶 WiFi SSIDs: %d captured", len(ctx.WiFiSSIDs))))
+		}
+		if len(ctx.CellTowers) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  📡 Cell towers: %d captured", len(ctx.CellTowers))))
+		}
+	}
+
+	if len(result.Tools) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("  ✗ No location data found."))
+		return
+	}
+
+	// AI analysis
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AI geolocation analysis..."))
+
+	findings := make(map[string]string)
+	for _, tr := range result.Results {
+		if tr.Output != "" {
+			out := tr.Output
+			if len(out) > 3000 {
+				out = out[:3000] + "\n...[truncated]"
+			}
+			findings[tr.Tool] = out
+		}
+	}
+
+	combined := locatePkg.GetLocateCombinedOutput(result)
+	if len(combined) > 20000 {
+		combined = combined[:20000] + "\n...[truncated]"
+	}
+
+	locPayload := api.LocatePayload{
+		Target:      target,
+		TargetType:  locatePkg.DetectLocateTargetType(target),
+		ToolsRun:    result.Tools,
+		Findings:    findings,
+		RawCombined: combined,
+	}
+	if result.Context != nil {
+		ctx := result.Context
+		locPayload.Coordinates = ctx.Coordinates
+		locPayload.City = ctx.City
+		locPayload.Country = ctx.Country
+		locPayload.ISP = ctx.ISP
+		locPayload.ExifGPS = ctx.ExifGPS
+		locPayload.WiFiSSIDs = ctx.WiFiSSIDs
+		locPayload.CellTowers = ctx.CellTowers
+	}
+
+	var aiResult string
+	var aiErr error
+	if localMode {
+		aiResult, aiErr = runLocalChat(combined, nil)
+	} else {
+		aiResult, aiErr = api.SendLocate(locPayload)
+	}
+	if aiErr != nil {
+		printError("AI analysis failed: " + aiErr.Error())
+		return
+	}
+	clean := utils.StripMarkdown(aiResult)
+	printResult("🌍 Locate → "+target, clean)
+	_ = storage.AddEntry("/locate "+target, clean)
+}
 
 // ─── OMEGA Agentic Brain Loop ─────────────────────────────────────────────────
 
@@ -2789,6 +3229,44 @@ func runOmegaPlan(target string, localMode bool) {
 	}
 	fmt.Println()
 
+
+// -- STEP 3.5: Phase 0 OSINT Deep (passive intel before touching target) --
+fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔍 PHASE 0 — OSINT DEEP"))
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("-", 60)))
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Passive intel: subfinder, amass, theHarvester, sherlock, h8mail, spiderfoot"))
+fmt.Println()
+osintPhase0Result := osintPkg.RunOSINTDeep(target, nil, func(status osintPkg.OSINTStatus) {
+switch status.Kind {
+case osintPkg.OSINTRunning:
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(fmt.Sprintf("  o [OSINT] %-16s running...", status.Tool)))
+case osintPkg.OSINTDone:
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  v [OSINT] %-16s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+case osintPkg.OSINTFailed:
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(fmt.Sprintf("  x [OSINT] %-16s failed", status.Tool)))
+case osintPkg.OSINTKindSkipped:
+}
+})
+if osintPhase0Result.Context != nil {
+ctx0 := osintPhase0Result.Context
+fmt.Println()
+if len(ctx0.SubdomainsFound) > 0 {
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  v Subdomains: %d found", len(ctx0.SubdomainsFound))))
+}
+if len(ctx0.EmailsFound) > 0 {
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  v Emails: %d found", len(ctx0.EmailsFound))))
+}
+if len(ctx0.BreachesFound) > 0 {
+fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(fmt.Sprintf("  ! BREACHES: %d found - credential stuffing possible!", len(ctx0.BreachesFound))))
+}
+if len(ctx0.SocialProfiles) > 0 {
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(fmt.Sprintf("  v Social profiles: %d found", len(ctx0.SocialProfiles))))
+}
+if len(ctx0.EmployeesFound) > 0 {
+fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(fmt.Sprintf("  v Employees: %d found", len(ctx0.EmployeesFound))))
+}
+fmt.Println()
+}
+_ = osintPhase0Result
 	// ── STEP 4: Deep passive target intelligence ──────────────────────────
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🧠 DEEP TARGET INTELLIGENCE"))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))

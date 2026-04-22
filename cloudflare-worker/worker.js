@@ -83,6 +83,82 @@ export default {
       }
     }
 
+    // ── /osint-deep — proxy to Render, edge fallback with structured prompt ──
+    if (path === "/osint-deep" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const renderResult = await tryRender(path, body, request, 20000);
+        if (renderResult) {
+          return new Response(renderResult.body, {
+            status: renderResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        // Fallback: route to /chat with structured prompt
+        const prompt = buildOSINTPrompt(body);
+        const chatResult = await tryRender("/chat", { prompt, messages: [] }, request, 20000);
+        if (chatResult) {
+          return new Response(chatResult.body, {
+            status: chatResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        return Response.json({ success: false, error: "Backend unavailable" }, { status: 503, headers: corsHeaders });
+      } catch (e) {
+        return Response.json({ success: false, error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // ── /reveng — proxy to Render, edge fallback ──────────────────────────
+    if (path === "/reveng" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const renderResult = await tryRender(path, body, request, 20000);
+        if (renderResult) {
+          return new Response(renderResult.body, {
+            status: renderResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const prompt = buildRevEngPrompt(body);
+        const chatResult = await tryRender("/chat", { prompt, messages: [] }, request, 20000);
+        if (chatResult) {
+          return new Response(chatResult.body, {
+            status: chatResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        return Response.json({ success: false, error: "Backend unavailable" }, { status: 503, headers: corsHeaders });
+      } catch (e) {
+        return Response.json({ success: false, error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // ── /locate — proxy to Render, edge fallback ──────────────────────────
+    if (path === "/locate" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const renderResult = await tryRender(path, body, request, 15000);
+        if (renderResult) {
+          return new Response(renderResult.body, {
+            status: renderResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const prompt = buildLocatePrompt(body);
+        const chatResult = await tryRender("/chat", { prompt, messages: [] }, request, 15000);
+        if (chatResult) {
+          return new Response(chatResult.body, {
+            status: chatResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        return Response.json({ success: false, error: "Backend unavailable" }, { status: 503, headers: corsHeaders });
+      } catch (e) {
+        return Response.json({ success: false, error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
     // ── All other routes — proxy to Render ───────────────────────────────
     try {
       const renderURL = RENDER_BACKEND + path + url.search;
@@ -180,4 +256,52 @@ async function tryRender(path, body, originalRequest, timeoutMs) {
   } catch {
     return null;
   }
+}
+
+// buildOSINTPrompt — builds AI prompt from OSINT payload for edge fallback
+function buildOSINTPrompt(p) {
+  let prompt = `OSINT Deep Scan for: ${p.target} (type: ${p.target_type})\n`;
+  prompt += `Tools: ${(p.tools_run || []).join(", ")}\n\n`;
+  if (p.emails_found?.length) prompt += `Emails: ${p.emails_found.slice(0,10).join(", ")}\n`;
+  if (p.subdomains_found?.length) prompt += `Subdomains: ${p.subdomains_found.length} found\n`;
+  if (p.social_profiles?.length) prompt += `Social profiles:\n${p.social_profiles.slice(0,5).join("\n")}\n`;
+  if (p.breaches_found?.length) prompt += `BREACHES FOUND:\n${p.breaches_found.slice(0,5).join("\n")}\n`;
+  if (p.employees_found?.length) prompt += `Employees: ${p.employees_found.length} found\n`;
+  if (p.github_leaks?.length) prompt += `GitHub leaks: ${p.github_leaks.length}\n`;
+  const raw = (p.raw || "").slice(0, 20000);
+  if (raw) prompt += `\nFindings:\n${raw}`;
+  prompt += "\n\nProvide: 1) Digital footprint summary 2) Attack surface 3) Breach/credential risk 4) Social engineering vectors 5) Pentest next steps 6) MITRE ATT&CK mapping";
+  return prompt;
+}
+
+// buildRevEngPrompt — builds AI prompt from RevEng payload for edge fallback
+function buildRevEngPrompt(p) {
+  let prompt = `Reverse Engineering Analysis for: ${p.target}\n`;
+  prompt += `Mode: ${p.analysis_mode} | File: ${p.file_type} | Arch: ${p.architecture} ${p.bitness}\n`;
+  prompt += `Security: PIE=${p.pie} NX=${p.nx} Canary=${p.canary} RELRO=${p.relro} Stripped=${p.stripped}\n`;
+  if (p.vuln_functions?.length) prompt += `Vulnerable functions: ${p.vuln_functions.join(", ")}\n`;
+  if (p.yara_matches?.length) prompt += `YARA matches: ${p.yara_matches.length}\n`;
+  if (p.rop_gadgets?.length) prompt += `ROP gadgets: ${p.rop_gadgets.length}\n`;
+  if (p.suspicious_strings?.length) prompt += `Suspicious strings:\n${p.suspicious_strings.slice(0,10).join("\n")}\n`;
+  prompt += `Tools: ${(p.tools_run || []).join(", ")}\n`;
+  const raw = (p.raw || "").slice(0, 40000);
+  if (raw) prompt += `\nAnalysis:\n${raw}`;
+  prompt += "\n\nProvide: 1) Binary purpose 2) Vulnerabilities (BOF, format string, UAF) 3) Exploit approach (ROP, shellcode) 4) Malware indicators 5) CVEs for libraries 6) Key function analysis";
+  return prompt;
+}
+
+// buildLocatePrompt — builds AI prompt from Locate payload for edge fallback
+function buildLocatePrompt(p) {
+  let prompt = `Geolocation Analysis for: ${p.target} (type: ${p.target_type})\n`;
+  if (p.city || p.country) prompt += `Location: ${p.city}, ${p.country}\n`;
+  if (p.isp) prompt += `ISP: ${p.isp}\n`;
+  if (p.coordinates?.length) prompt += `GPS: ${p.coordinates.join(" | ")}\n`;
+  if (p.exif_gps) prompt += `EXIF GPS: ${p.exif_gps}\n`;
+  if (p.wifi_ssids?.length) prompt += `WiFi SSIDs: ${p.wifi_ssids.length} captured\n`;
+  if (p.cell_towers?.length) prompt += `Cell towers: ${p.cell_towers.length} captured\n`;
+  prompt += `Tools: ${(p.tools_run || []).join(", ")}\n`;
+  const raw = (p.raw || "").slice(0, 10000);
+  if (raw) prompt += `\nData:\n${raw}`;
+  prompt += "\n\nProvide: 1) Physical location summary 2) Network infrastructure 3) Attack surface 4) Privacy exposure 5) Follow-up actions";
+  return prompt;
 }

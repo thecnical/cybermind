@@ -2371,3 +2371,167 @@ func IsCyberMindLocalAvailable() bool {
 	resp.Body.Close()
 	return resp.StatusCode == 200
 }
+
+// ─── New Feature API Payloads + Send Functions ────────────────────────────────
+
+// OSINTPayload is the structured payload sent to /osint-deep for AI analysis.
+type OSINTPayload struct {
+Target          string            `json:"target"`
+TargetType      string            `json:"target_type"`
+ToolsRun        []string          `json:"tools_run"`
+Findings        map[string]string `json:"findings"`
+EmailsFound     []string          `json:"emails_found"`
+SubdomainsFound []string          `json:"subdomains_found"`
+EmployeesFound  []string          `json:"employees_found"`
+SocialProfiles  []string          `json:"social_profiles"`
+BreachesFound   []string          `json:"breaches_found"`
+GitHubLeaks     []string          `json:"github_leaks"`
+RawCombined     string            `json:"raw"`
+}
+
+// RevEngPayload is the structured payload sent to /reveng for AI analysis.
+type RevEngPayload struct {
+Target            string            `json:"target"`
+AnalysisMode      string            `json:"analysis_mode"`
+FileType          string            `json:"file_type"`
+Architecture      string            `json:"architecture"`
+Bitness           string            `json:"bitness"`
+Stripped          bool              `json:"stripped"`
+PIE               bool              `json:"pie"`
+NX                bool              `json:"nx"`
+Canary            bool              `json:"canary"`
+RELRO             string            `json:"relro"`
+ToolsRun          []string          `json:"tools_run"`
+Findings          map[string]string `json:"findings"`
+VulnFunctions     []string          `json:"vuln_functions"`
+YARAMatches       []string          `json:"yara_matches"`
+ROPGadgets        []string          `json:"rop_gadgets"`
+SuspiciousStrings []string          `json:"suspicious_strings"`
+RawCombined       string            `json:"raw"`
+}
+
+// LocatePayload is the structured payload sent to /locate for AI analysis.
+type LocatePayload struct {
+Target      string            `json:"target"`
+TargetType  string            `json:"target_type"`
+ToolsRun    []string          `json:"tools_run"`
+Findings    map[string]string `json:"findings"`
+Coordinates []string          `json:"coordinates"`
+City        string            `json:"city"`
+Country     string            `json:"country"`
+ISP         string            `json:"isp"`
+ExifGPS     string            `json:"exif_gps"`
+WiFiSSIDs   []string          `json:"wifi_ssids"`
+CellTowers  []string          `json:"cell_towers"`
+RawCombined string            `json:"raw"`
+}
+
+// SendOSINTDeep sends OSINT findings to backend AI for deep analysis.
+// Falls back to /chat with structured prompt if dedicated endpoint not available.
+func SendOSINTDeep(payload OSINTPayload) (string, error) {
+result, err := post("/osint-deep", payload)
+if err == nil {
+return result, nil
+}
+// Fallback: use /chat with structured prompt
+var sb strings.Builder
+sb.WriteString("OSINT Deep Scan for: " + payload.Target + " (type: " + payload.TargetType + ")\n")
+sb.WriteString("Tools: " + strings.Join(payload.ToolsRun, ", ") + "\n\n")
+if len(payload.EmailsFound) > 0 {
+n := len(payload.EmailsFound)
+if n > 10 { n = 10 }
+sb.WriteString("Emails: " + strings.Join(payload.EmailsFound[:n], ", ") + "\n")
+}
+if len(payload.SubdomainsFound) > 0 {
+sb.WriteString(fmt.Sprintf("Subdomains: %d found\n", len(payload.SubdomainsFound)))
+}
+if len(payload.SocialProfiles) > 0 {
+n := len(payload.SocialProfiles)
+if n > 5 { n = 5 }
+sb.WriteString("Social profiles:\n" + strings.Join(payload.SocialProfiles[:n], "\n") + "\n")
+}
+if len(payload.BreachesFound) > 0 {
+n := len(payload.BreachesFound)
+if n > 5 { n = 5 }
+sb.WriteString("BREACHES FOUND:\n" + strings.Join(payload.BreachesFound[:n], "\n") + "\n")
+}
+if len(payload.EmployeesFound) > 0 {
+sb.WriteString(fmt.Sprintf("Employees: %d found\n", len(payload.EmployeesFound)))
+}
+if len(payload.GitHubLeaks) > 0 {
+sb.WriteString(fmt.Sprintf("GitHub leaks: %d\n", len(payload.GitHubLeaks)))
+}
+raw := payload.RawCombined
+if len(raw) > 20000 { raw = raw[:20000] + "\n...[truncated]" }
+if raw != "" { sb.WriteString("\nFindings:\n" + raw) }
+sb.WriteString("\n\nProvide: 1) Digital footprint summary 2) Attack surface 3) Breach/credential risk 4) Social engineering vectors 5) Pentest next steps 6) MITRE ATT&CK mapping")
+return post("/chat", chatRequest{Prompt: sb.String(), Messages: []Message{}})
+}
+
+// SendRevEng sends RE findings to backend AI for vulnerability analysis.
+// Falls back to /chat with structured prompt if dedicated endpoint not available.
+func SendRevEng(payload RevEngPayload) (string, error) {
+result, err := post("/reveng", payload)
+if err == nil {
+return result, nil
+}
+var sb strings.Builder
+sb.WriteString("Reverse Engineering Analysis for: " + payload.Target + "\n")
+sb.WriteString(fmt.Sprintf("Mode: %s | File: %s | Arch: %s %s\n", payload.AnalysisMode, payload.FileType, payload.Architecture, payload.Bitness))
+sb.WriteString(fmt.Sprintf("Security: PIE=%v NX=%v Canary=%v RELRO=%s Stripped=%v\n", payload.PIE, payload.NX, payload.Canary, payload.RELRO, payload.Stripped))
+if len(payload.VulnFunctions) > 0 {
+sb.WriteString("Vulnerable functions: " + strings.Join(payload.VulnFunctions, ", ") + "\n")
+}
+if len(payload.YARAMatches) > 0 {
+sb.WriteString(fmt.Sprintf("YARA matches: %d\n", len(payload.YARAMatches)))
+}
+if len(payload.ROPGadgets) > 0 {
+sb.WriteString(fmt.Sprintf("ROP gadgets: %d found\n", len(payload.ROPGadgets)))
+}
+if len(payload.SuspiciousStrings) > 0 {
+n := len(payload.SuspiciousStrings)
+if n > 10 { n = 10 }
+sb.WriteString("Suspicious strings:\n" + strings.Join(payload.SuspiciousStrings[:n], "\n") + "\n")
+}
+sb.WriteString("Tools run: " + strings.Join(payload.ToolsRun, ", ") + "\n")
+raw := payload.RawCombined
+if len(raw) > 40000 { raw = raw[:40000] + "\n...[truncated]" }
+if raw != "" { sb.WriteString("\nAnalysis output:\n" + raw) }
+sb.WriteString("\n\nProvide: 1) Binary purpose/functionality 2) Vulnerabilities found (BOF, format string, UAF, etc.) 3) Exploit development approach (ROP chains, shellcode) 4) Malware indicators 5) CVEs for identified libraries 6) Decompiled function analysis")
+return post("/chat", chatRequest{Prompt: sb.String(), Messages: []Message{}})
+}
+
+// SendLocate sends geolocation findings to backend AI for analysis.
+// Falls back to /chat with structured prompt if dedicated endpoint not available.
+func SendLocate(payload LocatePayload) (string, error) {
+result, err := post("/locate", payload)
+if err == nil {
+return result, nil
+}
+var sb strings.Builder
+sb.WriteString("Geolocation Analysis for: " + payload.Target + " (type: " + payload.TargetType + ")\n")
+if payload.City != "" || payload.Country != "" {
+sb.WriteString("Location: " + payload.City + ", " + payload.Country + "\n")
+}
+if payload.ISP != "" {
+sb.WriteString("ISP/Org: " + payload.ISP + "\n")
+}
+if len(payload.Coordinates) > 0 {
+sb.WriteString("GPS: " + strings.Join(payload.Coordinates, " | ") + "\n")
+}
+if payload.ExifGPS != "" {
+sb.WriteString("EXIF GPS: " + payload.ExifGPS + "\n")
+}
+if len(payload.WiFiSSIDs) > 0 {
+sb.WriteString(fmt.Sprintf("WiFi SSIDs: %d captured\n", len(payload.WiFiSSIDs)))
+}
+if len(payload.CellTowers) > 0 {
+sb.WriteString(fmt.Sprintf("Cell towers: %d captured\n", len(payload.CellTowers)))
+}
+sb.WriteString("Tools: " + strings.Join(payload.ToolsRun, ", ") + "\n")
+raw := payload.RawCombined
+if len(raw) > 10000 { raw = raw[:10000] + "\n...[truncated]" }
+if raw != "" { sb.WriteString("\nData:\n" + raw) }
+sb.WriteString("\n\nProvide: 1) Physical location summary 2) Network infrastructure analysis 3) Attack surface from location data 4) Privacy exposure assessment 5) Recommended follow-up actions")
+return post("/chat", chatRequest{Prompt: sb.String(), Messages: []Message{}})
+}

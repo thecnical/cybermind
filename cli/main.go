@@ -154,6 +154,13 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /abhimanyu <target> auth") + d.Render(" → Auth brute force"))
 		fmt.Println(g.Render("  cybermind /abhimanyu <target> postexploit") + d.Render(" → Post-exploitation"))
 		fmt.Println(g.Render("  cybermind /abhimanyu <target> lateral") + d.Render(" → Lateral movement"))
+		fmt.Println(g.Render("  cybermind /osint-deep <target>") + d.Render("   → 🔍 Deep OSINT (email/username/domain/phone/company — 45 tools, 9 phases)"))
+		fmt.Println(g.Render("  cybermind /osint-deep user@gmail.com") + d.Render(" → email + breach check + social footprint"))
+		fmt.Println(g.Render("  cybermind /osint-deep johndoe") + d.Render("       → username hunt across 3000+ sites"))
+		fmt.Println(g.Render("  cybermind /reveng <binary>") + d.Render("       → ⚙️  Reverse Engineering (static+dynamic+decompile, 30 tools)"))
+		fmt.Println(g.Render("  cybermind /reveng binary --mode malware") + d.Render(" → malware analysis (YARA, ssdeep, clamscan)"))
+		fmt.Println(g.Render("  cybermind /reveng app.apk --mode mobile") + d.Render(" → APK decompile (jadx, apktool)"))
+		fmt.Println(g.Render("  cybermind /locate-advanced <target>") + d.Render(" → 🛰️  SDR cell tower tracking (needs hardware)"))
 		fmt.Println(g.Render("  cybermind /bizlogic <target>") + d.Render("   → 💰 Business logic bugs (price manipulation, IDOR, race conditions)"))
 		fmt.Println(g.Render("  cybermind /bizlogic <target> --cookie 'session=abc'") + d.Render(" → authenticated scan"))
 		fmt.Println(g.Render("  cybermind /guide <target>") + d.Render("      → 📋 AI manual testing guide (step-by-step for the 12% tools can't automate)"))
@@ -2241,7 +2248,8 @@ func main() {
 			"scan": true, "portscan": true, "osint": true,
 			"payload": true, "cve": true, "wordlist": true,
 			"doctor": true, "uninstall": true,
-			"platform": true, "brain": true, // platform creds + memory work everywhere
+			"platform": true, "brain": true,
+			"locate": true, // locate Level 1-4 works cross-platform
 		}
 		if linuxOnlyCmds[normalized] || (strings.HasPrefix(cmd, "/") && !crossPlatformSlashCmds[normalized]) {
 			printError("This command is only available on Linux/Kali.")
@@ -4005,6 +4013,135 @@ rm -f /tmp/evilginx2.tar.gz`)
 			os.Exit(1)
 		}
 		runOSINT(args[1], localMode)
+
+	case "/osint-deep":
+		// Deep OSINT — Linux-only, full pipeline (email/username/domain/phone/company)
+		if runtime.GOOS != "linux" {
+			printError("OSINT Deep Mode is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /osint-deep <target> [--tools tool1,tool2]")
+			printError("  target: domain, email, username, phone (+1234), company name, IP")
+			printError("Examples:")
+			printError("  cybermind /osint-deep target.com")
+			printError("  cybermind /osint-deep user@gmail.com")
+			printError("  cybermind /osint-deep johndoe")
+			printError("  cybermind /osint-deep +91XXXXXXXXXX")
+			printError("  cybermind /osint-deep \"Company Name\"")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		if !requirePlan("starter") {
+			os.Exit(1)
+		}
+		osintTarget := args[1]
+		var osintRequested []string
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--tools" && i+1 < len(args) {
+				for _, n := range strings.Split(args[i+1], ",") {
+					n = strings.TrimSpace(n)
+					if n != "" {
+						osintRequested = append(osintRequested, n)
+					}
+				}
+				i++
+			}
+		}
+		runOSINTDeep(osintTarget, osintRequested, localMode)
+
+	case "/reveng":
+		// Reverse Engineering — Linux-only, full RE pipeline
+		if runtime.GOOS != "linux" {
+			printError("Reverse Engineering Mode is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /reveng <binary> [--mode static|dynamic|decompile|malware|mobile] [--tools tool1,tool2]")
+			printError("Examples:")
+			printError("  cybermind /reveng /path/to/binary")
+			printError("  cybermind /reveng malware.bin --mode malware")
+			printError("  cybermind /reveng app.apk --mode mobile")
+			printError("  cybermind /reveng binary --mode decompile")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		if !requirePlan("starter") {
+			os.Exit(1)
+		}
+		revengTarget := args[1]
+		revengMode := "all"
+		var revengRequested []string
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--mode" && i+1 < len(args) {
+				revengMode = args[i+1]
+				i++
+			} else if args[i] == "--tools" && i+1 < len(args) {
+				for _, n := range strings.Split(args[i+1], ",") {
+					n = strings.TrimSpace(n)
+					if n != "" {
+						revengRequested = append(revengRequested, n)
+					}
+				}
+				i++
+			}
+		}
+		runRevEng(revengTarget, revengMode, revengRequested, localMode)
+
+	case "/locate":
+		// Geolocation — works on all OS (Level 1-4), Linux for Level 5
+		if len(args) < 2 {
+			printError("Usage: cybermind /locate <target>")
+			printError("  target: IP, domain, phone (+1234), image file, username")
+			printError("Examples:")
+			printError("  cybermind /locate 8.8.8.8")
+			printError("  cybermind /locate target.com")
+			printError("  cybermind /locate photo.jpg")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		runLocate(args[1], false, localMode)
+
+	case "/locate-advanced":
+		// Advanced Geolocation — Linux-only, SDR/cell tower (Level 5)
+		if runtime.GOOS != "linux" {
+			printError("Locate Advanced (SDR) is only available on Linux/Kali.")
+			os.Exit(1)
+		}
+		if len(args) < 2 {
+			printError("Usage: cybermind /locate-advanced <target>")
+			printError("  Requires SDR hardware (RTL-SDR, HackRF, BladeRF)")
+			printError("  See hardware setup: CyberMind/cli/locate/sdr_setup.md")
+			printError("Examples:")
+			printError("  cybermind /locate-advanced +91XXXXXXXXXX")
+			printError("  cybermind /locate-advanced target.com")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		if !requirePlan("pro") {
+			os.Exit(1)
+		}
+		runLocate(args[1], true, localMode)
 
 	case "/payload":
 		// Payload generator — works on all OS

@@ -214,6 +214,56 @@ return []OmegaToolEntry{
 {"zmap", "recon", "sudo apt install -y zmap", false, false, false, false, "", "", ""},
 // ── Hunt Phase 4 — NEW: BeEF ─────────────────────────────────────────
 {"beef-xss", "hunt", "sudo apt install -y beef-xss", false, false, false, false, "", "", ""},
+// ── OSINT Deep — Phase 1: Domain/Subdomain ───────────────────────────
+{"sublist3r", "osint", "pip3 install sublist3r --break-system-packages", false, false, true, false, "", "", ""},
+{"sn0int", "osint", "sudo apt install -y sn0int", false, false, false, false, "", "", ""},
+// ── OSINT Deep — Phase 2: Email/Breach ───────────────────────────────
+{"holehe", "osint", "pip3 install holehe --break-system-packages", false, false, true, false, "", "", ""},
+{"h8mail", "osint", "pip3 install h8mail --break-system-packages", false, false, true, false, "", "", ""},
+{"emailfinder", "osint", "pip3 install emailfinder --break-system-packages", false, false, true, false, "", "", ""},
+// ── OSINT Deep — Phase 3: Username/People ────────────────────────────
+{"sherlock", "osint", "pip3 install sherlock-project --break-system-packages", false, false, true, false, "", "", ""},
+{"maigret", "osint", "pip3 install maigret --break-system-packages", false, false, true, false, "", "", ""},
+{"socialscan", "osint", "pip3 install socialscan --break-system-packages", false, false, true, false, "", "", ""},
+// ── OSINT Deep — Phase 4: Social Media ───────────────────────────────
+{"instaloader", "osint", "pip3 install instaloader --break-system-packages", false, false, true, false, "", "", ""},
+{"twscrape", "osint", "pip3 install twscrape --break-system-packages", false, false, true, false, "", "", ""},
+// ── OSINT Deep — Phase 5: Company Intel ──────────────────────────────
+{"spiderfoot", "osint", "pip3 install spiderfoot --break-system-packages", false, false, true, false, "", "", ""},
+{"crosslinked", "osint", "pip3 install crosslinked --break-system-packages", false, false, true, false, "", "", ""},
+{"ghunt", "osint", "pip3 install ghunt --break-system-packages", false, false, true, false, "", "", ""},
+// ── OSINT Deep — Phase 6: Phone ──────────────────────────────────────
+{"phoneinfoga", "osint", "go install github.com/sundowndev/phoneinfoga/v2/cmd/phoneinfoga@latest", true, false, false, false, "", "", ""},
+{"geoiplookup", "osint", "sudo apt install -y geoip-bin", false, false, false, false, "", "", ""},
+// ── OSINT Deep — Phase 7: Metadata ───────────────────────────────────
+{"metagoofil", "osint", "pip3 install metagoofil --break-system-packages", false, false, true, false, "", "", ""},
+// ── OSINT Deep — Phase 8: Dark Web ───────────────────────────────────
+{"onionsearch", "osint", "pip3 install onionsearch --break-system-packages", false, false, true, false, "", "", ""},
+{"torbot", "osint", "pip3 install torbot --break-system-packages", false, false, true, false, "", "", ""},
+// ── RevEng — Phase 1: File ID ────────────────────────────────────────
+{"floss", "reveng", "pip3 install floss --break-system-packages", false, false, true, false, "", "", ""},
+{"diec", "reveng", "sudo apt install -y detect-it-easy", false, false, false, false, "", "", ""},
+// ── RevEng — Phase 2: Static ─────────────────────────────────────────
+{"radare2", "reveng", "sudo apt install -y radare2", false, false, false, false, "", "", ""},
+{"rizin", "reveng", "sudo apt install -y rizin", false, false, false, false, "", "", ""},
+{"checksec", "reveng", "pip3 install checksec.py --break-system-packages", false, false, true, false, "", "", ""},
+// ── RevEng — Phase 3: Dynamic ────────────────────────────────────────
+{"frida-trace", "reveng", "pip3 install frida-tools --break-system-packages", false, false, true, false, "", "", ""},
+// ── RevEng — Phase 4: Vuln Discovery ─────────────────────────────────
+{"ROPgadget", "reveng", "pip3 install ROPgadget --break-system-packages", false, false, true, false, "", "", ""},
+{"angr", "reveng", "pip3 install angr --break-system-packages", false, false, true, false, "", "", ""},
+{"cve-bin-tool", "reveng", "pip3 install cve-bin-tool --break-system-packages", false, false, true, false, "", "", ""},
+// ── RevEng — Phase 5: Malware ────────────────────────────────────────
+{"yara", "reveng", "sudo apt install -y yara", false, false, false, false, "", "", ""},
+{"ssdeep", "reveng", "sudo apt install -y ssdeep", false, false, false, false, "", "", ""},
+// ── RevEng — Phase 6: Decompile ──────────────────────────────────────
+{"retdec-decompiler", "reveng", "sudo apt install -y retdec", false, false, false, false, "", "", ""},
+{"jadx", "reveng", "sudo apt install -y jadx", false, false, false, false, "", "", ""},
+{"apktool", "reveng", "sudo apt install -y apktool", false, false, false, false, "", "", ""},
+// ── Locate — Level 3: WiFi ───────────────────────────────────────────
+{"kismet", "locate", "sudo apt install -y kismet", false, false, false, false, "", "", ""},
+// ── Locate — Level 4: Social Geo ─────────────────────────────────────
+{"creepy", "locate", "git clone https://github.com/ilektrojohn/creepy /opt/creepy && pip3 install -r /opt/creepy/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/ilektrojohn/creepy", "/opt/creepy", "creepy.py"},
 }
 }
 
