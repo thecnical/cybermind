@@ -305,6 +305,18 @@ var osintRegistry = []OSINTToolSpec{
 			return []string{"-u", username}
 		},
 	},
+	{
+		// RapidAPI Social Media Scanner — handled programmatically in commands.go
+		// Returns empty shell command to skip CLI execution
+		Name: "rapidapi-social", Phase: 3, Timeout: 30,
+		TargetTypes: []string{"username", "person", "email"},
+		UseShell:    true,
+		ShellCmd: func(target string, ctx *OSINTContext) string {
+			// Handled by breach.CheckSocialMediaScanner() in commands.go
+			return ""
+		},
+		BuildArgs: func(target string, ctx *OSINTContext) []string { return nil },
+	},
 
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 4 — SOCIAL MEDIA SCRAPING

@@ -947,7 +947,7 @@ func runOSINTDeep(target string, requested []string, localMode bool) {
 		osintPayload.BreachesFound = ctx.BreachesFound
 		osintPayload.GitHubLeaks = ctx.GitHubLeaks
 
-		// Run breach check on found emails (90% API + 10% local)
+		// Run breach check + LeakInsight on found emails concurrently
 		if len(ctx.EmailsFound) > 0 && !localMode {
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
 				fmt.Sprintf("  ⟳ Breach check on %d emails...", len(ctx.EmailsFound))))
@@ -955,14 +955,64 @@ func runOSINTDeep(target string, requested []string, localMode bool) {
 			if len(checkEmails) > 5 {
 				checkEmails = checkEmails[:5] // limit to 5 to avoid rate limits
 			}
+			type emailBreachResult struct {
+				email   string
+				entries []breach.BreachEntry
+				leaks   []breach.LeakInsightResult
+			}
+			emailCh := make(chan emailBreachResult, len(checkEmails))
 			for _, email := range checkEmails {
-				breachResult := breach.CheckAll(email)
-				if len(breachResult.Breaches) > 0 {
-					formatted := breach.FormatBreachResult(breachResult)
+				go func(e string) {
+					br := breach.CheckAll(e)
+					lr, _ := breach.CheckLeakInsight(e)
+					emailCh <- emailBreachResult{email: e, entries: br.Breaches, leaks: lr}
+				}(email)
+			}
+			for range checkEmails {
+				r := <-emailCh
+				if len(r.entries) > 0 {
+					formatted := breach.FormatBreachResult(breach.BreachResult{Target: r.email, Breaches: r.entries})
 					ctx.BreachesFound = append(ctx.BreachesFound, formatted)
 					osintPayload.BreachesFound = append(osintPayload.BreachesFound, formatted)
 					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-						fmt.Sprintf("  ⚠ BREACH: %s — %d breaches found!", email, len(breachResult.Breaches))))
+						fmt.Sprintf("  ⚠ BREACH: %s — %d breaches found!", r.email, len(r.entries))))
+				}
+				for _, lr := range r.leaks {
+					entry := fmt.Sprintf("[leakinsight] %s — source: %s", r.email, lr.Source)
+					if lr.Password != "" {
+						entry += fmt.Sprintf(" — PASSWORD: %s", lr.Password)
+					}
+					ctx.BreachesFound = append(ctx.BreachesFound, entry)
+					osintPayload.BreachesFound = append(osintPayload.BreachesFound, entry)
+				}
+				if len(r.leaks) > 0 {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+						fmt.Sprintf("  ⚠ LeakInsight: %s — %d records!", r.email, len(r.leaks))))
+				}
+			}
+		}
+
+		// Social Media Scanner for username targets (Phase 3)
+		if targetType == "username" || targetType == "person" || targetType == "email" {
+			username := target
+			if strings.Contains(target, "@") {
+				username = strings.Split(target, "@")[0]
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				"  ⟳ Social Media Scanner (RapidAPI)..."))
+			socialResults, err := breach.CheckSocialMediaScanner(username)
+			if err == nil && len(socialResults) > 0 {
+				for _, sr := range socialResults {
+					if sr.Found {
+						profile := sr.Platform + ": " + username
+						if sr.URL != "" {
+							profile = sr.Platform + ": " + sr.URL
+						}
+						ctx.SocialProfiles = append(ctx.SocialProfiles, profile)
+						osintPayload.SocialProfiles = append(osintPayload.SocialProfiles, profile)
+						fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+							fmt.Sprintf("  ✓ Found on %s", sr.Platform)))
+					}
 				}
 			}
 		}
@@ -1089,6 +1139,27 @@ func runRevEng(target, mode string, requested []string, localMode bool) {
 				out = out[:8000] + "\n...[truncated]"
 			}
 			findings[tr.Tool] = out
+		}
+	}
+
+	// VirusTotal hash check after malware analysis
+	if result.Context != nil && result.Context.SHA256Hash != "" {
+		sha256hash := result.Context.SHA256Hash
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+			fmt.Sprintf("  ⟳ VirusTotal hash check: %s...", sha256hash[:16]+"...")))
+		vtResult, err := breach.CheckVirusTotal(sha256hash)
+		if err == nil && vtResult != nil {
+			vtColor := lipgloss.Color("#00FF00")
+			if vtResult.Malicious > 0 {
+				vtColor = lipgloss.Color("#FF4444")
+			} else if vtResult.Suspicious > 0 {
+				vtColor = lipgloss.Color("#FFD700")
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(vtColor).Render(
+				fmt.Sprintf("  🦠 VirusTotal: %d/%d malicious | %d suspicious",
+					vtResult.Malicious, vtResult.TotalVendors, vtResult.Suspicious)))
+			findings["virustotal"] = fmt.Sprintf("Hash: %s | Malicious: %d/%d | Suspicious: %d | Harmless: %d",
+				sha256hash, vtResult.Malicious, vtResult.TotalVendors, vtResult.Suspicious, vtResult.Harmless)
 		}
 	}
 
@@ -1219,6 +1290,44 @@ func runLocate(target string, advanced bool, localMode bool) {
 		}
 	}
 
+	// AbuseIPDB + AlienVault OTX for IP targets (Level 1 enrichment)
+	locTargetType := locatePkg.DetectLocateTargetType(target)
+	if locTargetType == "ip" {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+			"  ⟳ AbuseIPDB + OTX threat intel..."))
+		type ipIntelResult struct {
+			abuse *breach.AbuseIPDBResult
+			otx   *breach.OTXResult
+		}
+		ipCh := make(chan ipIntelResult, 1)
+		go func() {
+			a, _ := breach.CheckAbuseIPDB(target)
+			o, _ := breach.CheckAlienVaultOTX(target)
+			ipCh <- ipIntelResult{abuse: a, otx: o}
+		}()
+		ipIntel := <-ipCh
+		if ipIntel.abuse != nil {
+			abuseColor := lipgloss.Color("#00FF00")
+			if ipIntel.abuse.AbuseScore > 50 {
+				abuseColor = lipgloss.Color("#FF4444")
+			} else if ipIntel.abuse.AbuseScore > 10 {
+				abuseColor = lipgloss.Color("#FFD700")
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(abuseColor).Render(
+				fmt.Sprintf("  🛡 AbuseIPDB: score=%d%% | reports=%d | ISP=%s | country=%s",
+					ipIntel.abuse.AbuseScore, ipIntel.abuse.TotalReports, ipIntel.abuse.ISP, ipIntel.abuse.Country)))
+			findings["abuseipdb"] = fmt.Sprintf("AbuseScore: %d%%, Reports: %d, ISP: %s, Country: %s",
+				ipIntel.abuse.AbuseScore, ipIntel.abuse.TotalReports, ipIntel.abuse.ISP, ipIntel.abuse.Country)
+		}
+		if ipIntel.otx != nil && ipIntel.otx.Pulses > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  🔴 OTX: %d threat pulses | tags: %s",
+					ipIntel.otx.Pulses, strings.Join(ipIntel.otx.Tags[:min(3, len(ipIntel.otx.Tags))], ", "))))
+			findings["otx"] = fmt.Sprintf("Pulses: %d, MalwareFamily: %s, Tags: %s",
+				ipIntel.otx.Pulses, ipIntel.otx.MalwareFamily, strings.Join(ipIntel.otx.Tags, ", "))
+		}
+	}
+
 	combined := locatePkg.GetLocateCombinedOutput(result)
 	if len(combined) > 20000 {
 		combined = combined[:20000] + "\n...[truncated]"
@@ -1226,7 +1335,7 @@ func runLocate(target string, advanced bool, localMode bool) {
 
 	locPayload := api.LocatePayload{
 		Target:      target,
-		TargetType:  locatePkg.DetectLocateTargetType(target),
+		TargetType:  locTargetType,
 		ToolsRun:    result.Tools,
 		Findings:    findings,
 		RawCombined: combined,
@@ -1450,6 +1559,43 @@ hibpKey = "configured ✓ (full details)"
 		fmt.Println(lipgloss.NewStyle().Foreground(color).Render(line))
 	}
 
+	// Also run LeakInsight for additional coverage
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ LeakInsight extended search (14B+ records)..."))
+	leakResults, leakErr := breach.CheckLeakInsight(target)
+	if leakErr == nil && len(leakResults) > 0 {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+			fmt.Sprintf("  ⚠ LeakInsight: %d additional records found", len(leakResults))))
+		for _, lr := range leakResults {
+			line := fmt.Sprintf("  [leakinsight] source: %s", lr.Source)
+			if lr.Date != "" {
+				line += fmt.Sprintf(" (%s)", lr.Date)
+			}
+			if lr.Password != "" {
+				line += fmt.Sprintf(" — PASSWORD: %s", lr.Password)
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(line))
+		}
+	}
+
+	// AbuseIPDB for IP targets
+	if tType == "ip" || (!strings.Contains(target, "@") && !strings.HasPrefix(target, "@") && len(strings.Split(target, ".")) == 4) {
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AbuseIPDB reputation check..."))
+		abuseResult, abuseErr := breach.CheckAbuseIPDB(target)
+		if abuseErr == nil && abuseResult != nil {
+			abuseColor := lipgloss.Color("#00FF00")
+			if abuseResult.AbuseScore > 50 {
+				abuseColor = lipgloss.Color("#FF4444")
+			} else if abuseResult.AbuseScore > 10 {
+				abuseColor = lipgloss.Color("#FFD700")
+			}
+			fmt.Println(lipgloss.NewStyle().Foreground(abuseColor).Render(
+				fmt.Sprintf("  🛡 AbuseIPDB: score=%d%% | reports=%d | ISP=%s | country=%s",
+					abuseResult.AbuseScore, abuseResult.TotalReports, abuseResult.ISP, abuseResult.Country)))
+		}
+	}
+
 	fmt.Println()
 
 	// AI analysis of breach results
@@ -1481,6 +1627,181 @@ Provide:
 		"  Tip: Run /osint-deep for full OSINT including breach check on all found emails"))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
 		"  Tip: cybermind /breach --index /dump.txt to add local breach dumps"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Tip: cybermind /threat <ip|domain|hash> for full threat intel (VirusTotal + AbuseIPDB + OTX)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  API keys (free): AbuseIPDB → abuseipdb.com/account/api | VirusTotal → virustotal.com/gui/my-apikey"))
+}
+
+// ─── Threat Intel Command Handler ────────────────────────────────────────────
+
+// runThreatIntel handles /threat command — aggregated threat intelligence.
+// Runs VirusTotal + AbuseIPDB + AlienVault OTX + IOC Search + URLScan + GreyNoise concurrently.
+func runThreatIntel(target string, localMode bool) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render("  🔴 THREAT INTELLIGENCE — " + target))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Sources: VirusTotal + AbuseIPDB + AlienVault OTX + IOC Search + URLScan + GreyNoise"))
+	fmt.Println()
+
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Running concurrent threat intel checks..."))
+	start := time.Now()
+	report := breach.CheckAllThreatIntel(target)
+	took := time.Since(start)
+
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  Completed in %s", took.Round(time.Millisecond))))
+	fmt.Println()
+
+	// Verdict banner
+	verdictColor := lipgloss.Color("#00FF00")
+	verdictIcon := "✓"
+	switch report.Verdict {
+	case "malicious":
+		verdictColor = lipgloss.Color("#FF0000")
+		verdictIcon = "⚠"
+	case "suspicious":
+		verdictColor = lipgloss.Color("#FFD700")
+		verdictIcon = "⚡"
+	}
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(verdictColor).Render(
+		fmt.Sprintf("  %s VERDICT: %s (score: %d/100)", verdictIcon, strings.ToUpper(report.Verdict), report.OverallScore)))
+	fmt.Println()
+
+	// IOC Search
+	if report.IOC != nil {
+		iocColor := lipgloss.Color("#00FF00")
+		if report.IOC.Malicious {
+			iocColor = lipgloss.Color("#FF4444")
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(iocColor).Render(
+			fmt.Sprintf("  [IOC Search]   malicious=%v | score=%.0f | tags=%s",
+				report.IOC.Malicious, report.IOC.Score, strings.Join(report.IOC.Tags, ", "))))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [IOC Search]   no data (RapidAPI key required)"))
+	}
+
+	// AbuseIPDB
+	if report.AbuseIP != nil {
+		abuseColor := lipgloss.Color("#00FF00")
+		if report.AbuseIP.AbuseScore > 50 {
+			abuseColor = lipgloss.Color("#FF4444")
+		} else if report.AbuseIP.AbuseScore > 10 {
+			abuseColor = lipgloss.Color("#FFD700")
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(abuseColor).Render(
+			fmt.Sprintf("  [AbuseIPDB]    score=%d%% | reports=%d | ISP=%s | country=%s",
+				report.AbuseIP.AbuseScore, report.AbuseIP.TotalReports, report.AbuseIP.ISP, report.AbuseIP.Country)))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [AbuseIPDB]    skipped (IP targets only, or set ABUSEIPDB_API_KEY)"))
+	}
+
+	// VirusTotal
+	if report.VirusTotal != nil {
+		vtColor := lipgloss.Color("#00FF00")
+		if report.VirusTotal.Malicious > 0 {
+			vtColor = lipgloss.Color("#FF4444")
+		} else if report.VirusTotal.Suspicious > 0 {
+			vtColor = lipgloss.Color("#FFD700")
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(vtColor).Render(
+			fmt.Sprintf("  [VirusTotal]   malicious=%d/%d | suspicious=%d | harmless=%d",
+				report.VirusTotal.Malicious, report.VirusTotal.TotalVendors,
+				report.VirusTotal.Suspicious, report.VirusTotal.Harmless)))
+		if report.VirusTotal.Permalink != "" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				"                 → " + report.VirusTotal.Permalink))
+		}
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [VirusTotal]   skipped (set VIRUSTOTAL_API_KEY — free 500/day)"))
+	}
+
+	// AlienVault OTX
+	if report.OTX != nil {
+		otxColor := lipgloss.Color("#00FF00")
+		if report.OTX.Pulses > 5 {
+			otxColor = lipgloss.Color("#FF4444")
+		} else if report.OTX.Pulses > 0 {
+			otxColor = lipgloss.Color("#FFD700")
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(otxColor).Render(
+			fmt.Sprintf("  [OTX]          pulses=%d | malware=%s | tags=%s",
+				report.OTX.Pulses, report.OTX.MalwareFamily, strings.Join(report.OTX.Tags[:min(3, len(report.OTX.Tags))], ", "))))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [OTX]          no data"))
+	}
+
+	// URLScan
+	if report.URLScan != nil {
+		urlColor := lipgloss.Color("#00FF00")
+		if report.URLScan.Malicious {
+			urlColor = lipgloss.Color("#FF4444")
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(urlColor).Render(
+			fmt.Sprintf("  [URLScan]      malicious=%v | score=%d | ip=%s | country=%s",
+				report.URLScan.Malicious, report.URLScan.Score, report.URLScan.IP, report.URLScan.Country)))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [URLScan]      skipped (URL/domain targets only)"))
+	}
+
+	// GreyNoise
+	if report.GreyNoise != nil {
+		gnColor := lipgloss.Color("#00FF00")
+		if report.GreyNoise.Classification == "malicious" {
+			gnColor = lipgloss.Color("#FF4444")
+		} else if report.GreyNoise.Noise {
+			gnColor = lipgloss.Color("#FFD700")
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(gnColor).Render(
+			fmt.Sprintf("  [GreyNoise]    class=%s | noise=%v | riot=%v | name=%s",
+				report.GreyNoise.Classification, report.GreyNoise.Noise, report.GreyNoise.Riot, report.GreyNoise.Name)))
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [GreyNoise]    skipped (IP targets only)"))
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Free API keys: abuseipdb.com/account/api (1000/day) | virustotal.com/gui/my-apikey (500/day)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Set keys: export ABUSEIPDB_API_KEY=key | export VIRUSTOTAL_API_KEY=key"))
+
+	// AI analysis
+	if !localMode {
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AI threat analysis..."))
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Threat Intelligence Report for: %s\n\n", target))
+		sb.WriteString(fmt.Sprintf("Verdict: %s (score: %d/100)\n\n", report.Verdict, report.OverallScore))
+		if report.IOC != nil {
+			sb.WriteString(fmt.Sprintf("IOC Search: malicious=%v, score=%.0f, tags=%s\n",
+				report.IOC.Malicious, report.IOC.Score, strings.Join(report.IOC.Tags, ", ")))
+		}
+		if report.AbuseIP != nil {
+			sb.WriteString(fmt.Sprintf("AbuseIPDB: score=%d%%, reports=%d, ISP=%s\n",
+				report.AbuseIP.AbuseScore, report.AbuseIP.TotalReports, report.AbuseIP.ISP))
+		}
+		if report.VirusTotal != nil {
+			sb.WriteString(fmt.Sprintf("VirusTotal: %d/%d malicious, %d suspicious\n",
+				report.VirusTotal.Malicious, report.VirusTotal.TotalVendors, report.VirusTotal.Suspicious))
+		}
+		if report.OTX != nil {
+			sb.WriteString(fmt.Sprintf("OTX: %d pulses, malware=%s\n", report.OTX.Pulses, report.OTX.MalwareFamily))
+		}
+		if report.GreyNoise != nil {
+			sb.WriteString(fmt.Sprintf("GreyNoise: %s, noise=%v\n", report.GreyNoise.Classification, report.GreyNoise.Noise))
+		}
+
+		prompt := sb.String() + "\n\nProvide:\n1. Threat assessment and attack context\n2. Recommended defensive actions\n3. MITRE ATT&CK techniques if malicious\n4. Attribution hints if available"
+
+		aiResult, aiErr := api.SendPrompt(prompt)
+		if aiErr == nil {
+			clean := utils.StripMarkdown(aiResult)
+			printResult("🔴 Threat Intel → "+target, clean)
+			_ = storage.AddEntry("/threat "+target, clean)
+		}
+	}
 }
 
 // ─── OMEGA Agentic Brain Loop ─────────────────────────────────────────────────

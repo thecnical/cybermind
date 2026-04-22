@@ -190,6 +190,7 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /breach +91XXXXXXXXXX") + d.Render("    → WhatsApp OSINT (name, about, photo)"))
 	fmt.Println(g.Render("  cybermind /breach --index /dump.txt") + d.Render(" → index local breach dump to SQLite"))
 	fmt.Println(g.Render("  cybermind /breach --setup") + d.Render("          → save RapidAPI key (BreachDirectory + WhatsApp)"))
+	fmt.Println(g.Render("  cybermind /threat <ip|domain|url|hash>") + d.Render(" → threat intel (VirusTotal + AbuseIPDB + OTX + IOC + URLScan)"))
 	fmt.Println(g.Render("  cybermind /locate <ip|domain|file>") + d.Render(" → geolocation (IP/EXIF/WiFi/Social)"))
 	fmt.Println(g.Render("  cybermind /payload <os> <arch>") + d.Render("  → AI payload generator (no msfvenom)"))
 	fmt.Println(g.Render("  cybermind /cve <CVE-ID>") + d.Render("         → CVE intelligence from NVD"))
@@ -2257,6 +2258,7 @@ func main() {
 			"platform": true, "brain": true,
 			"locate": true,
 			"breach": true, // breach check works on all OS (API-based)
+			"threat": true, // threat intel works on all OS (API-based)
 		}
 		if linuxOnlyCmds[normalized] || (strings.HasPrefix(cmd, "/") && !crossPlatformSlashCmds[normalized]) {
 			printError("This command is only available on Linux/Kali.")
@@ -4201,6 +4203,29 @@ rm -f /tmp/evilginx2.tar.gz`)
 			}
 		}
 		runBreachCheck(args[1:], localMode)
+
+	case "/threat":
+		// Threat Intelligence — works on all OS (VirusTotal + AbuseIPDB + OTX + IOC + URLScan)
+		if len(args) < 2 {
+			printError("Usage: cybermind /threat <ip|domain|url|hash>")
+			printError("Examples:")
+			printError("  cybermind /threat 8.8.8.8")
+			printError("  cybermind /threat malware.example.com")
+			printError("  cybermind /threat d41d8cd98f00b204e9800998ecf8427e")
+			printError("  cybermind /threat https://suspicious-site.com")
+			printError("")
+			printError("Free API keys (set as env vars):")
+			printError("  export ABUSEIPDB_API_KEY=key   (1000/day — abuseipdb.com/account/api)")
+			printError("  export VIRUSTOTAL_API_KEY=key  (500/day  — virustotal.com/gui/my-apikey)")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		runThreatIntel(args[1], localMode)
 
 	case "/payload":
 		// Payload generator — works on all OS
