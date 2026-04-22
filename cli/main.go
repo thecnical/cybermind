@@ -185,6 +185,9 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /scan <target>") + d.Render("        → native network scan (no tools needed)"))
 	fmt.Println(g.Render("  cybermind /portscan <target>") + d.Render("    → port scan + netstat analysis"))
 	fmt.Println(g.Render("  cybermind /osint <domain>") + d.Render("       → DNS + Shodan OSINT (free, no key)"))
+	fmt.Println(g.Render("  cybermind /breach <email|domain>") + d.Render("  → breach intelligence (HIBP + LeakCheck + IntelX)"))
+	fmt.Println(g.Render("  cybermind /breach --index /dump.txt") + d.Render(" → index local breach dump to SQLite"))
+	fmt.Println(g.Render("  cybermind /locate <ip|domain|file>") + d.Render(" → geolocation (IP/EXIF/WiFi/Social)"))
 	fmt.Println(g.Render("  cybermind /payload <os> <arch>") + d.Render("  → AI payload generator (no msfvenom)"))
 	fmt.Println(g.Render("  cybermind /cve <CVE-ID>") + d.Render("         → CVE intelligence from NVD"))
 	fmt.Println(g.Render("  cybermind /cve --latest") + d.Render("         → latest critical CVEs (7 days)"))
@@ -2249,7 +2252,8 @@ func main() {
 			"payload": true, "cve": true, "wordlist": true,
 			"doctor": true, "uninstall": true,
 			"platform": true, "brain": true,
-			"locate": true, // locate Level 1-4 works cross-platform
+			"locate": true,
+			"breach": true, // breach check works on all OS (API-based)
 		}
 		if linuxOnlyCmds[normalized] || (strings.HasPrefix(cmd, "/") && !crossPlatformSlashCmds[normalized]) {
 			printError("This command is only available on Linux/Kali.")
@@ -4142,6 +4146,26 @@ rm -f /tmp/evilginx2.tar.gz`)
 			os.Exit(1)
 		}
 		runLocate(args[1], true, localMode)
+
+	case "/breach":
+		// Breach Intelligence — works on all OS (API-based)
+		if len(args) < 2 {
+			printError("Usage: cybermind /breach <email|domain>")
+			printError("       cybermind /breach --index /path/to/dump.txt")
+			printError("       cybermind /breach --keys  (configure API keys)")
+			printError("Examples:")
+			printError("  cybermind /breach user@gmail.com")
+			printError("  cybermind /breach @company.com")
+			printError("  cybermind /breach --index /tmp/linkedin_dump.txt")
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		if !localMode && !requireAPIKey() {
+			os.Exit(1)
+		}
+		runBreachCheck(args[1:], localMode)
 
 	case "/payload":
 		// Payload generator — works on all OS

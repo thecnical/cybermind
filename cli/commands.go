@@ -1258,6 +1258,180 @@ func runLocate(target string, advanced bool, localMode bool) {
 	_ = storage.AddEntry("/locate "+target, clean)
 }
 
+// ─── Breach Check Command Handler ────────────────────────────────────────────
+
+// runBreachCheck handles /breach command — standalone breach intelligence.
+// Supports: email check, domain check, local dump indexing, API key config.
+func runBreachCheck(args []string, localMode bool) {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render("  🔓 BREACH INTELLIGENCE"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	if len(args) == 0 {
+		printError("Usage: cybermind /breach <email|domain>")
+		return
+	}
+
+	// Handle --index flag (index local dump file)
+	if args[0] == "--index" {
+		if len(args) < 2 {
+			printError("Usage: cybermind /breach --index /path/to/dump.txt")
+			return
+		}
+		dumpPath := args[1]
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+			"  ⟳ Indexing breach dump: " + dumpPath))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Supports: email:password, email:hash, plain email lists"))
+		fmt.Println()
+		if err := breach.IndexLocalDump(dumpPath); err != nil {
+			printError("Index failed: " + err.Error())
+			return
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			"  ✓ Dump indexed to ~/.cybermind/breach/breaches.db"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Search: cybermind /breach user@email.com"))
+		return
+	}
+
+	// Handle --keys flag (show API key setup instructions)
+	if args[0] == "--keys" {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔑 Breach API Keys Setup"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  HIBP API Key (optional — free tier works without key):"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  1. Get key: https://haveibeenpwned.com/API/Key"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  2. export HIBP_API_KEY=your_key_here"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  IntelX API Key (free tier available):"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  1. Register: https://intelx.io/signup"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  2. export INTELX_API_KEY=your_key_here"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  BreachDirectory API Key (free tier available):"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  1. Register: https://breachdirectory.org"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  2. export BREACHDIR_API_KEY=your_key_here"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Add to ~/.bashrc or ~/.zshrc for persistence"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  No keys needed — free tier works for basic checks"))
+		return
+	}
+
+	target := args[0]
+
+	// Show what we're checking
+	targetType := "email"
+	if strings.HasPrefix(target, "@") || (!strings.Contains(target, "@") && strings.Contains(target, ".")) {
+		targetType = "domain"
+	}
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  Target: %s | Type: %s", target, targetType)))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Sources: HIBP + LeakCheck + BreachDirectory + IntelX + Local"))
+	fmt.Println()
+
+	// Show API key status
+	hibpKey := "not set (free tier)"
+	if os.Getenv("HIBP_API_KEY") != "" {
+		hibpKey = "configured ✓"
+	}
+	intelxKey := "not set (free tier)"
+	if os.Getenv("INTELX_API_KEY") != "" {
+		intelxKey = "configured ✓"
+	}
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  HIBP key: %s | IntelX key: %s", hibpKey, intelxKey)))
+	fmt.Println()
+
+	// Run breach check
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Checking breach databases..."))
+	start := time.Now()
+	result := breach.CheckAll(target)
+	took := time.Since(start)
+
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  Checked in %s | Sources: %s", took.Round(time.Millisecond),
+			func() string {
+				if len(result.Sources) == 0 {
+					return "none responded"
+				}
+				return strings.Join(result.Sources, ", ")
+			}())))
+	fmt.Println()
+
+	// Display results
+	if len(result.Breaches) == 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+			"  ✓ No breaches found for " + target))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Note: Free tier may have limited coverage. Use --keys to add API keys for full results."))
+		return
+	}
+
+	// Breaches found — display them
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+		fmt.Sprintf("  ⚠ BREACHES FOUND: %d total", len(result.Breaches))))
+	fmt.Println()
+
+	for _, b := range result.Breaches {
+		line := fmt.Sprintf("  [%s] %s", b.Source, b.Name)
+		if b.Date != "" {
+			line += fmt.Sprintf(" (%s)", b.Date)
+		}
+		if b.Count > 0 {
+			line += fmt.Sprintf(" — %d records", b.Count)
+		}
+		if len(b.DataTypes) > 0 {
+			line += fmt.Sprintf(" — leaked: %s", strings.Join(b.DataTypes, ", "))
+		}
+		color := lipgloss.Color("#FF4444")
+		if b.Password != "" {
+			line += fmt.Sprintf(" — PASSWORD: %s", b.Password)
+			color = lipgloss.Color("#FF0000") // brighter red for plaintext passwords
+		}
+		if b.Hash != "" {
+			hashPreview := b.Hash
+			if len(hashPreview) > 16 {
+				hashPreview = hashPreview[:16] + "..."
+			}
+			line += fmt.Sprintf(" — HASH: %s", hashPreview)
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(color).Render(line))
+	}
+
+	fmt.Println()
+
+	// AI analysis of breach results
+	if !localMode {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AI breach risk analysis..."))
+		formatted := breach.FormatBreachResult(result)
+		prompt := fmt.Sprintf(`Breach Intelligence Analysis for: %s
+
+%s
+
+Provide:
+1. Risk assessment (what attackers can do with this data)
+2. Credential stuffing attack vectors
+3. Password pattern analysis (if passwords visible)
+4. Recommended immediate actions for the target
+5. Services likely affected (based on breach names)
+6. MITRE ATT&CK techniques applicable`, target, formatted)
+
+		aiResult, aiErr := api.SendPrompt(prompt)
+		if aiErr == nil {
+			clean := utils.StripMarkdown(aiResult)
+			printResult("🔓 Breach Analysis → "+target, clean)
+			_ = storage.AddEntry("/breach "+target, clean)
+		}
+	}
+
+	// Save raw results
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Tip: Run /osint-deep for full OSINT including breach check on all found emails"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Tip: cybermind /breach --index /dump.txt to add local breach dumps"))
+}
+
 // ─── OMEGA Agentic Brain Loop ─────────────────────────────────────────────────
 
 // agentPrint prints a styled agent brain message
