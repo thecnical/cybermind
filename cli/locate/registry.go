@@ -194,17 +194,32 @@ timeout 30 tshark -i "$IFACE" -Y "wlan.fc.type_subtype == 0x08 || wlan.fc.type_s
 	},
 
 	// ══════════════════════════════════════════════════════════════════════════
-	// LEVEL 5 — CELL TOWER / SDR (ADVANCED — NEEDS HARDWARE)
+	// LEVEL 5 — CELL TOWER / SDR (ADVANCED — REQUIRES HARDWARE)
+	// ⚠️  HARDWARE REQUIRED: RTL-SDR, HackRF, or BladeRF USB dongle
+	// Without hardware, these tools will fail immediately.
+	// This is NOT a software limitation — GSM sniffing requires physical radio hardware.
+	// Estimated cost: RTL-SDR ~$25 (rtl-sdr.com), HackRF ~$300
 	// ══════════════════════════════════════════════════════════════════════════
 
 	{
 		// gr-gsm — passive GSM sniffing → TAC/LAC → OpenCellID
+		// REQUIRES: RTL-SDR or compatible SDR hardware
 		Name: "grgsm_livemon", Level: 5, Timeout: 120,
-		InstallHint: "sudo apt install gr-gsm -y",
+		InstallHint: "sudo apt install gr-gsm -y  # Also needs RTL-SDR hardware: rtl-sdr.com",
 		InstallCmd:  "sudo apt install gr-gsm -y",
 		UseShell:    true,
 		ShellCmd: func(target string, ctx *LocateContext) string {
-			return `timeout 60 grgsm_livemon -s 2e6 -f 939.4e6 2>&1 | grep -E "IMSI|LAC|CellID|MCC|MNC" | head -50`
+			// Check if SDR hardware is present before running
+			return `
+# Check for SDR hardware first
+if ! lsusb 2>/dev/null | grep -qiE "RTL|HackRF|BladeRF|ADALM|Ettus"; then
+  echo "[ERROR] No SDR hardware detected. Connect RTL-SDR/HackRF/BladeRF USB dongle."
+  echo "[INFO]  RTL-SDR available at: rtl-sdr.com (~$25)"
+  exit 1
+fi
+echo "[*] SDR hardware detected. Starting GSM scan..."
+timeout 60 grgsm_livemon -s 2e6 -f 939.4e6 2>&1 | grep -E "IMSI|LAC|CellID|MCC|MNC" | head -50
+`
 		},
 		BuildArgs: func(target string, ctx *LocateContext) []string { return nil },
 	},

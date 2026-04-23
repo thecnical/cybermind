@@ -336,8 +336,16 @@ var toolRegistry = []ToolSpec{
 		// --deep = maximum depth
 		// --parallel = parallel execution
 		// These are the REAL reconftw flags (verified against reconftw.sh source)
+		// NOTE: reconftw takes 4-6 hours in -a mode. Only run in overnight mode.
+		// In quick/deep mode, individual tools (subfinder, amass, dnsx) cover the same ground faster.
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			outDir := "/tmp/cybermind_reconftw_" + target
+			// Check execution mode — skip reconftw in quick/deep, only overnight
+			mode := os.Getenv("CYBERMIND_MODE")
+			if mode == "quick" || mode == "deep" || mode == "" {
+				// Return empty to trigger fallback skip
+				return nil
+			}
 			return []string{
 				"-d", target,
 				"-a",          // ALL mode — every function enabled
@@ -346,7 +354,7 @@ var toolRegistry = []ToolSpec{
 				"-o", outDir,
 			}
 		},
-		// Fallback 1: full recon (-r) with deep
+		// Fallback 1: full recon (-r) with deep — used when -a is too slow
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
