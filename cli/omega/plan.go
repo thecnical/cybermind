@@ -264,6 +264,18 @@ return []OmegaToolEntry{
 {"kismet", "locate", "sudo apt install -y kismet", false, false, false, false, "", "", ""},
 // ── Locate — Level 4: Social Geo ─────────────────────────────────────
 {"creepy", "locate", "git clone https://github.com/ilektrojohn/creepy /opt/creepy && pip3 install -r /opt/creepy/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/ilektrojohn/creepy", "/opt/creepy", "creepy.py"},
+// ── 2025 NEW: Exploit Phase — OOB/Blind/Cloud/C2 ─────────────────────
+{"interactsh-client", "exploit", "go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest", true, false, false, false, "", "", ""},
+{"ffuf", "exploit", "sudo apt install -y ffuf", false, false, false, false, "", "", ""},
+{"ghauri", "exploit", "pip3 install ghauri --break-system-packages", false, false, true, false, "", "", ""},
+{"puredns", "exploit", "go install github.com/d3mondev/puredns/v2@latest", true, false, false, false, "", "", ""},
+{"cloud_enum", "exploit", "pip3 install cloud-enum --break-system-packages", false, false, true, false, "", "", ""},
+{"pacu", "exploit", "pip3 install pacu --break-system-packages", false, false, true, false, "", "", ""},
+{"roadrecon", "exploit", "pip3 install roadrecon --break-system-packages", false, false, true, false, "", "", ""},
+{"sliver", "exploit", "curl https://sliver.sh/install | sudo bash", false, false, false, false, "", "", ""},
+{"nuclei-fuzz", "exploit", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false, false, false, "", "", ""},
+{"corscanner", "exploit", "pip3 install corscanner --break-system-packages", false, false, true, false, "", "", ""},
+{"h2csmuggler", "exploit", "pip3 install h2csmuggler --break-system-packages", false, false, true, false, "", "", ""},
 }
 }
 
@@ -339,9 +351,29 @@ result.AllInstalled = len(result.Missing) == 0
 return result
 }
 
-// installOmegaTool installs a tool using its primary method
+// installOmegaTool installs a tool using its primary method.
+// Python tools always use isolated venv — never pollutes system Python.
 func installOmegaTool(t OmegaToolEntry) error {
 homedir, _ := os.UserHomeDir()
+
+// ── C2 frameworks — document only, never auto-install ────────────────────
+// These require manual setup (domain, SSL, team server config).
+// Auto-installing them would break or be useless without manual config.
+c2Tools := map[string]string{
+	"sliver":  "Manual: curl https://sliver.sh/install | sudo bash\n  Then: sliver-server daemon",
+	"havoc":   "Manual: git clone https://github.com/HavocFramework/Havoc /opt/havoc && cd /opt/havoc && make\n  Then: havoc server --profile profile.yaotl",
+	"cobalt-strike": "Commercial tool — requires license",
+}
+if note, isC2 := c2Tools[t.Name]; isC2 {
+	fmt.Printf("  [C2] %s: %s\n", t.Name, note)
+	c2DocPath := "/tmp/cybermind_c2_setup.txt"
+	f, _ := os.OpenFile(c2DocPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if f != nil {
+		fmt.Fprintf(f, "=== %s ===\n%s\n\n", t.Name, note)
+		f.Close()
+	}
+	return fmt.Errorf("c2 tool %s requires manual setup — see %s", t.Name, c2DocPath)
+}
 
 if t.IsGo {
 // Extract module path from install command
@@ -366,53 +398,19 @@ return nil
 }
 
 if t.IsPip {
-// Extract package name from install command (may differ from tool name)
-// e.g. "pip3 install wafw00f --break-system-packages" → "wafw00f"
-pkgName := t.Name
-installParts := strings.Fields(t.Install)
-for i, p := range installParts {
-if (p == "install") && i+1 < len(installParts) {
-candidate := installParts[i+1]
-if !strings.HasPrefix(candidate, "-") {
-pkgName = candidate
-break
-}
-}
-}
-
-// 1. Ensure pipx is available — install it if missing
-if _, pipxErr := exec.LookPath("pipx"); pipxErr != nil {
-exec.Command("pip3", "install", "pipx", "--break-system-packages", "-q").Run()
-exec.Command("python3", "-m", "pipx", "ensurepath").Run()
-}
-
-// 2. Try pipx first — isolated venv, no system conflicts (best for modern Kali/Ubuntu)
-if _, pipxErr := exec.LookPath("pipx"); pipxErr == nil {
-cmd := exec.Command("pipx", "install", pkgName)
-cmd.Stdout = os.Stdout
-cmd.Stderr = os.Stderr
-cmd.Stdin = nil
-if cmd.Run() == nil {
-exec.Command("pipx", "ensurepath").Run()
-return nil
-}
-}
-
-// 3. Fallback: pip3 with --break-system-packages (works on older systems)
-cmd := exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q")
-cmd.Stdout = os.Stdout
-cmd.Stderr = os.Stderr
-cmd.Stdin = nil
-if cmd.Run() == nil {
-return nil
-}
-
-// 4. Last resort: pip3 with --user flag
-cmd2 := exec.Command("pip3", "install", pkgName, "--user", "-q")
-cmd2.Stdout = os.Stdout
-cmd2.Stderr = os.Stderr
-cmd2.Stdin = nil
-return cmd2.Run()
+	// Extract package name from install command
+	pkgName := t.Name
+	installParts := strings.Fields(t.Install)
+	for i, p := range installParts {
+		if p == "install" && i+1 < len(installParts) {
+			candidate := installParts[i+1]
+			if !strings.HasPrefix(candidate, "-") {
+				pkgName = candidate
+				break
+			}
+		}
+	}
+	return installPipToolIsolated(t.Name, pkgName)
 }
 
 if t.IsCargo {
@@ -425,46 +423,7 @@ return cmd.Run()
 }
 
 if t.IsGit && t.GitURL != "" {
-// Clone repo
-exec.Command("sudo", "rm", "-rf", t.GitDir).Run()
-cloneCmd := exec.Command("git", "clone", "--depth=1", t.GitURL, t.GitDir)
-cloneCmd.Stdout = os.Stdout
-cloneCmd.Stderr = os.Stderr
-cloneCmd.Stdin = nil
-if err := cloneCmd.Run(); err != nil {
-return err
-}
-// Install requirements if present
-reqFile := t.GitDir + "/requirements.txt"
-if _, err := os.Stat(reqFile); err == nil {
-// Try pipx inject first, then pip3
-if _, pipxErr := exec.LookPath("pipx"); pipxErr == nil {
-exec.Command("pip3", "install", "-r", reqFile, "--break-system-packages", "-q").Run()
-} else {
-exec.Command("pip3", "install", "-r", reqFile, "--break-system-packages", "-q").Run()
-}
-}
-// Create wrapper script
-if t.MainScript != "" {
-scriptPath := t.GitDir + "/" + t.MainScript
-ext := ""
-if strings.HasSuffix(t.MainScript, ".py") {
-ext = "python3"
-} else if strings.HasSuffix(t.MainScript, ".rb") {
-ext = "ruby"
-} else if strings.HasSuffix(t.MainScript, ".sh") {
-ext = "bash"
-}
-if ext != "" {
-wrapper := fmt.Sprintf("#!/bin/bash\n%s %s \"$@\"\n", ext, scriptPath)
-wrapperPath := "/usr/local/bin/" + t.Name
-teeCmd := exec.Command("sudo", "tee", wrapperPath)
-teeCmd.Stdin = strings.NewReader(wrapper)
-teeCmd.Run()
-exec.Command("sudo", "chmod", "+x", wrapperPath).Run()
-}
-}
-return nil
+	return installGitToolIsolated(t.Name, t.GitURL, t.GitDir, t.MainScript)
 }
 
 // APT install
@@ -475,33 +434,173 @@ cmd.Stdin = nil
 return cmd.Run()
 }
 
+// installPipToolIsolated installs a pip package in a fully isolated venv.
+// Priority: pipx (best) → /opt/<name>-venv → pip3 --break-system-packages
+// This prevents "externally-managed-environment" errors on modern Kali/Ubuntu.
+func installPipToolIsolated(toolName, pkgName string) error {
+	// Ensure python3-venv is available
+	exec.Command("sudo", "apt", "install", "-y", "python3-venv", "python3-pip", "pipx").Run()
+
+	// Method 1: pipx — best isolation, binary lands in PATH automatically
+	if _, err := exec.LookPath("pipx"); err == nil {
+		pipxEnv := append(os.Environ(),
+			"PIPX_BIN_DIR=/usr/local/bin",
+			"PIPX_HOME=/opt/pipx",
+		)
+		cmd := exec.Command("pipx", "install", "--force", pkgName)
+		cmd.Env = pipxEnv
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = nil
+		if cmd.Run() == nil {
+			// Ensure binary is in PATH
+			exec.Command("pipx", "ensurepath").Run()
+			if _, e := exec.LookPath(toolName); e == nil {
+				return nil
+			}
+			// Symlink from pipx venv if needed
+			for _, searchPath := range []string{
+				"/usr/local/bin/" + toolName,
+				"/opt/pipx/venvs/" + pkgName + "/bin/" + toolName,
+				"/root/.local/bin/" + toolName,
+			} {
+				if _, e := os.Stat(searchPath); e == nil {
+					exec.Command("sudo", "ln", "-sf", searchPath, "/usr/local/bin/"+toolName).Run()
+					return nil
+				}
+			}
+			return nil
+		}
+	}
+
+	// Method 2: isolated venv in /opt/<toolName>-venv
+	venvDir := "/opt/" + toolName + "-venv"
+	exec.Command("python3", "-m", "venv", "--clear", venvDir).Run()
+	venvPip := venvDir + "/bin/pip"
+	venvBin := venvDir + "/bin/" + toolName
+
+	exec.Command(venvPip, "install", "--upgrade", "pip", "-q").Run()
+	installCmd := exec.Command(venvPip, "install", pkgName, "-q")
+	installCmd.Stdout = os.Stdout
+	installCmd.Stderr = os.Stderr
+	installCmd.Stdin = nil
+	if installCmd.Run() == nil {
+		if _, e := os.Stat(venvBin); e == nil {
+			exec.Command("sudo", "ln", "-sf", venvBin, "/usr/local/bin/"+toolName).Run()
+			return nil
+		}
+		// Binary might have different name — search venv bin
+		entries, _ := os.ReadDir(venvDir + "/bin")
+		for _, e := range entries {
+			if strings.Contains(e.Name(), toolName) || strings.Contains(toolName, e.Name()) {
+				exec.Command("sudo", "ln", "-sf", venvDir+"/bin/"+e.Name(), "/usr/local/bin/"+toolName).Run()
+				return nil
+			}
+		}
+	}
+
+	// Method 3: pip3 --break-system-packages (last resort for old systems)
+	cmd3 := exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q")
+	cmd3.Stdout = os.Stdout
+	cmd3.Stderr = os.Stderr
+	cmd3.Stdin = nil
+	return cmd3.Run()
+}
+
+// installGitToolIsolated clones a git repo and installs it in an isolated venv.
+// Creates /opt/<name>/.venv, installs requirements, creates wrapper at /usr/local/bin/<name>.
+// This is the correct way to install Python git tools — no system pollution.
+func installGitToolIsolated(name, repoURL, installDir, mainScript string) error {
+	// Ensure dependencies
+	exec.Command("sudo", "apt", "install", "-y", "python3-venv", "python3-pip", "git").Run()
+
+	// Clone
+	exec.Command("sudo", "rm", "-rf", installDir).Run()
+	cloneCmd := exec.Command("git", "clone", "--depth=1", repoURL, installDir)
+	cloneCmd.Stdout = os.Stdout
+	cloneCmd.Stderr = os.Stderr
+	cloneCmd.Stdin = nil
+	if err := cloneCmd.Run(); err != nil {
+		return fmt.Errorf("git clone failed: %v", err)
+	}
+
+	// Create isolated venv inside tool dir
+	venvDir := installDir + "/.venv"
+	if err := exec.Command("python3", "-m", "venv", "--clear", venvDir).Run(); err != nil {
+		exec.Command("sudo", "apt", "install", "-y", "python3-venv").Run()
+		exec.Command("python3", "-m", "venv", "--clear", venvDir).Run()
+	}
+
+	venvPip    := venvDir + "/bin/pip"
+	venvPython := venvDir + "/bin/python3"
+
+	// Upgrade pip inside venv
+	exec.Command(venvPip, "install", "--upgrade", "pip", "setuptools", "wheel", "-q").Run()
+
+	// Install requirements.txt if present
+	reqFile := installDir + "/requirements.txt"
+	if _, err := os.Stat(reqFile); err == nil {
+		pipCmd := exec.Command(venvPip, "install", "-r", reqFile, "-q")
+		pipCmd.Stdout = os.Stdout
+		pipCmd.Stderr = os.Stderr
+		pipCmd.Stdin = nil
+		pipCmd.Run()
+	}
+
+	// Try pip install -e . (editable install) if setup.py or pyproject.toml exists
+	for _, setupFile := range []string{installDir + "/setup.py", installDir + "/pyproject.toml"} {
+		if _, err := os.Stat(setupFile); err == nil {
+			exec.Command(venvPip, "install", "-e", installDir, "-q").Run()
+			break
+		}
+	}
+
+	// Create wrapper script using venv python — this is the key to isolation
+	if mainScript != "" {
+		scriptPath := installDir + "/" + mainScript
+		wrapper := fmt.Sprintf("#!/bin/bash\nexec %s %s \"$@\"\n", venvPython, scriptPath)
+		wrapperPath := "/usr/local/bin/" + name
+
+		teeCmd := exec.Command("sudo", "tee", wrapperPath)
+		teeCmd.Stdin = strings.NewReader(wrapper)
+		if err := teeCmd.Run(); err != nil {
+			os.WriteFile(wrapperPath, []byte(wrapper), 0755)
+		}
+		exec.Command("sudo", "chmod", "+x", wrapperPath).Run()
+
+		if _, err := os.Stat(scriptPath); err == nil {
+			return nil
+		}
+	}
+
+	// Check if binary was installed into venv bin
+	venvToolBin := venvDir + "/bin/" + name
+	if _, err := os.Stat(venvToolBin); err == nil {
+		exec.Command("sudo", "ln", "-sf", venvToolBin, "/usr/local/bin/"+name).Run()
+		return nil
+	}
+
+	return fmt.Errorf("%s: install completed but binary not found", name)
+}
+
 // installOmegaToolAlt tries alternative installation methods
 func installOmegaToolAlt(t OmegaToolEntry) error {
-// Try apt as fallback for any tool
 aptName := strings.ToLower(t.Name)
+
+// Try apt first
 cmd := exec.Command("sudo", "apt", "install", "-y", aptName)
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
 cmd.Stdin = nil
 if cmd.Run() == nil {
-return nil
+	return nil
 }
-// Try pip3 as fallback
-cmd2 := exec.Command("pip3", "install", aptName, "--break-system-packages", "-q")
-cmd2.Stdout = os.Stdout
-cmd2.Stderr = os.Stderr
-cmd2.Stdin = nil
-if cmd2.Run() == nil {
-return nil
+
+// Try isolated venv install (better than raw pip3)
+if err := installPipToolIsolated(t.Name, aptName); err == nil {
+	return nil
 }
-// Try pipx as fallback
-cmd3 := exec.Command("pipx", "install", aptName)
-cmd3.Stdout = os.Stdout
-cmd3.Stderr = os.Stderr
-cmd3.Stdin = nil
-if cmd3.Run() == nil {
-return nil
-}
+
 // Try snap as last resort
 cmd4 := exec.Command("sudo", "snap", "install", aptName, "--classic")
 cmd4.Stdout = os.Stdout
@@ -1439,4 +1538,293 @@ func DisplayToolSelection(sel ToolSelection, target string) {
 		}
 	}
 	fmt.Println()
+}
+
+// portListOrDefault returns a comma-separated port list or a default string.
+func portListOrDefault(ports []int, defaultPorts string) string {
+	if len(ports) == 0 {
+		return defaultPorts
+	}
+	parts := make([]string, len(ports))
+	for i, p := range ports {
+		parts[i] = fmt.Sprintf("%d", p)
+	}
+	return strings.Join(parts, ",")
+}
+
+// ─── OMEGA Target Type Detection + Smart Pipeline ────────────────────────────
+
+// OmegaTargetType represents what kind of target OMEGA is dealing with
+type OmegaTargetType string
+
+const (
+	TargetWeb      OmegaTargetType = "web"      // domain/URL → recon→hunt→abhimanyu
+	TargetIP       OmegaTargetType = "ip"        // IP address → port scan→exploit
+	TargetPerson   OmegaTargetType = "person"    // name/username → osint→breach
+	TargetEmail    OmegaTargetType = "email"     // email → breach→osint
+	TargetPhone    OmegaTargetType = "phone"     // phone → locate→osint
+	TargetBinary   OmegaTargetType = "binary"    // file path → reveng→sandbox
+	TargetCompany  OmegaTargetType = "company"   // company name → osint→cloud→recon
+	TargetAPK      OmegaTargetType = "apk"       // .apk file → mobile analysis
+	TargetHash     OmegaTargetType = "hash"      // MD5/SHA → threat intel
+	TargetUnknown  OmegaTargetType = "unknown"
+)
+
+// OmegaPipeline defines which modes run for a target type
+type OmegaPipeline struct {
+	TargetType  OmegaTargetType
+	Description string
+	Phases      []OmegaPhaseStep
+}
+
+// OmegaPhaseStep is one step in the pipeline
+type OmegaPhaseStep struct {
+	Name        string
+	Command     string // CLI command to run
+	Description string
+	Required    bool
+}
+
+// DetectOmegaTargetType auto-detects what kind of target this is
+func DetectOmegaTargetType(target string) OmegaTargetType {
+	lower := strings.ToLower(strings.TrimSpace(target))
+
+	// Phone number: starts with + or is all digits with country code
+	if strings.HasPrefix(target, "+") && len(target) >= 8 {
+		return TargetPhone
+	}
+
+	// Email address
+	if strings.Contains(target, "@") && strings.Contains(target, ".") {
+		return TargetEmail
+	}
+
+	// Hash: 32 (MD5), 40 (SHA1), 64 (SHA256) hex chars
+	if isHexString(target) && (len(target) == 32 || len(target) == 40 || len(target) == 64) {
+		return TargetHash
+	}
+
+	// Binary/APK file path
+	if strings.HasPrefix(target, "/") || strings.HasPrefix(target, "./") || strings.HasPrefix(target, "~") {
+		if strings.HasSuffix(lower, ".apk") {
+			return TargetAPK
+		}
+		if _, err := os.Stat(target); err == nil {
+			return TargetBinary
+		}
+	}
+
+	// APK by extension even without path
+	if strings.HasSuffix(lower, ".apk") {
+		return TargetAPK
+	}
+
+	// IP address (v4 or v6)
+	if net.ParseIP(target) != nil {
+		return TargetIP
+	}
+
+	// CIDR range
+	if _, _, err := net.ParseCIDR(target); err == nil {
+		return TargetIP
+	}
+
+	// URL/domain with TLD → web target
+	if strings.Contains(target, ".") {
+		// Check if it looks like a domain (has valid TLD)
+		parts := strings.Split(strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://"), ".")
+		if len(parts) >= 2 && len(parts[len(parts)-1]) >= 2 {
+			return TargetWeb
+		}
+	}
+
+	// No dots, no special chars → likely a username or person name
+	if !strings.Contains(target, ".") && !strings.Contains(target, "/") {
+		if strings.Contains(target, " ") {
+			return TargetCompany // "Company Name" with spaces
+		}
+		return TargetPerson // username or person
+	}
+
+	return TargetUnknown
+}
+
+// GetOmegaPipeline returns the recommended pipeline for a target type
+func GetOmegaPipeline(targetType OmegaTargetType, target string) OmegaPipeline {
+	switch targetType {
+	case TargetWeb:
+		return OmegaPipeline{
+			TargetType:  TargetWeb,
+			Description: "Web/Domain target — full bug bounty pipeline",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: OSINT Deep",      "/osint-deep " + target,    "Passive intel: emails, subdomains, breaches, employees", false},
+				{"Phase 1: Recon",           "/recon " + target,         "Attack surface: subdomains, ports, tech stack, WAF", true},
+				{"Phase 2: Hunt",            "/hunt " + target,          "Vuln hunting: XSS, SQLi, SSRF, params, nuclei", true},
+				{"Phase 3: BizLogic",        "/bizlogic " + target,      "Business logic: IDOR, race conditions, price manipulation", false},
+				{"Phase 4: Abhimanyu",       "/abhimanyu " + target,     "Exploitation: sqlmap, commix, hydra, MSF", true},
+				{"Phase 5: Cloud",           "/cloud " + target,         "Cloud misconfigs: S3, Azure, GCP", false},
+				{"Phase 6: Novel Attacks",   "/novel " + target,         "Novel: cache poison, smuggling, prototype pollution", false},
+				{"Phase 7: Aegis",           "/aegis " + target,         "Deep scan: OOB SSRF, HTTP smuggling, CVE correlation", false},
+				{"Phase 8: Report",          "report",                   "Generate professional pentest report", true},
+			},
+		}
+
+	case TargetIP:
+		return OmegaPipeline{
+			TargetType:  TargetIP,
+			Description: "IP/Network target — port scan + service exploitation",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: OSINT",           "/osint " + target,         "Shodan + AbuseIPDB + OTX threat intel", true},
+				{"Phase 1: Recon",           "/recon " + target,         "Port scan: nmap, rustscan, naabu + service detection", true},
+				{"Phase 2: CVE Feed",        "/cve-feed " + target,      "Match CVEs to detected services", true},
+				{"Phase 3: Abhimanyu",       "/abhimanyu " + target + " network", "Network exploitation: MSF, searchsploit, hydra", true},
+				{"Phase 4: Report",          "report",                   "Generate pentest report", true},
+			},
+		}
+
+	case TargetEmail:
+		return OmegaPipeline{
+			TargetType:  TargetEmail,
+			Description: "Email target — breach intel + social footprint",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: Breach Check",    "/breach " + target,        "HIBP + BreachDirectory + LeakCheck + LeakInsight", true},
+				{"Phase 1: OSINT Deep",      "/osint-deep " + target,    "Social profiles, company intel, GitHub leaks", true},
+				{"Phase 2: Threat Intel",    "/threat " + target,        "VirusTotal + AbuseIPDB + OTX", false},
+			},
+		}
+
+	case TargetPhone:
+		return OmegaPipeline{
+			TargetType:  TargetPhone,
+			Description: "Phone number — WhatsApp OSINT + geolocation",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: Breach Check",    "/breach " + target,        "WhatsApp OSINT: name, about, photo", true},
+				{"Phase 1: OSINT Deep",      "/osint-deep " + target,    "Phone OSINT: carrier, location, social", true},
+				{"Phase 2: Locate",          "/locate " + target,        "Geolocation: IP + social geo", false},
+			},
+		}
+
+	case TargetPerson:
+		return OmegaPipeline{
+			TargetType:  TargetPerson,
+			Description: "Person/Username — social footprint + breach intel",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: OSINT Deep",      "/osint-deep " + target,    "Username hunt: sherlock, maigret, socialscan (3000+ sites)", true},
+				{"Phase 1: Breach Check",    "/breach " + target,        "Breach intel: HIBP + BreachDirectory", false},
+				{"Phase 2: Locate",          "/locate " + target,        "Social geolocation from profiles", false},
+			},
+		}
+
+	case TargetCompany:
+		return OmegaPipeline{
+			TargetType:  TargetCompany,
+			Description: "Company — full corporate intelligence + attack surface",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: OSINT Deep",      "/osint-deep " + target,    "Company intel: employees, emails, LinkedIn, GitHub", true},
+				{"Phase 1: Cloud Scan",      "/cloud " + target,         "Cloud assets: S3, Azure, GCP misconfigs", true},
+				{"Phase 2: Breach Check",    "/breach @" + target,       "Domain breach check", false},
+				{"Phase 3: Recon",           "/recon " + target,         "Web recon on main domain", false},
+			},
+		}
+
+	case TargetBinary:
+		return OmegaPipeline{
+			TargetType:  TargetBinary,
+			Description: "Binary/Executable — reverse engineering + malware analysis",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: RevEng",          "/reveng " + target,        "Static + dynamic analysis: radare2, checksec, strings", true},
+				{"Phase 1: Malware Scan",    "/reveng " + target + " --mode malware", "YARA, ssdeep, clamscan, VirusTotal hash", false},
+			},
+		}
+
+	case TargetAPK:
+		return OmegaPipeline{
+			TargetType:  TargetAPK,
+			Description: "Android APK — mobile security analysis",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: Mobile Analysis", "/mobile " + target,        "APK decompile, secret scan, endpoint extraction", true},
+				{"Phase 1: RevEng",          "/reveng " + target + " --mode mobile", "jadx, apktool, SSL pinning check", false},
+			},
+		}
+
+	case TargetHash:
+		return OmegaPipeline{
+			TargetType:  TargetHash,
+			Description: "Hash — threat intelligence lookup",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: Threat Intel",    "/threat " + target,        "VirusTotal + MalwareBazaar + OTX hash lookup", true},
+			},
+		}
+
+	default:
+		return OmegaPipeline{
+			TargetType:  TargetUnknown,
+			Description: "Unknown target type — running web pipeline as default",
+			Phases: []OmegaPhaseStep{
+				{"Phase 0: OSINT",           "/osint " + target,         "Basic OSINT", false},
+				{"Phase 1: Recon",           "/recon " + target,         "Recon", true},
+				{"Phase 2: Hunt",            "/hunt " + target,          "Hunt", true},
+			},
+		}
+	}
+}
+
+// DisplayOmegaPipeline prints the detected pipeline to terminal
+func DisplayOmegaPipeline(pipeline OmegaPipeline, target string) {
+	s := func(color lipgloss.Color, text string) string {
+		return lipgloss.NewStyle().Foreground(color).Render(text)
+	}
+	b := func(color lipgloss.Color, text string) string {
+		return lipgloss.NewStyle().Bold(true).Foreground(color).Render(text)
+	}
+
+	fmt.Println()
+	fmt.Println(b(cyan, "  🎯 OMEGA SMART PIPELINE — "+target))
+	fmt.Println(s(lipgloss.Color("#333333"), "  "+strings.Repeat("─", 60)))
+	fmt.Println()
+
+	// Target type badge
+	typeColor := cyan
+	switch pipeline.TargetType {
+	case TargetWeb:     typeColor = lipgloss.Color("#00FF88")
+	case TargetIP:      typeColor = lipgloss.Color("#FF6600")
+	case TargetEmail:   typeColor = lipgloss.Color("#FFD700")
+	case TargetPerson:  typeColor = lipgloss.Color("#8A2BE2")
+	case TargetCompany: typeColor = lipgloss.Color("#00CFFF")
+	case TargetBinary:  typeColor = lipgloss.Color("#FF4444")
+	case TargetAPK:     typeColor = lipgloss.Color("#00FF00")
+	case TargetHash:    typeColor = lipgloss.Color("#FF4444")
+	}
+
+	fmt.Println(b(typeColor, fmt.Sprintf("  Target type: %s", strings.ToUpper(string(pipeline.TargetType)))))
+	fmt.Println(s(dim, "  "+pipeline.Description))
+	fmt.Println()
+	fmt.Println(b(yellow, "  Pipeline:"))
+	fmt.Println()
+
+	for i, phase := range pipeline.Phases {
+		required := ""
+		if phase.Required {
+			required = s(green, " [required]")
+		} else {
+			required = s(dim, " [optional]")
+		}
+		fmt.Printf("  %s %s%s\n",
+			b(cyan, fmt.Sprintf("%d.", i+1)),
+			b(lipgloss.Color("#E0E0E0"), phase.Name),
+			required)
+		fmt.Println(s(dim, "     → "+phase.Description))
+		fmt.Println(s(lipgloss.Color("#555555"), "     $ cybermind "+phase.Command))
+		fmt.Println()
+	}
+}
+
+// isHexString checks if a string is all hex characters
+func isHexString(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return len(s) > 0
 }

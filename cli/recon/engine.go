@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"cybermind-cli/brain"
 )
 
 // IsLinux returns true if running on Linux
@@ -410,6 +412,12 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 			}
 			progress(ToolStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
 
+			// ── Brain self-learning: record every tool run ─────────────────
+			// This feeds the adaptive intelligence system — confidence scores
+			// update in real-time so future scans prioritize effective tools.
+			toolSuccess := last.Output != "" && last.Error == ""
+			brain.RecordToolRun(target, spec.Name, took, toolSuccess, 0, nil, last.Error)
+
 			// Mark cascade group as succeeded if this tool produced output
 			if spec.CascadeGroup != "" && last.Output != "" {
 				cascadeGroupSuccess[spec.CascadeGroup] = true
@@ -515,6 +523,30 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 
 	buildCombined(&result)
 	result.Context = ctx
+
+	// ── Brain: record completed scan session ──────────────────────────────
+	// Updates the self-model with what we found — future scans learn from this.
+	go func() {
+		var bugTypes []string
+		var techStack []string
+		if ctx != nil {
+			techStack = ctx.Technologies
+		}
+		brain.RecordScanComplete(brain.ScanObservation{
+			Target:      target,
+			Mode:        "recon",
+			StartTime:   time.Now().Add(-30 * time.Minute), // approximate
+			EndTime:     time.Now(),
+			BugsFound:   0, // recon doesn't find bugs directly
+			BugTypes:    bugTypes,
+			TechStack:   techStack,
+			WAFDetected: ctx != nil && ctx.WAFDetected,
+			WAFVendor:   func() string { if ctx != nil { return ctx.WAFVendor }; return "" }(),
+			Decision:    "recon complete — proceed to hunt",
+			Outcome:     func() string { if len(result.Tools) > 0 { return "success" }; return "partial" }(),
+		})
+	}()
+
 	return result
 }
 

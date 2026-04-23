@@ -1189,3 +1189,441 @@ func GeneratePersistenceCommands(lhost, lport string) map[string]string {
 		"sshkey":   "mkdir -p ~/.ssh && echo 'YOUR_PUBLIC_KEY' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
 	}
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PHASE 1 ADDITIONS — 2025/2026 MISSING TOOLS
+// Research-backed: most impactful tools not yet in registry
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── interactsh-client — OOB/blind vulnerability detection (SSRF, XXE, RCE, Log4Shell) ──
+// Industry standard for blind vuln detection — used by every serious bug bounty hunter
+// Detects: blind SSRF, blind XSS, blind RCE, DNS rebinding, Log4Shell, SSTI OOB
+var extraExploitRegistry = []ToolSpec{
+	{
+		Name: "interactsh-client", Phase: 1, Timeout: 300,
+		VulnTypes:   []string{"all", "ssrf", "rce", "xxe", "oob"},
+		InstallHint: "go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest",
+		InstallCmd:  "go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"-server", "oast.pro",
+				"-n", "1",
+				"-v",
+				"-o", "/tmp/cybermind_interactsh.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"-server", "oast.fun", "-n", "1"}
+			},
+		},
+	},
+
+	// ── ffuf — IDOR/auth bypass/endpoint fuzzing (most used bug bounty tool 2025) ──
+	// Not just dir brute — used for: IDOR (user IDs), auth bypass, param fuzzing, API versioning
+	{
+		Name: "ffuf", Phase: 1, Timeout: 3600,
+		VulnTypes:   []string{"all", "idor", "auth", "web", "rce"},
+		InstallHint: "sudo apt install ffuf -y",
+		InstallCmd:  "sudo apt install ffuf -y",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			// IDOR fuzzing — test numeric IDs in common endpoints
+			return []string{
+				"-u", u + "/api/v1/users/FUZZ",
+				"-w", "/usr/share/seclists/Fuzzing/4-digits-0000-9999.txt",
+				"-mc", "200,201,301,302",
+				"-t", "200",
+				"-rate", "500",
+				"-o", "/tmp/cybermind_ffuf_idor.json",
+				"-of", "json",
+				"-ac",  // auto-calibrate
+				"-v",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{
+					"-u", u + "/FUZZ",
+					"-w", "/usr/share/seclists/Discovery/Web-Content/api/api-endpoints.txt",
+					"-mc", "200,201,301,302",
+					"-t", "100", "-ac",
+				}
+			},
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				// Auth bypass fuzzing
+				return []string{
+					"-u", u + "/admin/FUZZ",
+					"-w", "/usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt",
+					"-mc", "200,201,301,302,403",
+					"-t", "100", "-ac",
+				}
+			},
+		},
+	},
+
+	// ── Sliver C2 — modern open-source C2 framework (replaces Metasploit for red teams) ──
+	// Used by: APT groups, red teams, bug bounty hunters for post-exploit
+	// Features: mTLS, WireGuard, HTTP/S, DNS C2, implant generation, BOF support
+	// More stealthy than Metasploit — evades most EDRs
+	{
+		Name: "sliver", Phase: 3, Timeout: 120,
+		VulnTypes:   []string{"all", "postexploit", "lateral", "rce"},
+		InstallHint: "curl https://sliver.sh/install | sudo bash",
+		InstallCmd:  "curl https://sliver.sh/install | sudo bash",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			// Start Sliver server — generates implant for target
+			return []string{
+				"daemon",
+				"--lhost", "0.0.0.0",
+				"--lport", "31337",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"daemon"}
+			},
+		},
+	},
+
+	// ── Havoc C2 — most advanced open-source C2 (2025 standard for red teams) ──
+	// Features: Demon implant, BOF execution, token manipulation, AMSI/ETW bypass
+	// Used by: nation-state actors, advanced red teams
+	{
+		Name: "havoc", Phase: 3, Timeout: 120,
+		VulnTypes:   []string{"all", "postexploit", "lateral", "evasion"},
+		InstallHint: "git clone https://github.com/HavocFramework/Havoc /opt/havoc && cd /opt/havoc && make && sudo ln -sf /opt/havoc/havoc /usr/local/bin/havoc",
+		InstallCmd:  "git clone https://github.com/HavocFramework/Havoc /opt/havoc && cd /opt/havoc && make && sudo ln -sf /opt/havoc/havoc /usr/local/bin/havoc",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"server",
+				"--profile", "/tmp/cybermind_havoc_profile.yaotl",
+				"--verbose",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"server", "--verbose"}
+			},
+		},
+	},
+
+	// ── cloud_enum — multi-cloud asset enumeration (AWS, Azure, GCP) ──
+	// Finds: S3 buckets, Azure blobs, GCP storage, exposed cloud assets
+	// Critical for bug bounty — cloud misconfigs = easy high/critical findings
+	{
+		Name: "cloud_enum", Phase: 1, Timeout: 1800,
+		VulnTypes:   []string{"all", "cloud", "misconfig", "web"},
+		InstallHint: "pip3 install cloud-enum --break-system-packages",
+		InstallCmd:  "pip3 install cloud-enum --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			// Strip domain to company name for cloud enum
+			company := target
+			if idx := strings.Index(company, "."); idx > 0 {
+				company = company[:idx]
+			}
+			return []string{
+				"-k", company,
+				"-k", target,
+				"--disable-azure",  // start with AWS + GCP
+				"-t", "50",
+				"-l", "/tmp/cybermind_cloud_enum.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				company := target
+				if idx := strings.Index(company, "."); idx > 0 {
+					company = company[:idx]
+				}
+				return []string{"-k", company, "-t", "20"}
+			},
+		},
+	},
+
+	// ── pacu — AWS exploitation framework (post-exploit for cloud) ──
+	// Finds: IAM privilege escalation, S3 data exfil, Lambda backdoors, EC2 SSRF
+	// Used when SSRF → AWS metadata → credentials found
+	{
+		Name: "pacu", Phase: 4, Timeout: 600,
+		VulnTypes:   []string{"all", "cloud", "postexploit", "aws"},
+		InstallHint: "pip3 install pacu --break-system-packages",
+		InstallCmd:  "pip3 install pacu --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"--session", "cybermind",
+				"--module-name", "iam__enum_permissions",
+				"--exec",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"--session", "cybermind", "--module-name", "iam__bruteforce_permissions", "--exec"}
+			},
+		},
+	},
+
+	// ── roadrecon — Azure AD reconnaissance (post-exploit for M365/Azure) ──
+	// Finds: users, groups, apps, service principals, conditional access policies
+	// Used when Azure credentials found via phishing/SSRF
+	{
+		Name: "roadrecon", Phase: 4, Timeout: 600,
+		VulnTypes:   []string{"all", "cloud", "postexploit", "azure", "ad"},
+		InstallHint: "pip3 install roadrecon --break-system-packages",
+		InstallCmd:  "pip3 install roadrecon --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"gather",
+				"--mfa",
+				"-d", target,
+				"-o", "/tmp/cybermind_roadrecon.db",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"gather", "-d", target}
+			},
+		},
+	},
+
+	// ── trufflehog — secret scanning in repos, S3, GCS, filesystem ──
+	// Finds: AWS keys, GitHub tokens, Stripe keys, private keys in source code
+	// Critical for bug bounty — leaked secrets = instant critical finding
+	{
+		Name: "trufflehog", Phase: 1, Timeout: 900,
+		VulnTypes:   []string{"all", "secrets", "cloud", "web"},
+		InstallHint: "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin",
+		InstallCmd:  "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"git", u,
+				"--json",
+				"--no-update",
+				"--only-verified",
+				"--concurrency", "10",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"filesystem", "/tmp/cybermind_js_files/", "--json", "--no-update"}
+			},
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"git", u, "--json", "--no-update"}
+			},
+		},
+	},
+
+	// ── puredns — fast DNS brute force + wildcard filtering ──
+	// Better than amass for pure subdomain brute force
+	// Resolves 10M+ subdomains/hour — finds hidden subdomains
+	{
+		Name: "puredns", Phase: 1, Timeout: 3600,
+		VulnTypes:   []string{"all", "recon", "web"},
+		InstallHint: "go install github.com/d3mondev/puredns/v2@latest",
+		InstallCmd:  "go install github.com/d3mondev/puredns/v2@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"brute",
+				"/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt",
+				target,
+				"-r", "/tmp/cybermind_resolvers.txt",
+				"--write", "/tmp/cybermind_puredns.txt",
+				"-t", "500",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"brute", "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt", target, "-t", "100"}
+			},
+		},
+	},
+
+	// ── jwt_tool — JWT attacks (none alg, RS256→HS256, key injection, claim tampering) ──
+	// Critical for modern web apps — JWT misconfig = auth bypass = account takeover
+	{
+		Name: "jwt_tool", Phase: 1, Timeout: 600,
+		VulnTypes:   []string{"all", "auth", "jwt", "web"},
+		InstallHint: "git clone https://github.com/ticarpi/jwt_tool /opt/jwt_tool && pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages && sudo tee /usr/local/bin/jwt_tool > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/jwt_tool/jwt_tool.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/jwt_tool",
+		InstallCmd:  "git clone https://github.com/ticarpi/jwt_tool /opt/jwt_tool && pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-t", u,
+				"-M", "at",   // all tests: none alg, RS256→HS256, key confusion, injection
+				"-np",        // no proxy
+				"-v",
+				"-o", "json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-t", u, "-M", "pb"}  // playbook mode
+			},
+		},
+	},
+
+	// ── nuclei-fuzzing — nuclei with fuzzing templates (DAST mode) ──
+	// Separate entry for fuzzing-specific templates — finds logic bugs nuclei misses
+	{
+		Name: "nuclei-fuzz", Phase: 1, Timeout: 3600,
+		VulnTypes:   []string{"all", "web", "idor", "auth", "rce"},
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		InstallCmd:  "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			args := []string{
+				"-u", u,
+				"-t", "fuzzing/",
+				"-fuzz",
+				"-c", "25",
+				"-timeout", "15",
+				"-no-color",
+				"-json-export", "/tmp/cybermind_nuclei_fuzz.json",
+			}
+			if len(ctx.LiveURLs) > 0 {
+				f := fmt.Sprintf("/tmp/cybermind_nuclei_fuzz_urls.txt")
+				return []string{
+					"-list", f,
+					"-t", "fuzzing/",
+					"-fuzz",
+					"-c", "25", "-timeout", "15", "-no-color",
+					"-json-export", "/tmp/cybermind_nuclei_fuzz.json",
+				}
+			}
+			return args
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-t", "fuzzing/", "-c", "10", "-no-color"}
+			},
+		},
+	},
+
+	// ── ghauri — advanced SQLi tool (better than sqlmap for modern apps) ──
+	// Handles: WAF bypass, JSON injection, GraphQL SQLi, blind time-based
+	// More accurate than sqlmap — fewer false positives
+	{
+		Name: "ghauri", Phase: 1, Timeout: 3600,
+		VulnTypes:   []string{"all", "sqli", "web"},
+		InstallHint: "pip3 install ghauri --break-system-packages",
+		InstallCmd:  "pip3 install ghauri --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				for _, lu := range ctx.LiveURLs {
+					if strings.Contains(lu, "=") {
+						u = lu
+						break
+					}
+				}
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"--batch",
+				"--dbs",
+				"--level", "3",
+				"--threads", "10",
+				"--random-agent",
+				"--technique", "BEUSTQ",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "--batch", "--dbs", "--random-agent"}
+			},
+		},
+	},
+
+	// ── dalfox — XSS scanner (also in hunt, but run in exploit phase with deeper payloads) ──
+	{
+		Name: "dalfox", Phase: 1, Timeout: 3600,
+		VulnTypes:   []string{"all", "xss", "web"},
+		InstallHint: "go install github.com/hahwul/dalfox/v2@latest",
+		InstallCmd:  "go install github.com/hahwul/dalfox/v2@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			args := []string{
+				"url", u,
+				"--deep-domxss",
+				"--waf-bypass",
+				"--follow-redirects",
+				"--silence",
+				"--no-color",
+				"--output", "/tmp/cybermind_dalfox_exploit.txt",
+			}
+			if ctx.WAFDetected {
+				args = append(args, "--delay", "1000", "--timeout", "30")
+			}
+			return args
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"url", u, "--silence", "--no-color"}
+			},
+		},
+	},
+}
+
+// init merges extraExploitRegistry into exploitRegistry at startup
+func init() {
+	exploitRegistry = append(exploitRegistry, extraExploitRegistry...)
+}

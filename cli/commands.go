@@ -3714,6 +3714,67 @@ func runOmegaPlan(target string, localMode bool) {
 		fmt.Println()
 	}
 
+	// ── STEP 0.5: Smart target-type detection ────────────────────────────
+	// Detect what kind of target this is and show the right pipeline.
+	// This is the core of "OMEGA target-type routing".
+	detectedType := omega.DetectOmegaTargetType(target)
+	pipeline := omega.GetOmegaPipeline(detectedType, target)
+	omega.DisplayOmegaPipeline(pipeline, target)
+
+	// For non-web targets: run the specialized pipeline and return
+	// Web targets continue with the full OMEGA flow below
+	switch detectedType {
+	case omega.TargetEmail, omega.TargetPhone, omega.TargetPerson, omega.TargetHash:
+		// Pure intelligence targets — no recon/hunt/abhimanyu needed
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+			fmt.Sprintf("  ℹ  %s target detected — running intelligence pipeline", strings.ToUpper(string(detectedType)))))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Run each phase manually with the commands shown above."))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Or press Enter to auto-run all phases now."))
+		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Auto-run pipeline? [Y/n] → "))
+		var pipeAns string
+		fmt.Scanln(&pipeAns)
+		if strings.ToLower(strings.TrimSpace(pipeAns)) != "n" {
+			runOmegaSpecializedPipeline(pipeline, localMode)
+		}
+		return
+
+	case omega.TargetBinary, omega.TargetAPK:
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
+			fmt.Sprintf("  ℹ  %s target detected — running reverse engineering pipeline", strings.ToUpper(string(detectedType)))))
+		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Auto-run pipeline? [Y/n] → "))
+		var pipeAns string
+		fmt.Scanln(&pipeAns)
+		if strings.ToLower(strings.TrimSpace(pipeAns)) != "n" {
+			runOmegaSpecializedPipeline(pipeline, localMode)
+		}
+		return
+
+	case omega.TargetCompany:
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00CFFF")).Render(
+			"  ℹ  Company target detected — running corporate intelligence pipeline"))
+		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Auto-run pipeline? [Y/n] → "))
+		var pipeAns string
+		fmt.Scanln(&pipeAns)
+		if strings.ToLower(strings.TrimSpace(pipeAns)) != "n" {
+			runOmegaSpecializedPipeline(pipeline, localMode)
+		}
+		return
+
+	case omega.TargetIP:
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
+			"  ℹ  IP target detected — network exploitation pipeline"))
+		// IP targets still go through the full OMEGA flow but with network focus
+		os.Setenv("CYBERMIND_FOCUS_BUGS", "network,rce,auth")
+		// Fall through to full OMEGA flow
+
+	case omega.TargetWeb:
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88")).Render(
+			"  ✓ Web/Domain target — full bug bounty pipeline"))
+		// Fall through to full OMEGA flow
+	}
+
 	// ── STEP 1: System resource check ────────────────────────────────────
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ Checking system resources..."))
 	sysRes := omega.CheckSystemResources()
@@ -4108,6 +4169,127 @@ func appendStrUnique(slice []string, val string) []string {
 		}
 	}
 	return append(slice, val)
+}
+
+// runOmegaSpecializedPipeline executes a non-web OMEGA pipeline
+// (email, phone, person, company, binary, APK, hash targets)
+func runOmegaSpecializedPipeline(pipeline omega.OmegaPipeline, localMode bool) {
+	s := func(color lipgloss.Color, text string) string {
+		return lipgloss.NewStyle().Foreground(color).Render(text)
+	}
+	b := func(color lipgloss.Color, text string) string {
+		return lipgloss.NewStyle().Bold(true).Foreground(color).Render(text)
+	}
+
+	fmt.Println()
+	fmt.Println(b(cyan, fmt.Sprintf("  ⚡ OMEGA PIPELINE — %s", strings.ToUpper(string(pipeline.TargetType)))))
+	fmt.Println(s(lipgloss.Color("#333333"), "  "+strings.Repeat("─", 60)))
+	fmt.Println()
+
+	for i, phase := range pipeline.Phases {
+		fmt.Println()
+		fmt.Println(b(lipgloss.Color("#FFD700"), fmt.Sprintf("  [%d/%d] %s", i+1, len(pipeline.Phases), phase.Name)))
+		fmt.Println(s(dim, "  "+phase.Description))
+		fmt.Println()
+
+		// Parse the command and run it
+		// Commands are like "/osint-deep target" or "/breach target"
+		parts := strings.Fields(phase.Command)
+		if len(parts) == 0 {
+			continue
+		}
+
+		cmd := parts[0]
+		args := parts[1:]
+
+		switch cmd {
+		case "/osint-deep":
+			if len(args) > 0 {
+				runOSINTDeep(args[0], nil, localMode)
+			}
+		case "/breach":
+			if len(args) > 0 {
+				runBreachCheck(args, localMode)
+			}
+		case "/locate":
+			if len(args) > 0 {
+				runLocate(args[0], false, localMode)
+			}
+		case "/threat":
+			if len(args) > 0 {
+				runThreatIntel(args[0], localMode)
+			}
+		case "/osint":
+			if len(args) > 0 {
+				runOSINT(args[0], localMode)
+			}
+		case "/cloud":
+			if len(args) > 0 {
+				// Cloud scan — inline
+				fmt.Println(s(cyan, "  ⟳ Cloud misconfiguration scan..."))
+				cloudTarget := args[0]
+				mem := brain.LoadTarget(cloudTarget)
+				cloudResult := brain.ScanCloudMisconfigurations(cloudTarget, mem.SubdomainsFound)
+				fmt.Println(s(lipgloss.Color("#E0E0E0"), brain.FormatCloudReport(cloudResult)))
+			}
+		case "/reveng":
+			if len(args) > 0 {
+				mode := "all"
+				for j, a := range args {
+					if a == "--mode" && j+1 < len(args) {
+						mode = args[j+1]
+					}
+				}
+				runRevEng(args[0], mode, nil, localMode)
+			}
+		case "/mobile":
+			if len(args) > 0 {
+				fmt.Println(s(cyan, "  ⟳ Mobile APK analysis..."))
+				mobileResult := brain.AnalyzeAPK(args[0])
+				fmt.Println(s(lipgloss.Color("#E0E0E0"), brain.FormatMobileReport(mobileResult)))
+			}
+		case "/cve-feed":
+			if len(args) > 0 {
+				mem := brain.LoadTarget(args[0])
+				cveResult := brain.MatchCVEsToTarget(args[0], mem.TechStack, "")
+				fmt.Println(s(lipgloss.Color("#E0E0E0"), brain.FormatCVEReport(cveResult)))
+			}
+		case "/recon":
+			if len(args) > 0 {
+				runAutoReconSilent(args[0], nil)
+			}
+		case "/hunt":
+			if len(args) > 0 {
+				runHuntSilent(args[0], nil, nil)
+			}
+		case "/abhimanyu":
+			if len(args) > 0 {
+				vulnType := "all"
+				if len(args) > 1 {
+					vulnType = args[1]
+				}
+				runAbhimanyu(args[0], vulnType)
+			}
+		default:
+			fmt.Println(s(dim, fmt.Sprintf("  Skipping %s — run manually: cybermind %s", cmd, phase.Command)))
+		}
+
+		// Optional phase — ask before running
+		if !phase.Required && i < len(pipeline.Phases)-1 {
+			fmt.Println()
+			fmt.Print(s(lipgloss.Color("#FFD700"), fmt.Sprintf("  Continue to next phase? [Y/n] → ")))
+			var cont string
+			fmt.Scanln(&cont)
+			if strings.ToLower(strings.TrimSpace(cont)) == "n" {
+				fmt.Println(s(dim, "  Pipeline stopped. Run remaining phases manually."))
+				return
+			}
+		}
+	}
+
+	fmt.Println()
+	fmt.Println(b(green, "  ✓ OMEGA Pipeline complete!"))
+	fmt.Println()
 }
 // Priority: xterm → gnome-terminal → konsole → alacritty → tmux popup → skip
 // The floating terminal shows ONLY the log file — main terminal shows tool status.

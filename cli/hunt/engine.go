@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"cybermind-cli/brain"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -552,6 +554,10 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 			}
 			progress(HuntStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
 
+			// ── Brain self-learning: record every tool run ─────────────────
+			toolSuccess := last.Output != "" && last.Error == ""
+			brain.RecordToolRun(target, spec.Name, took, toolSuccess, 0, nil, last.Error)
+
 			// Mark cascade group as succeeded if this tool produced output
 			if spec.CascadeGroup != "" && last.Output != "" {
 				cascadeGroupSuccess[spec.CascadeGroup] = true
@@ -619,6 +625,35 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 	// Adaptive: uses known open ports from recon if available (faster)
 	runPhase(6)
 
+	// ── Brain: record completed hunt session ──────────────────────────────
+	go func() {
+		bugTypes := []string{}
+		for _, v := range ctx.VulnsFound {
+			lower := strings.ToLower(v)
+			if strings.Contains(lower, "xss") { bugTypes = appendUniqueStr(bugTypes, "xss") }
+			if strings.Contains(lower, "sqli") || strings.Contains(lower, "sql") { bugTypes = appendUniqueStr(bugTypes, "sqli") }
+			if strings.Contains(lower, "ssrf") { bugTypes = appendUniqueStr(bugTypes, "ssrf") }
+			if strings.Contains(lower, "rce") { bugTypes = appendUniqueStr(bugTypes, "rce") }
+			if strings.Contains(lower, "idor") { bugTypes = appendUniqueStr(bugTypes, "idor") }
+		}
+		for _, x := range ctx.XSSFound {
+			if x != "" { bugTypes = appendUniqueStr(bugTypes, "xss") }
+		}
+		brain.RecordScanComplete(brain.ScanObservation{
+			Target:      target,
+			Mode:        "hunt",
+			StartTime:   time.Now().Add(-45 * time.Minute),
+			EndTime:     time.Now(),
+			BugsFound:   len(ctx.VulnsFound) + len(ctx.XSSFound),
+			BugTypes:    bugTypes,
+			TechStack:   ctx.Technologies,
+			WAFDetected: ctx.WAFDetected,
+			WAFVendor:   ctx.WAFVendor,
+			Decision:    "hunt complete — proceed to abhimanyu",
+			Outcome:     func() string { if len(ctx.VulnsFound)+len(ctx.XSSFound) > 0 { return "success" }; return "partial" }(),
+		})
+	}()
+
 	result.Context = ctx
 	return result
 }
@@ -641,4 +676,14 @@ func GetHuntCombinedOutput(r HuntResult) string {
 		}
 	}
 	return b.String()
+}
+
+// appendUniqueStr appends to a string slice only if not already present.
+func appendUniqueStr(slice []string, val string) []string {
+	for _, s := range slice {
+		if s == val {
+			return slice
+		}
+	}
+	return append(slice, val)
 }

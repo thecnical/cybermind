@@ -167,7 +167,7 @@ func isAvailable(tool string) bool {
 	return err == nil
 }
 
-// InstallTool installs a missing exploit tool
+// InstallTool installs a missing exploit tool using isolated venv for Python tools
 func InstallTool(spec ToolSpec, progress func(AbhimanyuStatus)) error {
 	if isAvailable(spec.Name) {
 		return nil
@@ -178,10 +178,66 @@ func InstallTool(spec ToolSpec, progress func(AbhimanyuStatus)) error {
 		return fmt.Errorf("no install command for %s", spec.Name)
 	}
 
+	// C2 tools — document only, never auto-install
+	c2Tools := map[string]bool{"sliver": true, "havoc": true}
+	if c2Tools[spec.Name] {
+		progress(AbhimanyuStatus{
+			Tool:   spec.Name,
+			Kind:   StatusSkipped,
+			Reason: "C2 framework — requires manual setup. See /tmp/cybermind_c2_setup.txt",
+		})
+		return fmt.Errorf("c2 tool requires manual setup")
+	}
+
+	// Python pip tools — use isolated venv
+	if strings.Contains(spec.InstallCmd, "pip3 install") || strings.Contains(spec.InstallCmd, "pip install") {
+		pkgName := spec.Name
+		// Extract package name from install command
+		parts := strings.Fields(spec.InstallCmd)
+		for i, p := range parts {
+			if p == "install" && i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "-") {
+				pkgName = parts[i+1]
+				break
+			}
+		}
+		if err := installPipIsolated(spec.Name, pkgName); err == nil {
+			progress(AbhimanyuStatus{Tool: spec.Name, Kind: StatusDone})
+			return nil
+		}
+	}
+
+	// Git tools — use isolated venv
+	if strings.Contains(spec.InstallCmd, "git clone") {
+		// Extract repo URL and dir from install command
+		parts := strings.Fields(spec.InstallCmd)
+		for i, p := range parts {
+			if p == "clone" && i+2 < len(parts) {
+				repoURL := parts[i+1]
+				installDir := parts[i+2]
+				// Find main script from install command
+				mainScript := ""
+				if strings.Contains(spec.InstallCmd, ".py") {
+					for _, p2 := range parts {
+						if strings.HasSuffix(p2, ".py") {
+							mainScript = strings.TrimPrefix(p2, installDir+"/")
+							break
+						}
+					}
+				}
+				if err := installGitIsolated(spec.Name, repoURL, installDir, mainScript); err == nil {
+					progress(AbhimanyuStatus{Tool: spec.Name, Kind: StatusDone})
+					return nil
+				}
+				break
+			}
+		}
+	}
+
+	// Default: run install command as-is
 	cmd := exec.Command("bash", "-c", spec.InstallCmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Stdin = nil // prevent tty suspension during install
+	cmd.Stdin = nil
 	if err := cmd.Run(); err != nil {
 		progress(AbhimanyuStatus{Tool: spec.Name, Kind: StatusFailed, Reason: err.Error()})
 		return err
@@ -189,6 +245,89 @@ func InstallTool(spec ToolSpec, progress func(AbhimanyuStatus)) error {
 
 	progress(AbhimanyuStatus{Tool: spec.Name, Kind: StatusDone})
 	return nil
+}
+
+// installPipIsolated installs a pip package in an isolated venv
+func installPipIsolated(toolName, pkgName string) error {
+	// Method 1: pipx
+	exec.Command("sudo", "apt", "install", "-y", "pipx", "python3-venv", "-q").Run()
+	if _, err := exec.LookPath("pipx"); err == nil {
+		cmd := exec.Command("pipx", "install", "--force", pkgName)
+		cmd.Env = append(os.Environ(), "PIPX_BIN_DIR=/usr/local/bin", "PIPX_HOME=/opt/pipx")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = nil
+		if cmd.Run() == nil {
+			exec.Command("pipx", "ensurepath").Run()
+			if _, e := exec.LookPath(toolName); e == nil {
+				return nil
+			}
+		}
+	}
+
+	// Method 2: isolated venv
+	venvDir := "/opt/" + toolName + "-venv"
+	exec.Command("python3", "-m", "venv", "--clear", venvDir).Run()
+	venvPip := venvDir + "/bin/pip"
+	exec.Command(venvPip, "install", "--upgrade", "pip", "-q").Run()
+	if exec.Command(venvPip, "install", pkgName, "-q").Run() == nil {
+		venvBin := venvDir + "/bin/" + toolName
+		if _, e := os.Stat(venvBin); e == nil {
+			exec.Command("sudo", "ln", "-sf", venvBin, "/usr/local/bin/"+toolName).Run()
+			return nil
+		}
+	}
+
+	// Method 3: --break-system-packages
+	return exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q").Run()
+}
+
+// installGitIsolated clones a git repo and installs in isolated venv
+func installGitIsolated(name, repoURL, installDir, mainScript string) error {
+	exec.Command("sudo", "apt", "install", "-y", "python3-venv", "git", "-q").Run()
+	exec.Command("sudo", "rm", "-rf", installDir).Run()
+
+	if err := exec.Command("git", "clone", "--depth=1", repoURL, installDir).Run(); err != nil {
+		return err
+	}
+
+	venvDir := installDir + "/.venv"
+	exec.Command("python3", "-m", "venv", "--clear", venvDir).Run()
+	venvPip    := venvDir + "/bin/pip"
+	venvPython := venvDir + "/bin/python3"
+
+	exec.Command(venvPip, "install", "--upgrade", "pip", "-q").Run()
+
+	reqFile := installDir + "/requirements.txt"
+	if _, err := os.Stat(reqFile); err == nil {
+		exec.Command(venvPip, "install", "-r", reqFile, "-q").Run()
+	}
+	for _, f := range []string{installDir + "/setup.py", installDir + "/pyproject.toml"} {
+		if _, err := os.Stat(f); err == nil {
+			exec.Command(venvPip, "install", "-e", installDir, "-q").Run()
+			break
+		}
+	}
+
+	if mainScript != "" {
+		scriptPath := installDir + "/" + mainScript
+		wrapper := fmt.Sprintf("#!/bin/bash\nexec %s %s \"$@\"\n", venvPython, scriptPath)
+		wrapperPath := "/usr/local/bin/" + name
+		teeCmd := exec.Command("sudo", "tee", wrapperPath)
+		teeCmd.Stdin = strings.NewReader(wrapper)
+		teeCmd.Run()
+		exec.Command("sudo", "chmod", "+x", wrapperPath).Run()
+		if _, err := os.Stat(scriptPath); err == nil {
+			return nil
+		}
+	}
+
+	venvBin := venvDir + "/bin/" + name
+	if _, err := os.Stat(venvBin); err == nil {
+		exec.Command("sudo", "ln", "-sf", venvBin, "/usr/local/bin/"+name).Run()
+		return nil
+	}
+	return fmt.Errorf("%s: install completed but binary not found", name)
 }
 
 // RunExploitTool runs a single exploit tool exhaustively (primary → fallbacks)
