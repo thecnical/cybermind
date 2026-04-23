@@ -19,6 +19,7 @@ import (
 
 	"cybermind-cli/anon"
 	"cybermind-cli/api"
+	"cybermind-cli/abhimanyu"
 	"cybermind-cli/bizlogic"
 	"cybermind-cli/brain"
 	"cybermind-cli/breach"
@@ -3951,10 +3952,135 @@ _ = osintPhase0Result
 
 	runAgenticOmega(target, skillLevel, focusBugs, execMode, localMode)
 
-	// ── STEP 10: Aegis Deep Scan — runs after OMEGA agentic loop ─────────
-	// Aegis adds unique capabilities: HTTP smuggling, OOB SSRF/XXE,
-	// cloud asset discovery, Metasploit auto-mapping, CVE correlation,
-	// SARIF export, D3.js HTML report with attack path graph.
+	// ── STEP 10: Abhimanyu — GUARANTEED FINAL PHASE ──────────────────────
+	// Abhimanyu always runs after OMEGA agentic loop, regardless of bug count.
+	// It uses all intelligence gathered: ports, vulns, creds, tech stack.
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+		"  ⚔️  ABHIMANYU MODE — FINAL EXPLOITATION PHASE"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
+		"  Entering the Chakravyuh. Fighting every layer. No retreat."))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render(
+		"  " + strings.Repeat("─", 60)))
+	fmt.Println()
+
+	abhimanyuAns := readWithTimeout(
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Run Abhimanyu exploit phase? [Y/n] → "),
+		"y", 20)
+
+	if strings.ToLower(strings.TrimSpace(abhimanyuAns)) != "n" {
+		// Build AbhimanyuContext from everything OMEGA gathered
+		lhost := getLocalIP()
+
+		// Load brain memory for this target — has ports, tech, vulns from recon/hunt
+		mem := brain.LoadTarget(target)
+
+		// Determine best vuln focus from what was found
+		vulnFocus := os.Getenv("CYBERMIND_FOCUS_BUGS")
+		if vulnFocus == "" {
+			vulnFocus = "all"
+		}
+
+		abhCtx := &abhimanyu.AbhimanyuContext{
+			Target:       target,
+			TargetType:   "domain",
+			VulnType:     vulnFocus,
+			LHOST:        lhost,
+			LPORT:        "4444",
+			OpenPorts:    mem.OpenPorts,
+			Technologies: mem.TechStack,
+			LiveURLs:     mem.LiveURLs,
+			WAFDetected:  mem.WAFDetected,
+			WAFVendor:    mem.WAFVendor,
+		}
+
+		// Pass vulns/XSS found during hunt phase
+		for _, b := range mem.BugsFound {
+			lower := strings.ToLower(b.Type)
+			if strings.Contains(lower, "xss") {
+				abhCtx.XSSFound = appendStrUnique(abhCtx.XSSFound, b.URL)
+			} else {
+				abhCtx.VulnsFound = appendStrUnique(abhCtx.VulnsFound, b.Title)
+			}
+		}
+
+		results := abhimanyu.RunAbhimanyuMode(abhCtx, func(status abhimanyu.AbhimanyuStatus) {
+			switch status.Kind {
+			case abhimanyu.StatusInstalling:
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+					fmt.Sprintf("  ⟳ %-22s installing...", status.Tool)))
+			case abhimanyu.StatusRunning:
+				reason := ""
+				if status.Reason != "" {
+					reason = " (" + status.Reason + ")"
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(
+					fmt.Sprintf("  ⟳ %-22s attacking...%s", status.Tool, reason)))
+			case abhimanyu.StatusDone:
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+					fmt.Sprintf("  ✓ %-22s done (%s)", status.Tool, status.Took.Round(time.Millisecond))))
+			case abhimanyu.StatusFailed:
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(
+					fmt.Sprintf("  ✗ %-22s failed — %s", status.Tool, status.Reason)))
+			case abhimanyu.StatusSkipped:
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+					fmt.Sprintf("  - %-22s skipped — %s", status.Tool, status.Reason)))
+			}
+		})
+
+		// Print summary
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+			"  ⚔️  Abhimanyu Summary"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render(
+			"  " + strings.Repeat("─", 60)))
+
+		successCount := 0
+		for _, r := range results {
+			if r.Success && r.Output != "" {
+				successCount++
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+					fmt.Sprintf("  ✓ %-22s → %d chars output", r.Tool, len(r.Output))))
+			}
+		}
+
+		if abhCtx.ShellObtained {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF0000")).Render(
+				fmt.Sprintf("  🔴 SHELL OBTAINED: %s | Evidence: %s", abhCtx.ShellType, abhCtx.ShellEvidence)))
+		}
+		if len(abhCtx.CredsFound) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+				fmt.Sprintf("  🔑 CREDENTIALS FOUND: %d", len(abhCtx.CredsFound))))
+			for _, c := range abhCtx.CredsFound[:min(3, len(abhCtx.CredsFound))] {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("     → " + c))
+			}
+		}
+		if len(abhCtx.HashesFound) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  🔐 HASHES FOUND: %d (saved to session dir)", len(abhCtx.HashesFound))))
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			fmt.Sprintf("  Session: %s", abhCtx.SessionDir)))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			fmt.Sprintf("  MSF script: msfconsole -r %s/cybermind_msf.rc", abhCtx.SessionDir)))
+
+		// Record in brain memory
+		for _, v := range abhCtx.VulnsFound {
+			brain.RecordBug(target, brain.Bug{
+				Title:    v,
+				Type:     "exploit",
+				Severity: "high",
+				Tool:     "abhimanyu",
+			})
+		}
+	} else {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			"  Skipped. Run manually: cybermind /abhimanyu " + target))
+	}
+
+	// ── STEP 11: Aegis Deep Scan — runs after Abhimanyu ──────────────────
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
 		"  ⚔️  AEGIS DEEP SCAN — Additional attack surface coverage"))
@@ -3974,7 +4100,15 @@ _ = osintPhase0Result
 	}
 }
 
-// launchFloatingTerminal launches a live monitoring window during OMEGA execution.
+// appendStrUnique appends a string to a slice only if not already present
+func appendStrUnique(slice []string, val string) []string {
+	for _, s := range slice {
+		if s == val {
+			return slice
+		}
+	}
+	return append(slice, val)
+}
 // Priority: xterm → gnome-terminal → konsole → alacritty → tmux popup → skip
 // The floating terminal shows ONLY the log file — main terminal shows tool status.
 func launchFloatingTerminal(target string) {

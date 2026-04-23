@@ -140,38 +140,67 @@ func printHelp() {
 	fmt.Println()
 
 	if runtime.GOOS == "linux" {
-		fmt.Println(y.Render("  🐧 LINUX ONLY — AUTO RECON + HUNT:"))
-		fmt.Println(g.Render("  cybermind /plan <target>") + d.Render("         → ⚡ OMEGA planning mode (auto-doctor + deep plan + execute)"))
-		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("       → full auto recon + AI analysis"))
-		fmt.Println(g.Render("  cybermind /recon <target> --tools nmap,httpx") + d.Render(" → run specific tools only"))
-		fmt.Println(g.Render("  cybermind /hunt <target>") + d.Render("        → vulnerability hunt (XSS, params, CVEs)"))
-		fmt.Println(g.Render("  cybermind /hunt <target> --tools dalfox,nuclei") + d.Render(" → specific hunt tools"))
-		fmt.Println(g.Render("  cybermind /doctor") + d.Render("              → check all tools, auto-install missing"))
-		fmt.Println(g.Render("  cybermind /tools") + d.Render("               → quick tool status check"))
-		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("       → install all recon + hunt tools"))
-		fmt.Println(g.Render("  cybermind /abhimanyu <target>") + d.Render("  → ⚔️  exploit mode (auto-exploit all vulns)"))
-		fmt.Println(g.Render("  cybermind /abhimanyu <target> sqli") + d.Render(" → SQLi only"))
-		fmt.Println(g.Render("  cybermind /abhimanyu <target> rce") + d.Render("  → RCE/CMDi only"))
-		fmt.Println(g.Render("  cybermind /abhimanyu <target> auth") + d.Render(" → Auth brute force"))
-		fmt.Println(g.Render("  cybermind /abhimanyu <target> postexploit") + d.Render(" → Post-exploitation"))
-		fmt.Println(g.Render("  cybermind /abhimanyu <target> lateral") + d.Render(" → Lateral movement"))
-		fmt.Println(g.Render("  cybermind /osint-deep <target>") + d.Render("   → 🔍 Deep OSINT (email/username/domain/phone/company — 45 tools, 9 phases)"))
-		fmt.Println(g.Render("  cybermind /osint-deep user@gmail.com") + d.Render(" → email + breach check + social footprint"))
-		fmt.Println(g.Render("  cybermind /osint-deep johndoe") + d.Render("       → username hunt across 3000+ sites"))
-		fmt.Println(g.Render("  cybermind /reveng <binary>") + d.Render("       → ⚙️  Reverse Engineering (static+dynamic+decompile, 30 tools)"))
-		fmt.Println(g.Render("  cybermind /reveng binary --mode malware") + d.Render(" → malware analysis (YARA, ssdeep, clamscan)"))
-		fmt.Println(g.Render("  cybermind /reveng app.apk --mode mobile") + d.Render(" → APK decompile (jadx, apktool)"))
-		fmt.Println(g.Render("  cybermind /locate-advanced <target>") + d.Render(" → 🛰️  SDR cell tower tracking (needs hardware)"))
-		fmt.Println(g.Render("  cybermind /bizlogic <target>") + d.Render("   → 💰 Business logic bugs (price manipulation, IDOR, race conditions)"))
-		fmt.Println(g.Render("  cybermind /bizlogic <target> --cookie 'session=abc'") + d.Render(" → authenticated scan"))
-		fmt.Println(g.Render("  cybermind /guide <target>") + d.Render("      → 📋 AI manual testing guide (step-by-step for the 12% tools can't automate)"))
-		fmt.Println(g.Render("  cybermind /guide <target> --focus oauth") + d.Render(" → OAuth/SSO specific guide"))
-		fmt.Println(g.Render("  cybermind /aegis <target>") + d.Render("      → ⚔️  Aegis deep scan (HTTP smuggling, OOB SSRF, cloud, MSF, CVE, HTML report)"))
-		fmt.Println(g.Render("  cybermind /aegis <target> --auto") + d.Render("  → Full autonomous Aegis pentest"))
-		fmt.Println(g.Render("  cybermind /aegis --setup") + d.Render("         → Install/update Aegis platform"))
-		fmt.Println(g.Render("  cybermind /platform --setup") + d.Render("         → 🎯 Save HackerOne/Bugcrowd credentials for auto-submit"))
-		fmt.Println(g.Render("  cybermind /platform --programs") + d.Render("      → List your HackerOne programs"))
-		fmt.Println(g.Render("  cybermind /platform --status") + d.Render("        → Check saved credentials"))
+		fmt.Println(y.Render("  🐧 LINUX ONLY — FULL OFFENSIVE PIPELINE:"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  ⚡ OMEGA — Autonomous Bug Bounty AI:"))
+		fmt.Println(g.Render("  cybermind /plan <target>") + d.Render("                    → Full OMEGA: OSINT→Recon→Hunt→Abhimanyu→Aegis"))
+		fmt.Println(g.Render("  cybermind /plan <target> --mode quick") + d.Render("        → Quick scan (~30 min, fast tools only)"))
+		fmt.Println(g.Render("  cybermind /plan <target> --mode deep") + d.Render("         → Deep scan (~4 hours, all tools)"))
+		fmt.Println(g.Render("  cybermind /plan <target> --mode overnight") + d.Render("    → Overnight scan (~12 hours, reconftw -a)"))
+		fmt.Println(g.Render("  cybermind /plan <target> --focus xss,sqli") + d.Render("    → Focus on specific vuln types"))
+		fmt.Println(g.Render("  cybermind /plan --continuous --mode overnight") + d.Render(" → Continuous multi-target hunting loop"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔍 Recon + Hunt:"))
+		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("                   → Full auto recon (20 tools, 6 phases)"))
+		fmt.Println(g.Render("  cybermind /recon <target> --tools nmap,httpx") + d.Render("  → Run specific tools only"))
+		fmt.Println(g.Render("  cybermind /hunt <target>") + d.Render("                    → Vulnerability hunt (XSS, SQLi, SSRF, params)"))
+		fmt.Println(g.Render("  cybermind /hunt <target> --tools dalfox,nuclei") + d.Render(" → Specific hunt tools"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render("  ⚔️  Abhimanyu — Exploit Engine:"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target>") + d.Render("               → Full exploit (all vuln types, 6 phases)"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> sqli") + d.Render("          → SQLi only (sqlmap --os-shell, dump DBs)"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> rce") + d.Render("           → RCE/CMDi (commix, tplmap SSTI→RCE)"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> xss") + d.Render("           → XSS exploitation (dalfox, BeEF hook)"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> auth") + d.Render("          → Auth brute force (hydra SSH/FTP/RDP/MySQL)"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> postexploit") + d.Render("   → Post-exploit (linpeas, pspy, privesc)"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> lateral") + d.Render("       → Lateral movement (crackmapexec, evil-winrm)"))
+		fmt.Println(g.Render("  cybermind /abhimanyu <target> network") + d.Render("       → Network vulns (MSF, searchsploit, CVEs)"))
+		fmt.Println(d.Render("  ↳ Auto-generates: MSF resource script, reverse shell guide, session persistence"))
+		fmt.Println(d.Render("  ↳ Auto-runs SSH post-exploit when credentials found (sshpass required)"))
+		fmt.Println(d.Render("  ↳ Auto-cracks hashes found during exploitation (john/hashcat)"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  🔍 OSINT + Intelligence:"))
+		fmt.Println(g.Render("  cybermind /osint-deep <target>") + d.Render("              → Deep OSINT (45 tools, 9 phases)"))
+		fmt.Println(g.Render("  cybermind /osint-deep user@gmail.com") + d.Render("        → Email + breach + social footprint"))
+		fmt.Println(g.Render("  cybermind /osint-deep johndoe") + d.Render("               → Username hunt across 3000+ sites"))
+		fmt.Println(g.Render("  cybermind /breach <email|domain>") + d.Render("            → Breach intel (HIBP + BreachDir + LeakCheck)"))
+		fmt.Println(g.Render("  cybermind /threat <ip|domain|hash>") + d.Render("          → Threat intel (VT + AbuseIPDB + OTX + URLScan)"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).Render("  ⚙️  Reverse Engineering:"))
+		fmt.Println(g.Render("  cybermind /reveng <binary>") + d.Render("                  → Full RE (static+dynamic+decompile, 30 tools)"))
+		fmt.Println(g.Render("  cybermind /reveng binary --mode malware") + d.Render("     → Malware analysis (YARA, ssdeep, clamscan)"))
+		fmt.Println(g.Render("  cybermind /reveng app.apk --mode mobile") + d.Render("    → APK decompile (jadx, apktool)"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  💰 Business Logic + Specialized:"))
+		fmt.Println(g.Render("  cybermind /bizlogic <target>") + d.Render("                → Business logic bugs (price, IDOR, race)"))
+		fmt.Println(g.Render("  cybermind /bizlogic <target> --cookie 'session=abc'") + d.Render(" → Authenticated scan"))
+		fmt.Println(g.Render("  cybermind /guide <target>") + d.Render("                   → AI manual testing guide (OAuth, SAML, etc.)"))
+		fmt.Println(g.Render("  cybermind /aegis <target>") + d.Render("                   → Aegis deep scan (HTTP smuggling, OOB SSRF, cloud)"))
+		fmt.Println(g.Render("  cybermind /aegis <target> --auto") + d.Render("            → Full autonomous Aegis pentest"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render("  🩺 Setup + Maintenance:"))
+		fmt.Println(g.Render("  cybermind /doctor") + d.Render("                           → Check + auto-install ALL tools (recon+hunt+exploit)"))
+		fmt.Println(g.Render("  cybermind /tools") + d.Render("                            → Quick tool status check"))
+		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("                    → Install all recon + hunt tools"))
+		fmt.Println(g.Render("  cybermind /platform --setup") + d.Render("                 → Save HackerOne/Bugcrowd credentials"))
+		fmt.Println(g.Render("  cybermind /platform --programs") + d.Render("              → List your HackerOne programs"))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#777777")).Render("  🔑 Free API Keys (set for full features):"))
+		fmt.Println(d.Render("  export VIRUSTOTAL_API_KEY=key      → virustotal.com/gui/my-apikey (500/day)"))
+		fmt.Println(d.Render("  export ABUSEIPDB_API_KEY=key       → abuseipdb.com/account/api (1000/day)"))
+		fmt.Println(d.Render("  export GOOGLE_GEOLOCATION_KEY=key  → console.cloud.google.com (WiFi triangulation)"))
+		fmt.Println(d.Render("  export TELEGRAM_BOT_TOKEN=token    → t.me/BotFather (bug found notifications)"))
+		fmt.Println(d.Render("  export TELEGRAM_CHAT_ID=id         → your Telegram chat ID"))
 		fmt.Println()
 	}
 
@@ -2585,12 +2614,15 @@ func main() {
 			{"wpscan", "exploit", "apt:wpscan", false, false},
 			{"nosqlmap", "exploit", "venv:https://github.com/codingo/NoSQLMap:/opt/nosqlmap:nosqlmap.py", false, false},
 			{"xxeinjector", "exploit", "special:xxeinjector", false, false},
+			{"tplmap", "exploit", "venv:https://github.com/epinna/tplmap:/opt/tplmap:tplmap.py", false, false},
 			// ── Auth Attacks ────────────────────────────────────────────────────
 			{"hydra", "exploit", "apt:hydra", false, false},
 			{"john", "exploit", "apt:john", false, false},
 			{"hashcat", "exploit", "apt:hashcat", false, false},
 			{"kerbrute", "exploit", "special:kerbrute", false, false},
 			{"sprayhound", "exploit", "pipx:sprayhound", false, false},
+			// ── SSH Post-Exploit (required for RunPostExploitCommands) ──────────
+			{"sshpass", "exploit", "apt:sshpass", false, false},
 			// ── CVE/Exploit Search ──────────────────────────────────────────────
 			{"searchsploit", "exploit", "apt:exploitdb", false, false},
 			{"msfconsole", "exploit", "apt:metasploit-framework", false, false},
@@ -2613,29 +2645,15 @@ func main() {
 			{"ligolo-ng", "exploit", "apt:ligolo-ng", false, false},
 			{"iodine", "exploit", "apt:iodine", false, false},
 			// ── C2 Frameworks ───────────────────────────────────────────────────
-			{"empire", "exploit", "apt:powershell-empire", false, false},
 			{"sliver", "exploit", "special:sliver", false, false},
-			{"evilginx2", "exploit", "special:evilginx2", false, false},
 			// ── Router/IoT ──────────────────────────────────────────────────────
 			{"routersploit", "exploit", "venv:https://github.com/threat9/routersploit:/opt/routersploit:rsf.py", false, false},
-			// ── New Kali Tools ──────────────────────────────────────────────────
-			{"adaptixc2", "exploit", "apt:adaptixc2", false, false},
-			{"atomic-operator", "exploit", "apt:atomic-operator", false, false},
-			{"fluxion", "exploit", "apt:fluxion", false, false},
-			{"rubeus", "exploit", "apt:rubeus", false, false},
-			{"ldeep", "exploit", "apt:ldeep", false, false},
-			{"donut-shellcode", "exploit", "apt:donut-shellcode", false, false},
-			{"bopscrk", "exploit", "apt:bopscrk", false, false},
 			// ── Crypto/Web3 ─────────────────────────────────────────────────────
 			{"slither", "exploit", "pipx:slither-analyzer", false, false},
 			{"myth", "exploit", "pipx:mythril", false, false},
 			// ── Mobile ──────────────────────────────────────────────────────────
 			{"apktool", "exploit", "apt:apktool", false, false},
 			{"jadx", "exploit", "apt:jadx", false, false},
-			// ── OAuth/SAML/Business Logic ────────────────────────────────────────
-			{"smuggler", "exploit", "venv:https://github.com/defparam/smuggler:/opt/smuggler:smuggler.py", false, false},
-			{"corscanner", "exploit", "pipx:corscanner", false, false},
-			{"h2csmuggler", "exploit", "pipx:h2csmuggler", false, false},
 			// ── Browser Automation (XSS verify + authenticated scanning) ─────────
 			{"node", "recon", "apt:nodejs", false, false},
 		}

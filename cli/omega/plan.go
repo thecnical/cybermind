@@ -983,12 +983,24 @@ return filename, os.WriteFile(filename, data, 0644)
 
 // ToolSelection holds the recommended tools for each phase based on target intel.
 type ToolSelection struct {
-	ReconTools   []string // tools to prioritize in recon phase
-	HuntTools    []string // tools to prioritize in hunt phase
-	ExploitTools []string // tools to prioritize in Abhimanyu phase
-	SkipTools    []string // tools to skip (not relevant for this target)
-	VulnFocus    string   // primary vuln focus: sqli|xss|rce|ssrf|all
-	Notes        []string // human-readable notes about why tools were selected
+	ReconTools          []string // tools to prioritize in recon phase
+	HuntTools           []string // tools to prioritize in hunt phase
+	ExploitTools        []string // tools to prioritize in Abhimanyu phase
+	SkipTools           []string // tools to skip (not relevant for this target)
+	VulnFocus           string   // primary vuln focus: sqli|xss|rce|ssrf|all
+	Notes               []string // human-readable notes about why tools were selected
+	AbhimanyuTools      []string // specific Abhimanyu tools for this target
+	AbhimanyuVulnFocus  string   // Abhimanyu vuln focus: sqli|xss|rce|auth|all
+	AbhimanyuPhases     []AbhimanyuPhaseInfo // per-phase Abhimanyu plan
+}
+
+// AbhimanyuPhaseInfo describes what Abhimanyu will do in each phase for this target
+type AbhimanyuPhaseInfo struct {
+	Phase       int
+	Name        string
+	Tools       []string
+	Why         string
+	ExpectedOut string
 }
 
 // SelectToolsByIntel returns a target-specific tool selection based on gathered intelligence.
@@ -998,6 +1010,16 @@ func SelectToolsByIntel(intel TargetIntel) ToolSelection {
 	sel := ToolSelection{
 		VulnFocus: "all",
 	}
+
+	// ── Abhimanyu exploit tools — always populated based on tech ─────────
+	// These are the specific Abhimanyu tools that will run in the final phase
+	// based on what we know about the target BEFORE scanning starts.
+	sel.AbhimanyuTools = selectAbhimanyuTools(intel)
+	sel.AbhimanyuVulnFocus = selectAbhimanyuFocus(intel)
+	// Build per-phase Abhimanyu plan after tools are selected
+	defer func() {
+		sel.AbhimanyuPhases = buildAbhimanyuPhases(intel, sel)
+	}()
 
 	techStr := strings.ToLower(strings.Join(intel.TechStack, " "))
 	serverStr := strings.ToLower(intel.ServerBanner)
@@ -1134,6 +1156,212 @@ func SelectToolsByIntel(intel TargetIntel) ToolSelection {
 	return sel
 }
 
+// selectAbhimanyuTools returns the specific Abhimanyu tools for this target
+// based on pre-scan intelligence. This makes every plan unique.
+func selectAbhimanyuTools(intel TargetIntel) []string {
+	techStr := strings.ToLower(strings.Join(intel.TechStack, " "))
+	var tools []string
+
+	// Web exploitation tools — based on tech stack
+	if strings.Contains(techStr, "php") || strings.Contains(techStr, "mysql") ||
+		strings.Contains(techStr, "wordpress") || strings.Contains(techStr, "drupal") {
+		tools = append(tools, "sqlmap", "commix")
+	}
+	if strings.Contains(techStr, "django") || strings.Contains(techStr, "flask") ||
+		strings.Contains(techStr, "jinja") || strings.Contains(techStr, "twig") {
+		tools = append(tools, "tplmap", "commix")
+	}
+	if strings.Contains(techStr, "mongodb") || strings.Contains(techStr, "nosql") {
+		tools = append(tools, "nosqlmap")
+	}
+	if strings.Contains(techStr, "wordpress") {
+		tools = append(tools, "wpscan")
+	}
+	if strings.Contains(techStr, "xml") || strings.Contains(techStr, "soap") {
+		tools = append(tools, "xxeinjector")
+	}
+
+	// Auth tools — based on open ports
+	if containsPort(intel.OpenPorts, 22) {
+		tools = append(tools, "hydra") // SSH brute force
+	}
+	if containsPort(intel.OpenPorts, 445) || containsPort(intel.OpenPorts, 139) {
+		tools = append(tools, "crackmapexec", "impacket-secretsdump")
+	}
+	if containsPort(intel.OpenPorts, 3389) {
+		tools = append(tools, "hydra") // RDP brute force
+	}
+	if containsPort(intel.OpenPorts, 3306) {
+		tools = append(tools, "hydra") // MySQL brute force
+	}
+
+	// CVE tools — always run searchsploit for known tech
+	if len(intel.TechStack) > 0 || len(intel.OpenPorts) > 0 {
+		tools = append(tools, "searchsploit", "msfconsole")
+	}
+
+	// Post-exploit — always include for network targets
+	if len(intel.OpenPorts) > 0 {
+		tools = append(tools, "linpeas", "pspy")
+	}
+
+	// AD tools — for Windows/SMB targets
+	if containsPort(intel.OpenPorts, 445) || intel.OSHint == "Windows" ||
+		strings.Contains(techStr, "active directory") || strings.Contains(techStr, "kerberos") {
+		tools = append(tools, "bloodhound-python", "certipy", "kerbrute", "netexec")
+	}
+
+	// Default: if nothing specific, run full web arsenal
+	if len(tools) == 0 {
+		tools = []string{"sqlmap", "commix", "nikto", "searchsploit", "msfconsole"}
+	}
+
+	return deduplicateTools(tools)
+}
+
+// selectAbhimanyuFocus returns the primary vuln focus for Abhimanyu
+func selectAbhimanyuFocus(intel TargetIntel) string {
+	techStr := strings.ToLower(strings.Join(intel.TechStack, " "))
+
+	// Windows/AD → auth attacks first
+	if containsPort(intel.OpenPorts, 445) || intel.OSHint == "Windows" {
+		return "auth,lateral"
+	}
+	// PHP/MySQL → SQLi first
+	if strings.Contains(techStr, "php") || strings.Contains(techStr, "mysql") {
+		return "sqli,rce"
+	}
+	// Python/Django → SSTI first
+	if strings.Contains(techStr, "django") || strings.Contains(techStr, "flask") {
+		return "ssti,rce"
+	}
+	// Java/Spring → deserialization/RCE
+	if strings.Contains(techStr, "java") || strings.Contains(techStr, "spring") {
+		return "rce,deserialization"
+	}
+	// Node.js → SSRF/prototype pollution
+	if strings.Contains(techStr, "node") || strings.Contains(techStr, "express") {
+		return "ssrf,xss"
+	}
+	// WordPress → plugin vulns
+	if strings.Contains(techStr, "wordpress") {
+		return "sqli,rce,auth"
+	}
+	// SSH open → auth brute force
+	if containsPort(intel.OpenPorts, 22) {
+		return "auth,rce"
+	}
+	return "all"
+}
+
+// buildAbhimanyuPhases creates a detailed per-phase plan for Abhimanyu
+func buildAbhimanyuPhases(intel TargetIntel, sel ToolSelection) []AbhimanyuPhaseInfo {
+	techStr := strings.ToLower(strings.Join(intel.TechStack, " "))
+	isWindows := containsPort(intel.OpenPorts, 445) || intel.OSHint == "Windows"
+	hasSSH := containsPort(intel.OpenPorts, 22)
+	hasWeb := intel.StatusCode > 0
+
+	phases := []AbhimanyuPhaseInfo{
+		{
+			Phase: 1,
+			Name:  "Web Exploitation",
+			Tools: filterTools(sel.AbhimanyuTools, []string{"sqlmap", "commix", "tplmap", "nosqlmap", "xxeinjector", "wpscan", "nikto"}),
+			Why:   buildPhase1Why(techStr, hasWeb),
+			ExpectedOut: "SQLi dump, RCE shell, SSTI execution, XXE file read",
+		},
+		{
+			Phase: 2,
+			Name:  "Auth Attacks",
+			Tools: filterTools(sel.AbhimanyuTools, []string{"hydra", "john", "hashcat", "kerbrute", "sprayhound"}),
+			Why:   buildPhase2Why(intel.OpenPorts, isWindows),
+			ExpectedOut: "Cracked credentials, valid SSH/RDP/SMB login",
+		},
+		{
+			Phase: 3,
+			Name:  "CVE / Exploit Search",
+			Tools: filterTools(sel.AbhimanyuTools, []string{"searchsploit", "msfconsole"}),
+			Why:   fmt.Sprintf("Tech stack: %s | Ports: %v", strings.Join(intel.TechStack[:min3(len(intel.TechStack), 3)], ","), intel.OpenPorts[:min3(len(intel.OpenPorts), 5)]),
+			ExpectedOut: "Known CVE exploits, MSF module matches",
+		},
+		{
+			Phase: 4,
+			Name:  "Post-Exploitation",
+			Tools: filterTools(sel.AbhimanyuTools, []string{"linpeas", "pspy", "bloodhound-python", "certipy", "bloodyAD", "ldeep"}),
+			Why:   "Runs only if shell/RCE confirmed in Phase 1-3",
+			ExpectedOut: "PrivEsc vectors, SUID binaries, sudo misconfigs, AD attack paths",
+		},
+		{
+			Phase: 5,
+			Name:  "Lateral Movement",
+			Tools: filterTools(sel.AbhimanyuTools, []string{"crackmapexec", "netexec", "evil-winrm", "impacket-secretsdump", "coercer"}),
+			Why:   buildPhase5Why(isWindows, hasSSH),
+			ExpectedOut: "NTLM hashes, domain admin access, lateral pivot",
+		},
+		{
+			Phase: 6,
+			Name:  "Persistence + Exfil",
+			Tools: []string{"chisel", "iodine"},
+			Why:   "Tunneling for C2 access after compromise",
+			ExpectedOut: "Persistent access, data exfiltration channel",
+		},
+	}
+
+	// Remove phases with no tools
+	var result []AbhimanyuPhaseInfo
+	for _, p := range phases {
+		if len(p.Tools) > 0 {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+func buildPhase1Why(techStr string, hasWeb bool) string {
+	if !hasWeb {
+		return "No web service detected — skipping web exploitation"
+	}
+	reasons := []string{}
+	if strings.Contains(techStr, "php") { reasons = append(reasons, "PHP→SQLi/LFI") }
+	if strings.Contains(techStr, "django") || strings.Contains(techStr, "flask") { reasons = append(reasons, "Python→SSTI") }
+	if strings.Contains(techStr, "wordpress") { reasons = append(reasons, "WordPress→plugin CVEs") }
+	if strings.Contains(techStr, "java") { reasons = append(reasons, "Java→deserialization") }
+	if len(reasons) == 0 { return "Web service detected — testing all injection vectors" }
+	return strings.Join(reasons, " | ")
+}
+
+func buildPhase2Why(ports []int, isWindows bool) string {
+	reasons := []string{}
+	if containsPort(ports, 22) { reasons = append(reasons, "SSH:22 open→hydra brute") }
+	if containsPort(ports, 3306) { reasons = append(reasons, "MySQL:3306→hydra") }
+	if containsPort(ports, 3389) { reasons = append(reasons, "RDP:3389→hydra") }
+	if isWindows { reasons = append(reasons, "Windows→kerbrute+sprayhound") }
+	if len(reasons) == 0 { return "Testing default credentials on all services" }
+	return strings.Join(reasons, " | ")
+}
+
+func buildPhase5Why(isWindows, hasSSH bool) string {
+	if isWindows { return "Windows/SMB detected → pass-the-hash, secretsdump, WinRM" }
+	if hasSSH { return "SSH available → pivot via SSH tunneling" }
+	return "Network lateral movement via discovered credentials"
+}
+
+func filterTools(available []string, wanted []string) []string {
+	wantedSet := make(map[string]bool)
+	for _, w := range wanted { wantedSet[w] = true }
+	var result []string
+	for _, a := range available {
+		if wantedSet[a] { result = append(result, a) }
+	}
+	// If none of the available tools match, return the wanted list directly
+	if len(result) == 0 { return wanted[:min3(len(wanted), 3)] }
+	return result
+}
+
+func min3(a, b int) int {
+	if a < b { return a }
+	return b
+}
+
 // containsPort checks if a port is in the list
 func containsPort(ports []int, port int) bool {
 	for _, p := range ports {
@@ -1192,5 +1420,23 @@ func DisplayToolSelection(sel ToolSelection, target string) {
 		fmt.Println(b(dim, "  Skipping:        ")+s(dim, strings.Join(sel.SkipTools, ", ")+" (not relevant)"))
 	}
 	fmt.Println(b(purple, "  Vuln focus:      ")+s(lipgloss.Color("#FFD700"), sel.VulnFocus))
+
+	// ── Show Abhimanyu plan ───────────────────────────────────────────────
+	if len(sel.AbhimanyuTools) > 0 {
+		fmt.Println()
+		fmt.Println(b(red, "  ⚔️  ABHIMANYU PLAN (target-specific):"))
+		fmt.Println(s(lipgloss.Color("#333333"), "  "+strings.Repeat("─", 50)))
+		fmt.Println(b(red, "  Vuln focus: ")+s(lipgloss.Color("#FFD700"), sel.AbhimanyuVulnFocus))
+		fmt.Println(b(red, "  Tools:      ")+s(green, strings.Join(sel.AbhimanyuTools, ", ")))
+		if len(sel.AbhimanyuPhases) > 0 {
+			fmt.Println()
+			for _, p := range sel.AbhimanyuPhases {
+				fmt.Println(b(red, fmt.Sprintf("  Phase %d — %s:", p.Phase, p.Name)))
+				fmt.Println(s(lipgloss.Color("#FF6600"), "    Tools:  "+strings.Join(p.Tools, ", ")))
+				fmt.Println(s(dim, "    Why:    "+p.Why))
+				fmt.Println(s(lipgloss.Color("#AAAAAA"), "    Expect: "+p.ExpectedOut))
+			}
+		}
+	}
 	fmt.Println()
 }
