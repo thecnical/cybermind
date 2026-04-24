@@ -2123,14 +2123,23 @@ func requirePlan(minPlan string) bool {
 	if key == "" {
 		return false
 	}
-	plan, err := api.ValidateKey(key)
+	planRaw, err := api.ValidateKey(key)
 	if err != nil {
-		// Can't reach backend — allow locally, backend will enforce
-		return true
+		// Can't reach backend — fall back to cached plan
+		planRaw = api.GetCachedPlan()
+		if planRaw == "" {
+			// No cache either — allow locally, backend will enforce
+			return true
+		}
 	}
+
+	// Strip "|NAME|..." suffix — plan may be "elite|NAME|Chandan Pandey"
+	plan := strings.ToLower(strings.TrimSpace(strings.SplitN(planRaw, "|", 2)[0]))
+
 	planOrder := map[string]int{"free": 0, "starter": 1, "pro": 2, "elite": 3}
 	userLevel := planOrder[plan]
-	minLevel  := planOrder[minPlan]
+	minLevel  := planOrder[strings.ToLower(minPlan)]
+
 	if userLevel < minLevel {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
