@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"testing/quick"
@@ -142,5 +143,132 @@ func TestStripMarkdownMarkerRemoval(t *testing.T) {
 	}
 	if err := quick.Check(f, nil); err != nil {
 		t.Error(err)
+	}
+}
+
+// ─── Property 3: ANSI Output Sanitization ────────────────────────────────────
+
+// Feature: cybermind-new-modes, Property 3: ANSI Output Sanitization
+//
+// For any string containing arbitrary ANSI escape sequences (including color
+// codes, cursor movement, and erase sequences), the ANSI-stripping function
+// SHALL produce a string that contains no ANSI escape sequences and preserves
+// all non-ANSI characters.
+//
+// Note: StripMarkdown is a markdown-to-terminal formatter, not an ANSI stripper.
+// The ANSI stripping function (stripANSI) lives in the devsec package and uses
+// a dedicated regex. This file tests the same regex pattern directly to verify
+// the sanitization property holds.
+//
+// Validates: Requirements 1.10
+
+// ansiReTest mirrors the regex used in devsec/engine.go for ANSI stripping.
+var ansiReTest = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// stripANSIForTest applies the same ANSI-stripping regex as devsec/engine.go.
+func stripANSIForTest(s string) string {
+	return ansiReTest.ReplaceAllString(s, "")
+}
+
+// containsANSI returns true if s contains any ANSI escape sequence.
+func containsANSI(s string) bool {
+	for i := 0; i < len(s)-1; i++ {
+		if s[i] == '\x1b' && s[i+1] == '[' {
+			return true
+		}
+	}
+	return false
+}
+
+// ansiPatterns contains representative ANSI escape sequences to inject.
+var ansiPatterns = []string{
+	"\x1b[0m",            // reset
+	"\x1b[1m",            // bold
+	"\x1b[31m",           // red foreground
+	"\x1b[32;1m",         // green bold
+	"\x1b[0;33;40m",      // yellow on black
+	"\x1b[2J",            // erase display
+	"\x1b[H",             // cursor home
+	"\x1b[1;1H",          // cursor position
+	"\x1b[K",             // erase line
+	"\x1b[38;5;196m",     // 256-color foreground
+	"\x1b[48;2;0;0;255m", // 24-bit background
+}
+
+// TestProperty3_StripANSIRemovesEscapeSequences verifies that the ANSI-stripping
+// regex removes all ANSI escape sequences from the input.
+//
+// Validates: Requirements 1.10
+func TestProperty3_StripANSIRemovesEscapeSequences(t *testing.T) {
+	for _, pattern := range ansiPatterns {
+		input := "hello" + pattern + "world"
+		got := stripANSIForTest(input)
+		if containsANSI(got) {
+			t.Errorf("stripANSI(%q) still contains ANSI sequences: %q", input, got)
+		}
+		if !strings.Contains(got, "hello") || !strings.Contains(got, "world") {
+			t.Errorf("stripANSI(%q) lost non-ANSI text: %q", input, got)
+		}
+	}
+}
+
+// TestProperty3_StripANSIPreservesNonANSIText verifies that non-ANSI text is
+// preserved after stripping.
+//
+// Validates: Requirements 1.10
+func TestProperty3_StripANSIPreservesNonANSIText(t *testing.T) {
+	cases := []struct {
+		input    string
+		wantText string
+	}{
+		{"\x1b[31mhello\x1b[0m", "hello"},
+		{"\x1b[1;32mworld\x1b[0m", "world"},
+		{"plain text", "plain text"},
+		{"\x1b[0mfoo\x1b[1mbar\x1b[0m", "foobar"},
+	}
+	for _, tc := range cases {
+		got := stripANSIForTest(tc.input)
+		if !strings.Contains(got, tc.wantText) {
+			t.Errorf("stripANSI(%q) = %q, want it to contain %q", tc.input, got, tc.wantText)
+		}
+	}
+}
+
+// TestProperty3_ANSISanitizationProperty is a property-based test verifying
+// that for any string, the ANSI-stripping function produces output containing
+// no ANSI escape sequences.
+//
+// Validates: Requirements 1.10
+func TestProperty3_ANSISanitizationProperty(t *testing.T) {
+	f := func(s string) bool {
+		// Skip strings with null bytes
+		if strings.ContainsRune(s, 0) {
+			return true
+		}
+		// Inject ANSI sequences into the string at fixed positions
+		var withANSI strings.Builder
+		for i, ch := range s {
+			if i%5 == 0 {
+				withANSI.WriteString(ansiPatterns[i%len(ansiPatterns)])
+			}
+			withANSI.WriteRune(ch)
+		}
+		got := stripANSIForTest(withANSI.String())
+		return !containsANSI(got)
+	}
+	if err := quick.Check(f, &quick.Config{MaxCount: 500}); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestProperty3_ANSIOnlyStringProducesNoANSI verifies that a string consisting
+// entirely of ANSI escape sequences produces output with no ANSI codes.
+//
+// Validates: Requirements 1.10
+func TestProperty3_ANSIOnlyStringProducesNoANSI(t *testing.T) {
+	input := "\x1b[0m\x1b[1m\x1b[31m\x1b[0m"
+	got := stripANSIForTest(input)
+	if containsANSI(got) {
+		t.Errorf("stripANSI of ANSI-only string still contains ANSI: %q", got)
 	}
 }

@@ -2535,3 +2535,39 @@ if raw != "" { sb.WriteString("\nData:\n" + raw) }
 sb.WriteString("\n\nProvide: 1) Physical location summary 2) Network infrastructure analysis 3) Attack surface from location data 4) Privacy exposure assessment 5) Recommended follow-up actions")
 return post("/chat", chatRequest{Prompt: sb.String(), Messages: []Message{}})
 }
+
+// GetBaseURL returns the current best backend URL (exported for SSE streaming).
+func GetBaseURL() string {
+	return getBaseURL()
+}
+
+// GetAPIKeyExported returns the current API key (exported for SSE streaming).
+func GetAPIKeyExported() string {
+	return getAPIKey()
+}
+
+// SendDevSecAnalyze sends DevSec scan findings to the backend for AI analysis.
+func SendDevSecAnalyze(target, findings string) (string, error) {
+	return post("/api/devsec/analyze", map[string]string{
+		"target":   target,
+		"findings": findings,
+	})
+}
+
+// SendChainAnalyze sends bug list to the backend for exploit chain analysis.
+func SendChainAnalyze(target string, bugs []map[string]interface{}) (string, error) {
+	return post("/api/chain/analyze", map[string]interface{}{
+		"target": target,
+		"bugs":   bugs,
+	})
+}
+
+// SendRedTeamPhase sends a red team phase request to the backend.
+func SendRedTeamPhase(company string, phase int, scope map[string]interface{}, priorSummaries []string) (string, error) {
+	return post("/api/red-team/phase", map[string]interface{}{
+		"company":         company,
+		"phase":           phase,
+		"scope":           scope,
+		"prior_summaries": priorSummaries,
+	})
+}

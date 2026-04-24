@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,13 +20,17 @@ import (
 	"cybermind-cli/bizlogic"
 	"cybermind-cli/breach"
 	"cybermind-cli/brain"
+	"cybermind-cli/chain"
+	"cybermind-cli/devsec"
 	"cybermind-cli/hunt"
 	"cybermind-cli/recon"
+	"cybermind-cli/redteam"
 	"cybermind-cli/sandbox"
 	"cybermind-cli/storage"
 	"cybermind-cli/ui"
 	"cybermind-cli/utils"
 	"cybermind-cli/vibecoder"
+	"cybermind-cli/vibehack"
 	_ "cybermind-cli/aegis" // imported for side effects — aegis package registers itself
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,7 +38,7 @@ import (
 )
 
 var (
-	Version = "4.2.0"
+	Version = "4.4.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -115,6 +120,7 @@ func printBanner() {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ OMEGA Plan Mode available    →  cybermind /plan <target>"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Auto Recon Mode available  →  cybermind /recon <target>"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Abhimanyu Mode available   →  cybermind /abhimanyu <target>"))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ DevSec Mode available         →  cybermind /devsec <target>"))
 	} else if runtime.GOOS == "darwin" {
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  macOS: AI chat + /scan /portscan /osint /payload /cve /wordlist report"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
@@ -202,6 +208,12 @@ func printHelp() {
 		fmt.Println(d.Render("  export TELEGRAM_BOT_TOKEN=token    → t.me/BotFather (bug found notifications)"))
 		fmt.Println(d.Render("  export TELEGRAM_CHAT_ID=id         → your Telegram chat ID"))
 		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔐 New in v4.4.0:"))
+		fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
+		fmt.Println(g.Render("  cybermind /vibe-hack <target>") + d.Render("        → Autonomous AI hacking session [Pro+]"))
+		fmt.Println(g.Render("  cybermind /chain <target>") + d.Render("            → Vulnerability chaining engine [Pro+]"))
+		fmt.Println(g.Render("  cybermind /red-team <company>") + d.Render("        → Multi-day red team campaign [Elite]"))
+		fmt.Println()
 	}
 
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  AI GUIDED:"))
@@ -212,6 +224,7 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind tool <name> [task]") + d.Render("    → tool usage guide"))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  CROSS-PLATFORM (Windows/macOS/Linux):"))
+	fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
 	fmt.Println(g.Render("  cybermind /scan <target>") + d.Render("        → native network scan (no tools needed)"))
 	fmt.Println(g.Render("  cybermind /portscan <target>") + d.Render("    → port scan + netstat analysis"))
 	fmt.Println(g.Render("  cybermind /osint <domain>") + d.Render("       → DNS + Shodan OSINT (free, no key)"))
@@ -236,6 +249,12 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /doctor") + d.Render("               → update CLI + check/install tools"))
 	fmt.Println(g.Render("  cybermind report") + d.Render("                → generate pentest report from history"))
 	fmt.Println(g.Render("  cybermind --local") + d.Render("               → use local Ollama AI (CYBERMIND_LOCAL=true)"))
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔐 New in v4.4.0:"))
+	fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
+	fmt.Println(g.Render("  cybermind /vibe-hack <target>") + d.Render("        → Autonomous AI hacking session [Pro+]"))
+	fmt.Println(g.Render("  cybermind /chain <target>") + d.Render("            → Vulnerability chaining engine [Pro+]"))
+	fmt.Println(g.Render("  cybermind /red-team <company>") + d.Render("        → Multi-day red team campaign [Elite]"))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  HISTORY:"))
 	fmt.Println(g.Render("  cybermind history") + d.Render("               → view chat history"))
@@ -4616,6 +4635,121 @@ rm -f /tmp/evilginx2.tar.gz`)
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /brain --target <domain>  → view memory for target"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /brain --global           → global stats"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  cybermind /brain --clear <domain>   → clear target memory"))
+		}
+
+	case "/devsec":
+		if len(args) < 2 {
+			printError("Usage: cybermind /devsec <github-url-or-local-path>")
+			printError("Example: cybermind /devsec https://github.com/owner/repo")
+			printError("Example: cybermind /devsec /path/to/local/repo")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		if !requirePlan("starter") {
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		devSecTarget := sanitizeTarget(args[1])
+		if devSecTarget == "" {
+			printError("Invalid target")
+			os.Exit(1)
+		}
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🔐 DEVSEC — Developer Security Scanner"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+		_, devSecErr := devsec.RunDevSec(devSecTarget, func(msg string) {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  " + msg))
+		})
+		if devSecErr != nil {
+			printError("DevSec scan failed: " + devSecErr.Error())
+			os.Exit(1)
+		}
+
+	case "/vibe-hack":
+		if len(args) < 2 {
+			printError("Usage: cybermind /vibe-hack <target>")
+			printError("Example: cybermind /vibe-hack example.com")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		if !requirePlan("pro") {
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		vibeTarget := sanitizeTarget(args[1])
+		if vibeTarget == "" {
+			printError("Invalid target")
+			os.Exit(1)
+		}
+		if err := vibehack.RunVibeHack(vibeTarget, api.GetAPIKey()); err != nil {
+			printError("Vibe-hack failed: " + err.Error())
+			os.Exit(1)
+		}
+
+	case "/chain":
+		if len(args) < 2 {
+			printError("Usage: cybermind /chain <target>")
+			printError("Example: cybermind /chain example.com")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		if !requirePlan("pro") {
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		chainTarget := sanitizeTarget(args[1])
+		if chainTarget == "" {
+			printError("Invalid target")
+			os.Exit(1)
+		}
+		if err := chain.RunChain(chainTarget); err != nil {
+			printError("Chain analysis failed: " + err.Error())
+			os.Exit(1)
+		}
+
+	case "/red-team":
+		if len(args) < 2 {
+			printError("Usage: cybermind /red-team <company> [--duration 7d]")
+			printError("Example: cybermind /red-team acme-corp --duration 7d")
+			os.Exit(1)
+		}
+		if !requireAPIKey() {
+			os.Exit(1)
+		}
+		if !requirePlan("elite") {
+			os.Exit(1)
+		}
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		redTeamCompany := args[1]
+		redTeamDuration := 7
+		// Parse --duration Nd flag
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--duration" && i+1 < len(args) {
+				dStr := strings.TrimSuffix(args[i+1], "d")
+				if d, err := strconv.Atoi(dStr); err == nil && d > 0 {
+					redTeamDuration = d
+				}
+				i++
+			}
+		}
+		if err := redteam.RunCampaign(redTeamCompany, redTeamDuration); err != nil {
+			printError("Red team campaign failed: " + err.Error())
+			os.Exit(1)
 		}
 
 	case "/novel":
