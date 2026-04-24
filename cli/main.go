@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2228,6 +2230,12 @@ func promptForAPIKey() string {
 
 func main() {
 	args := os.Args[1:]
+
+	// ── Auto-update check (background, non-blocking) ──────────────────────────
+	// Runs silently on every startup — notifies user if a newer version exists
+	go func() {
+		checkForUpdate()
+	}()
 
 	if len(args) == 0 {
 		if err := storage.Load(); err != nil {
@@ -5121,8 +5129,18 @@ rm -f /tmp/evilginx2.tar.gz`)
 		runReport(format, localMode)
 
 	case "vibe", "neural", "code":
-		// Vibe Coder TUI — AI coding assistant (Windows/macOS/Linux)
-		runVibeCoder(args[1:])
+		// /vibe Linux coding mode removed in v4.4.0
+		// Use cybermind AI chat instead: just type your question
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ⚡ CyberMind AI Chat"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  The /vibe coding mode has been replaced with the full AI chat."))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Just run: cybermind"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Or ask directly: cybermind \"refactor my auth module\""))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  New in v4.4.0:"))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  cybermind /devsec <repo>      → DevSec scanner [Starter+]"))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  cybermind /vibe-hack <target> → Autonomous AI hacking [Pro+]"))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  cybermind /chain <target>     → Vuln chaining engine [Pro+]"))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  cybermind /red-team <company> → Red team campaign [Elite]"))
 
 	default:
 		// BUG FIX: load storage so history save works
@@ -7479,4 +7497,41 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// checkForUpdate silently checks if a newer CLI version is available.
+// Runs in background goroutine — never blocks startup.
+func checkForUpdate() {
+	const versionURL = "https://cybermindcli1.vercel.app/api/version"
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(versionURL)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	if err != nil {
+		return
+	}
+	var result struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return
+	}
+	latest := strings.TrimPrefix(strings.TrimSpace(result.Version), "v")
+	current := strings.TrimPrefix(Version, "v")
+	if latest != "" && latest != current {
+		// Print update notice — small delay so it appears after banner
+		time.Sleep(500 * time.Millisecond)
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+			fmt.Sprintf("  ⚡ Update available: v%s → v%s", current, latest)))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+			"  Run: sudo cybermind /doctor   to auto-update"))
+		fmt.Println()
+	}
 }
