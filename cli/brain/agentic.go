@@ -236,65 +236,87 @@ func SuggestNextAction(
 
 	techStr := strings.ToLower(strings.Join(technologies, " "))
 
+	// ── Memory-first: if we've been here before, use what worked ─────────
+	if len(mem.PatternsWorked) > 0 && !reconDone {
+		bestPattern := mem.PatternsWorked[0]
+		return "recon", bestPattern.Type,
+			fmt.Sprintf("Memory: %s worked %.0f%% of the time on this target — starting with targeted recon",
+				bestPattern.Type, bestPattern.SuccessRate*100)
+	}
+
+	// ── Similar target intelligence ───────────────────────────────────────
+	if len(similar) > 0 && !reconDone {
+		for _, s := range similar {
+			if len(s.BugTypes) > 0 && s.Similarity > 0.7 {
+				return "recon", s.BugTypes[0],
+					fmt.Sprintf("High similarity (%.0f%%) with %s which had %v bugs — targeting same vectors",
+						s.Similarity*100, s.Domain, s.BugTypes)
+			}
+		}
+	}
+
 	// ── Quick mode: prioritize speed ─────────────────────────────────────
 	if mode == "quick" {
 		if !reconDone {
-			return "recon", "all", "Quick mode: fast recon first"
+			return "recon", "all", "Quick mode: fast passive recon + subdomain enum"
 		}
 		if !huntDone {
-			// Use memory to focus on most likely vuln type
+			focus := selectFocusByTech(techStr)
 			if len(mem.PatternsWorked) > 0 {
-				return "hunt", mem.PatternsWorked[0].Type, fmt.Sprintf("Quick mode: memory says %s works on this target", mem.PatternsWorked[0].Type)
+				focus = mem.PatternsWorked[0].Type
 			}
-			return "hunt", selectFocusByTech(techStr), "Quick mode: tech-aware hunt"
+			return "hunt", focus, fmt.Sprintf("Quick mode: tech-aware hunt focusing on %s", focus)
 		}
 		if bugsFound > 0 && !abhiDone {
-			return "exploit", selectExploitByBugs(bugTypes), fmt.Sprintf("Quick mode: %d bugs found, exploiting immediately", bugsFound)
+			return "exploit", selectExploitByBugs(bugTypes),
+				fmt.Sprintf("Quick mode: %d bugs found, exploiting immediately", bugsFound)
 		}
 		if bugsFound > 0 {
-			return "poc", "all", "Quick mode: generating PoC"
+			return "poc", "all", "Quick mode: generating PoC for found bugs"
 		}
-		return "next_target", "all", "Quick mode: no bugs found, moving on"
+		return "next_target", "all", "Quick mode: no bugs found, moving to next target"
 	}
 
 	// ── Deep/overnight mode: thorough coverage ────────────────────────────
 	if !reconDone {
-		return "recon", "all", "Gathering target intelligence"
+		return "recon", "all", "Phase 1: Full passive + active recon (subdomains, ports, tech fingerprint)"
 	}
 
 	if !huntDone {
 		focus := selectFocusByTech(techStr)
 		// Check if similar targets had specific bugs
-		if len(similar) > 0 {
-			for _, s := range similar {
-				if len(s.BugTypes) > 0 {
-					focus = s.BugTypes[0]
-					reason = fmt.Sprintf("Similar target %s had %s bugs — focusing there", s.Domain, focus)
-					return "hunt", focus, reason
-				}
+		for _, s := range similar {
+			if len(s.BugTypes) > 0 {
+				focus = s.BugTypes[0]
+				return "hunt", focus,
+					fmt.Sprintf("Phase 2: Similar target %s had %s bugs — focusing hunt there", s.Domain, focus)
 			}
 		}
-		return "hunt", focus, "Running full hunt with tech-aware focus: " + focus
+		return "hunt", focus, fmt.Sprintf("Phase 2: Full hunt with tech-aware focus: %s", focus)
 	}
 
 	if bugsFound > 0 && !abhiDone {
 		focus := selectExploitByBugs(bugTypes)
-		return "exploit", focus, fmt.Sprintf("Hunt found %d bugs (%v) — running Abhimanyu exploit phase", bugsFound, bugTypes)
+		return "exploit", focus,
+			fmt.Sprintf("Phase 3: Hunt found %d bugs (%v) — running Abhimanyu exploit phase on %s", bugsFound, bugTypes, focus)
 	}
 
 	if bugsFound > 0 && abhiDone {
-		return "poc", "all", "Exploitation complete — generating PoC and report"
+		return "poc", "all", "Phase 4: Exploitation complete — generating PoC, report, and remediation guide"
 	}
 
 	// No bugs found after hunt — try deeper approaches
 	if huntDone && bugsFound == 0 {
 		if wafDetected {
-			return "hunt", "waf_bypass", "WAF detected — retrying with bypass techniques"
+			return "hunt", "waf_bypass",
+				"WAF detected and blocking — retrying with adaptive bypass techniques (chunked encoding, unicode, null bytes)"
 		}
-		return "deep_hunt", "all", "Standard hunt found nothing — running novel attacks + deep scan"
+		// Try novel attacks before giving up
+		return "novel_attacks", "all",
+			"Standard hunt found nothing — running novel attack engine (smuggling, cache poisoning, race conditions, XXE)"
 	}
 
-	return "done", "all", "All phases complete"
+	return "done", "all", "All phases complete — generating final report"
 }
 
 // selectFocusByTech returns the best vuln focus based on tech stack
@@ -303,17 +325,35 @@ func selectFocusByTech(techStr string) string {
 	case strings.Contains(techStr, "wordpress"):
 		return "sqli,xss,rce"
 	case strings.Contains(techStr, "graphql"):
-		return "idor,ssrf"
+		return "idor,ssrf,introspection"
 	case strings.Contains(techStr, "node") || strings.Contains(techStr, "express"):
-		return "ssrf,xss"
+		return "ssrf,xss,prototype_pollution"
+	case strings.Contains(techStr, "next") || strings.Contains(techStr, "react"):
+		return "ssrf,xss,idor"
 	case strings.Contains(techStr, "php"):
-		return "sqli,lfi"
+		return "sqli,lfi,rce"
+	case strings.Contains(techStr, "laravel"):
+		return "sqli,deserialization,ssrf"
 	case strings.Contains(techStr, "asp.net") || strings.Contains(techStr, "iis"):
-		return "sqli,xxe"
+		return "sqli,xxe,deserialization"
 	case strings.Contains(techStr, "java") || strings.Contains(techStr, "spring"):
-		return "deserialization,ssrf"
+		return "deserialization,ssrf,log4shell"
 	case strings.Contains(techStr, "django") || strings.Contains(techStr, "flask"):
-		return "ssti,ssrf"
+		return "ssti,ssrf,idor"
+	case strings.Contains(techStr, "ruby") || strings.Contains(techStr, "rails"):
+		return "sqli,deserialization,ssrf"
+	case strings.Contains(techStr, "nginx") || strings.Contains(techStr, "apache"):
+		return "path_traversal,ssrf,smuggling"
+	case strings.Contains(techStr, "tomcat"):
+		return "deserialization,rce,ssrf"
+	case strings.Contains(techStr, "jenkins"):
+		return "rce,ssrf,groovy_injection"
+	case strings.Contains(techStr, "elasticsearch") || strings.Contains(techStr, "kibana"):
+		return "unauth_access,ssrf,rce"
+	case strings.Contains(techStr, "redis"):
+		return "unauth_rce,ssrf"
+	case strings.Contains(techStr, "mongodb"):
+		return "nosqli,unauth_access"
 	default:
 		return "all"
 	}

