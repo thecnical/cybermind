@@ -165,7 +165,8 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /plan <target>") + d.Render("                    → Full OMEGA: OSINT→Recon→Hunt→Abhimanyu→Aegis"))
 		fmt.Println(g.Render("  cybermind /plan <target> --mode quick") + d.Render("        → Quick scan (~30 min, fast tools only)"))
 		fmt.Println(g.Render("  cybermind /plan <target> --mode deep") + d.Render("         → Deep scan (~4 hours, all tools)"))
-		fmt.Println(g.Render("  cybermind /plan <target> --mode overnight") + d.Render("    → Overnight scan (~12 hours, reconftw -a)"))
+		fmt.Println(g.Render("  cybermind /plan <target> --mode overnight") + d.Render("    → Full scan (~12 hours, reconftw -a exhaustive)"))
+		fmt.Println(g.Render("  cybermind /plan <target> --mode 12h") + d.Render("          → Same as overnight (12-hour alias)"))
 		fmt.Println(g.Render("  cybermind /plan <target> --focus xss,sqli") + d.Render("    → Focus on specific vuln types"))
 		fmt.Println(g.Render("  cybermind /plan --continuous --mode overnight") + d.Render(" → Continuous multi-target hunting loop"))
 		fmt.Println()
@@ -211,6 +212,7 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /doctor") + d.Render("                           → Check + auto-install ALL tools (recon+hunt+exploit)"))
 		fmt.Println(g.Render("  cybermind /tools") + d.Render("                            → Quick tool status check"))
 		fmt.Println(g.Render("  cybermind /install-tools") + d.Render("                    → Install all recon + hunt tools"))
+		fmt.Println(g.Render("  cybermind /install-python-tools") + d.Render("             → Install ALL Python tools in isolated venv (one command)"))
 		fmt.Println(g.Render("  cybermind /platform --setup") + d.Render("                 → Save HackerOne/Bugcrowd credentials"))
 		fmt.Println(g.Render("  cybermind /platform --programs") + d.Render("              → List your HackerOne programs"))
 		fmt.Println()
@@ -3112,6 +3114,71 @@ rm -f /tmp/evilginx2.tar.gz`)
 			fmt.Println()
 		}
 
+	case "/install-python-tools":
+		// Install ALL Python-based security tools in isolated venv — one command, no manual steps
+		if runtime.GOOS != "linux" {
+			printError("/install-python-tools is only available on Linux.")
+			os.Exit(1)
+		}
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🐍 PYTHON TOOLS INSTALLER — Isolated venv, no system pollution"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Installing all Python security tools in /opt/cybermind-pytools/"))
+		fmt.Println()
+
+		// Ensure system deps
+		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Installing system dependencies..."))
+		aptInstall("python3", "python3-pip", "python3-venv", "pipx", "git", "build-essential")
+
+		// Create master venv
+		venvDir := "/opt/cybermind-pytools"
+		os.MkdirAll(venvDir, 0755)
+		exec.Command("python3", "-m", "venv", venvDir+"/.venv").Run()
+		venvPip := venvDir + "/.venv/bin/pip"
+		exec.Command(venvPip, "install", "--upgrade", "pip", "-q").Run()
+
+		// All Python security tools in one batch install
+		pythonTools := []struct{ name, pkg string }{
+			{"wafw00f",    "wafw00f"},
+			{"shodan",     "shodan"},
+			{"h8mail",     "h8mail"},
+			{"arjun",      "arjun"},
+			{"paramspider","paramspider"},
+			{"xsstrike",   "xsstrike"},
+			{"ssrfmap",    "ssrfmap"},
+			{"graphw00f",  "graphw00f"},
+			{"corsy",      "corsy"},
+			{"semgrep",    "semgrep"},
+			{"pip-audit",  "pip-audit"},
+			{"trufflehog", "trufflehog"},
+		}
+
+		installed, failed := 0, 0
+		for _, t := range pythonTools {
+			fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-16s"), t.name)
+			cmd := exec.Command(venvPip, "install", t.pkg, "-q")
+			cmd.Stdin = nil
+			if err := cmd.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(" ✗ failed"))
+				failed++
+			} else {
+				// Symlink binary to /usr/local/bin
+				binPath := venvDir + "/.venv/bin/" + t.name
+				if _, e := os.Stat(binPath); e == nil {
+					exec.Command("sudo", "ln", "-sf", binPath, "/usr/local/bin/"+t.name).Run()
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ installed"))
+				installed++
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
+			fmt.Sprintf("  ✓ Python tools: %d installed, %d failed", installed, failed)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  All tools isolated in: " + venvDir + "/.venv"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Binaries symlinked to: /usr/local/bin/"))
+		fmt.Println()
+
 	case "/install-tools":
 		if runtime.GOOS != "linux" {
 			printError("/install-tools is only available on Linux.")
@@ -3646,7 +3713,7 @@ rm -f /tmp/evilginx2.tar.gz`)
 		focusTypes := ""
 		skillLevel := "intermediate"
 		planTarget := ""
-		execMode := "deep"       // quick | deep | overnight
+		execMode := "deep"       // quick | deep | overnight | 12h
 		continuous := false      // --continuous: loop forever
 		platformHandle := ""     // --platform hackerone:handle
 		autoSubmit := false      // --auto-submit: submit bugs automatically
@@ -3687,6 +3754,11 @@ rm -f /tmp/evilginx2.tar.gz`)
 					planTarget = args[i]
 				}
 			}
+		}
+
+		// Normalize mode: 12h = overnight (12-hour scan)
+		if execMode == "12h" {
+			execMode = "overnight"
 		}
 
 		// Set execution mode env vars for all tools to read

@@ -184,27 +184,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateInput
 		m.input.Focus()
 		if !msg.ok {
-			// Soft info — not an error, just a heads up
 			m.infoMsg = "Backend may be starting up — your first message will auto-wake it"
 		} else if len(m.history) == 0 && m.infoMsg == "" {
-			// First time connecting — show welcome if we have a key
-			if key := api.GetAPIKey(); key != "" {
-				go func() {
-					planInfo, err := api.ValidateKey(key)
-					if err == nil && planInfo != "" {
-						// Extract name if present
-						if idx := strings.Index(planInfo, "|NAME|"); idx >= 0 {
-							rest := planInfo[idx+6:]
-							name := rest
-							if endIdx := strings.Index(rest, "|"); endIdx >= 0 {
-								name = rest[:endIdx]
-							}
-							if name != "" {
-								m.infoMsg = fmt.Sprintf("Welcome back, %s! Ready to hack.", name)
-							}
-						}
-					}
-				}()
+			// Read cached user name immediately — no network call needed
+			// Name is saved to config when key is validated (on --key or first use)
+			name := api.GetCachedUserName()
+			if name != "" {
+				m.infoMsg = fmt.Sprintf("Hey %s! CyberMind ready. What are we hacking today?", name)
+			} else {
+				// No cached name — show generic welcome
+				m.infoMsg = "CyberMind ready. Ask anything about cybersecurity."
 			}
 		}
 		return m, textinput.Blink

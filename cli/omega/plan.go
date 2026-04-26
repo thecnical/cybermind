@@ -128,7 +128,6 @@ return []OmegaToolEntry{
 {"nmap", "recon", "sudo apt install -y nmap", false, false, false, false, "", "", ""},
 {"masscan", "recon", "sudo apt install -y masscan", false, false, false, false, "", "", ""},
 {"naabu", "recon", "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", true, false, false, false, "", "", ""},
-{"rustscan", "recon", "cargo install rustscan", false, true, false, false, "", "", ""},
 // ── Recon Phase 4 — HTTP Fingerprinting ─────────────────────────────
 {"httpx", "recon", "go install github.com/projectdiscovery/httpx/cmd/httpx@latest", true, false, false, false, "", "", ""},
 {"whatweb", "recon", "sudo apt install -y whatweb", false, false, false, false, "", "", ""},
@@ -1023,7 +1022,7 @@ cmds := map[string]string{
 "amass":       "amass enum -passive -d " + target,
 "reconftw":    "reconftw.sh -d " + target + " -s",
 "nmap":        "nmap -sV -sC -T4 --top-ports 1000 " + target,
-"rustscan":    "rustscan -a " + target + " --ulimit 5000 -- -sV",
+"naabu":       "naabu -host " + target + " -p - -rate 10000 -silent",
 "httpx":       "httpx -l subdomains.txt -title -tech-detect -status-code",
 "nuclei":      "nuclei -u " + target + " -t cves/ -t exposures/ -severity critical,high,medium",
 "dalfox":      "dalfox url https://" + target + " --deep-domxss",
@@ -1675,7 +1674,7 @@ func GetOmegaPipeline(targetType OmegaTargetType, target string) OmegaPipeline {
 			Description: "IP/Network target — port scan + service exploitation",
 			Phases: []OmegaPhaseStep{
 				{"Phase 0: OSINT",           "/osint " + target,         "Shodan + AbuseIPDB + OTX threat intel", true},
-				{"Phase 1: Recon",           "/recon " + target,         "Port scan: nmap, rustscan, naabu + service detection", true},
+				{"Phase 1: Recon",           "/recon " + target,         "Port scan: nmap, naabu + service detection", true},
 				{"Phase 2: CVE Feed",        "/cve-feed " + target,      "Match CVEs to detected services", true},
 				{"Phase 3: Abhimanyu",       "/abhimanyu " + target + " network", "Network exploitation: MSF, searchsploit, hydra", true},
 				{"Phase 4: Report",          "report",                   "Generate pentest report", true},
