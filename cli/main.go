@@ -688,6 +688,63 @@ func runAutoReconSilent(target string, requested []string) recon.ReconResult {
 		}
 	}
 
+	// ── Headless Browser Scan — discover JS-rendered routes (SPA support) ─
+	if len(liveURLs) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ Headless scan — discovering JS-rendered routes and API calls..."))
+		headlessResult := brain.RunHeadlessScan(target, "", 3)
+		if len(headlessResult.DiscoveredURLs) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+				fmt.Sprintf("  ✓ Headless [%s]: %d URLs, %d APIs, %d WebSockets",
+					headlessResult.ToolUsed,
+					len(headlessResult.DiscoveredURLs),
+					len(headlessResult.APIRequests),
+					len(headlessResult.WebSockets))))
+			// Add headless-discovered URLs to context
+			if result.Context != nil {
+				result.Context.LiveURLs = append(result.Context.LiveURLs, headlessResult.DiscoveredURLs...)
+				result.Context.CrawledURLs = append(result.Context.CrawledURLs, headlessResult.APIRequests...)
+			}
+			// Detect SPA framework
+			framework := brain.DetectSPAFramework(target)
+			if framework != "unknown" {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+					fmt.Sprintf("  🎯 SPA Framework detected: %s — applying framework-specific attack patterns", framework)))
+				if result.Context != nil {
+					result.Context.Technologies = append(result.Context.Technologies, framework)
+				}
+			}
+		}
+	}
+
+	// ── Nuclei AI Templates — generate + run target-specific templates ────
+	if len(liveURLs) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render("  ⟳ Nuclei AI — generating target-specific templates..."))
+		// Fetch CVEs for the tech stack
+		var cves []brain.CVEEntry
+		if len(technologies) > 0 {
+			cveResult := brain.MatchCVEsToTarget(target, technologies, "")
+			cves = cveResult.Matched
+		}
+		// Generate templates
+		templates := brain.GenerateNucleiTemplates(target, technologies, liveURLs, cves)
+		if len(templates) > 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  ⚡ Generated %d AI templates for %s", len(templates), target)))
+			// Run templates
+			aiResult := brain.RunAINucleiTemplates(target, templates, func(finding string) {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+					"  🎯 [NUCLEI-AI] " + finding))
+			})
+			if aiResult.FindingsCount > 0 {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+					fmt.Sprintf("  🔴 Nuclei AI: %d findings!", aiResult.FindingsCount)))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+					fmt.Sprintf("  ✓ Nuclei AI: %d templates run, no findings", aiResult.TemplatesRun)))
+			}
+		}
+	}
+
 	return result
 }
 
@@ -2731,6 +2788,10 @@ func main() {
 			{"semgrep", "hunt", "pipx:semgrep", false, false},
 			{"liffy", "hunt", "venv:https://github.com/mzfr/liffy:/opt/liffy:liffy.py", false, false},
 			{"gopherus", "hunt", "venv:https://github.com/tarunkant/Gopherus:/opt/gopherus:gopherus.py", false, false},
+			// ── Nuclei AI + Headless (new in v4.5.0) ─────────────────────────────
+			{"node", "hunt", "apt:nodejs", false, false},
+			{"nuclei", "hunt", "go:github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false},
+			{"playwright", "hunt", "special:playwright", false, false},
 		}
 
 		var missing []toolEntry
@@ -2921,6 +2982,24 @@ func main() {
 					cmd2.Stderr = os.Stderr
 					cmd2.Stdin = nil
 					installErr = cmd2.Run()
+
+				case t.install == "special:playwright":
+					// Install Playwright for headless browser scanning (SPA support)
+					aptInstall("nodejs", "npm")
+					npmCmd := exec.Command("sudo", "npm", "install", "-g", "playwright")
+					npmCmd.Stdout = os.Stdout
+					npmCmd.Stderr = os.Stderr
+					npmCmd.Stdin = nil
+					if err := npmCmd.Run(); err != nil {
+						installErr = err
+					} else {
+						// Install Chromium browser
+						pwCmd := exec.Command("sudo", "npx", "playwright", "install", "chromium", "--with-deps")
+						pwCmd.Stdout = os.Stdout
+						pwCmd.Stderr = os.Stderr
+						pwCmd.Stdin = nil
+						pwCmd.Run() // non-fatal
+					}
 
 				case t.install == "special:x8":
 					installErr = installX8()
