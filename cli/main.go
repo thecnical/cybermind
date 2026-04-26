@@ -385,6 +385,9 @@ func runAutoRecon(target string, requested []string) {
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
 
+	// Track attack session in web dashboard (non-blocking)
+	api.SendAttackSessionStart(target, "recon")
+
 	result := recon.RunAutoRecon(target, requested, func(status recon.ToolStatus) {
 		switch status.Kind {
 		case recon.StatusRunning:
@@ -491,6 +494,9 @@ func runAutoRecon(target string, requested []string) {
 	printResult("AI Analysis → "+target, clean)
 
 	_ = storage.AddEntry("/recon "+target, clean)
+
+	// Track attack session completion in web dashboard (non-blocking)
+	api.SendAttackSessionComplete(target, "recon", 0, len(result.Tools), 40)
 
 	// ── Auto-prompt: offer to run /hunt on recon results ──────────────────
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
@@ -865,6 +871,9 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
 
+	// Track attack session in web dashboard (non-blocking)
+	api.SendAttackSessionStart(target, "hunt")
+
 	if reconCtx != nil {
 		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
 			fmt.Sprintf("  ℹ  Using recon context: %d live URLs, %d open ports, WAF=%v",
@@ -970,6 +979,13 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	clean := utils.StripMarkdown(analysis)
 	printResult("Hunt Analysis → "+target, clean)
 	_ = storage.AddEntry("/hunt "+target, clean)
+
+	// Track attack session completion in web dashboard (non-blocking)
+	bugsFoundCount := 0
+	if result.Context != nil {
+		bugsFoundCount = len(result.Context.VulnsFound) + len(result.Context.XSSFound)
+	}
+	api.SendAttackSessionComplete(target, "hunt", bugsFoundCount, len(result.Tools), 60)
 
 	// ── Ask user to start Abhimanyu Mode ─────────────────────────────────
 	vulnCount := 0
@@ -1414,33 +1430,40 @@ func runSelfUpdate() {
 	red2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444"))
 	yellow2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
 
-	// GitHub raw content — always latest from main branch (no Vercel cache)
+	// Primary: Vercel CDN (always latest, no cold start)
+	// Fallback: GitHub raw (may lag behind by a commit)
+	const vercelCDN = "https://cybermindcli1.vercel.app/"
 	const ghRaw = "https://raw.githubusercontent.com/thecnical/cybermind/main/cli/"
 
 	// Determine download URL based on OS/arch
-	var binaryURL string
+	var binaryName string
 	switch runtime.GOOS {
 	case "linux":
 		if runtime.GOARCH == "arm64" {
-			binaryURL = ghRaw + "cybermind-linux-arm64"
+			binaryName = "cybermind-linux-arm64"
 		} else {
-			binaryURL = ghRaw + "cybermind-linux-amd64"
+			binaryName = "cybermind-linux-amd64"
 		}
 	case "darwin":
 		if runtime.GOARCH == "arm64" {
-			binaryURL = ghRaw + "cybermind-darwin-arm64"
+			binaryName = "cybermind-darwin-arm64"
 		} else {
-			binaryURL = ghRaw + "cybermind-darwin-amd64"
+			binaryName = "cybermind-darwin-amd64"
 		}
 	case "windows":
-		binaryURL = ghRaw + "cybermind-windows-amd64.exe"
+		binaryName = "cybermind-windows-amd64.exe"
 	default:
 		fmt.Println(dim2.Render("  Self-update not supported on " + runtime.GOOS))
 		return
 	}
 
-	fmt.Println(dim2.Render("  Downloading latest CyberMind CLI from GitHub..."))
-	fmt.Println(dim2.Render("  Source: " + binaryURL))
+	// Try Vercel CDN first, then GitHub raw
+	binaryURLs := []string{
+		vercelCDN + binaryName,
+		ghRaw + binaryName,
+	}
+
+	fmt.Println(dim2.Render("  Downloading latest CyberMind CLI..."))
 
 	// Get current executable path
 	exePath, err := os.Executable()
@@ -1456,36 +1479,47 @@ func runSelfUpdate() {
 		tmpPath = os.TempDir() + `\cybermind_update.exe`
 	}
 
-	// Use curl or wget on Linux/macOS, PowerShell on Windows
-	var downloadErr error
-	switch runtime.GOOS {
-	case "linux", "darwin":
-		var dlCmd *exec.Cmd
-		if _, err2 := exec.LookPath("curl"); err2 == nil {
-			dlCmd = exec.Command("curl", "-fsSL", "-o", tmpPath, binaryURL)
-		} else {
-			dlCmd = exec.Command("wget", "-q", "-O", tmpPath, binaryURL)
+	downloaded := false
+	for _, binaryURL := range binaryURLs {
+		fmt.Println(dim2.Render("  Source: " + binaryURL))
+		var downloadErr error
+		switch runtime.GOOS {
+		case "linux", "darwin":
+			var dlCmd *exec.Cmd
+			if _, err2 := exec.LookPath("curl"); err2 == nil {
+				dlCmd = exec.Command("curl", "-fsSL", "--connect-timeout", "15", "-o", tmpPath, binaryURL)
+			} else {
+				dlCmd = exec.Command("wget", "-q", "--timeout=15", "-O", tmpPath, binaryURL)
+			}
+			downloadErr = dlCmd.Run()
+		case "windows":
+			psScript := fmt.Sprintf(
+				`[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `+
+					`(New-Object System.Net.WebClient).DownloadFile('%s', '%s')`,
+				binaryURL, tmpPath)
+			downloadErr = exec.Command("powershell", "-NoProfile", "-Command", psScript).Run()
 		}
-		downloadErr = dlCmd.Run()
-	case "windows":
-		psScript := fmt.Sprintf(
-			`[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `+
-				`(New-Object System.Net.WebClient).DownloadFile('%s', '%s')`,
-			binaryURL, tmpPath)
-		downloadErr = exec.Command("powershell", "-NoProfile", "-Command", psScript).Run()
+
+		if downloadErr != nil {
+			fmt.Println(yellow2.Render("  ⚠ Download failed from " + binaryURL + " — trying next source..."))
+			continue
+		}
+
+		// Verify downloaded file is non-empty
+		info, statErr := os.Stat(tmpPath)
+		if statErr != nil || info.Size() < 1024*1024 { // must be > 1MB
+			os.Remove(tmpPath)
+			fmt.Println(yellow2.Render("  ⚠ Downloaded file too small — trying next source..."))
+			continue
+		}
+
+		downloaded = true
+		break
 	}
 
-	if downloadErr != nil {
-		fmt.Println(red2.Render("  ✗ Download failed: " + downloadErr.Error()))
-		fmt.Println(dim2.Render("  Manual update: " + binaryURL))
-		return
-	}
-
-	// Verify downloaded file is non-empty
-	info, err := os.Stat(tmpPath)
-	if err != nil || info.Size() < 1024*1024 { // must be > 1MB
-		os.Remove(tmpPath)
-		fmt.Println(red2.Render("  ✗ Downloaded file looks invalid (too small). Skipping update."))
+	if !downloaded {
+		fmt.Println(red2.Render("  ✗ All download sources failed. Check your internet connection."))
+		fmt.Println(dim2.Render("  Manual update: CYBERMIND_KEY=$KEY curl -sL https://cybermindcli1.vercel.app/install.sh | bash"))
 		return
 	}
 
@@ -3137,25 +3171,21 @@ rm -f /tmp/evilginx2.tar.gz`)
 		venvPip := venvDir + "/.venv/bin/pip"
 		exec.Command(venvPip, "install", "--upgrade", "pip", "-q").Run()
 
-		// All Python security tools in one batch install
-		pythonTools := []struct{ name, pkg string }{
-			{"wafw00f",    "wafw00f"},
-			{"shodan",     "shodan"},
-			{"h8mail",     "h8mail"},
-			{"arjun",      "arjun"},
-			{"paramspider","paramspider"},
-			{"xsstrike",   "xsstrike"},
-			{"ssrfmap",    "ssrfmap"},
-			{"graphw00f",  "graphw00f"},
-			{"corsy",      "corsy"},
-			{"semgrep",    "semgrep"},
-			{"pip-audit",  "pip-audit"},
-			{"trufflehog", "trufflehog"},
+		// ── Batch pip-installable tools ──────────────────────────────────────
+		pipTools := []struct{ name, pkg string }{
+			{"wafw00f",   "wafw00f"},
+			{"shodan",    "shodan"},
+			{"h8mail",    "h8mail"},
+			{"arjun",     "arjun"},
+			{"graphw00f", "graphw00f"},
+			{"semgrep",   "semgrep"},
+			{"pip-audit", "pip-audit"},
+			{"waymore",   "waymore"},
 		}
 
 		installed, failed := 0, 0
-		for _, t := range pythonTools {
-			fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-16s"), t.name)
+		for _, t := range pipTools {
+			fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-20s"), t.name)
 			cmd := exec.Command(venvPip, "install", t.pkg, "-q")
 			cmd.Stdin = nil
 			if err := cmd.Run(); err != nil {
@@ -3163,10 +3193,65 @@ rm -f /tmp/evilginx2.tar.gz`)
 				failed++
 			} else {
 				// Symlink binary to /usr/local/bin
-				binPath := venvDir + "/.venv/bin/" + t.name
-				if _, e := os.Stat(binPath); e == nil {
-					exec.Command("sudo", "ln", "-sf", binPath, "/usr/local/bin/"+t.name).Run()
+				for _, binName := range []string{t.name, t.pkg} {
+					binPath := venvDir + "/.venv/bin/" + binName
+					if _, e := os.Stat(binPath); e == nil {
+						exec.Command("sudo", "ln", "-sf", binPath, "/usr/local/bin/"+t.name).Run()
+						break
+					}
 				}
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ installed"))
+				installed++
+			}
+		}
+
+		// ── Git-based tools — each gets its own isolated venv ─────────────────
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  Installing git-based Python tools (isolated venvs)..."))
+		fmt.Println()
+
+		type gitPyTool struct {
+			name   string
+			repo   string
+			dir    string
+			script string
+		}
+		gitTools := []gitPyTool{
+			{"paramspider", "https://github.com/devanshbatham/ParamSpider", "/opt/ParamSpider", "paramspider.py"},
+			{"xsstrike",    "https://github.com/s0md3v/XSStrike",           "/opt/XSStrike",    "xsstrike.py"},
+			{"ssrfmap",     "https://github.com/swisskyrepo/SSRFmap",        "/opt/ssrfmap",     "ssrfmap.py"},
+			{"tplmap",      "https://github.com/epinna/tplmap",              "/opt/tplmap",      "tplmap.py"},
+			{"corsy",       "https://github.com/s0md3v/Corsy",               "/opt/corsy",       "corsy.py"},
+			{"smuggler",    "https://github.com/defparam/smuggler",           "/opt/smuggler",    "smuggler.py"},
+			{"jwt_tool",    "https://github.com/ticarpi/jwt_tool",            "/opt/jwt_tool",    "jwt_tool.py"},
+			{"gopherus",    "https://github.com/tarunkant/Gopherus",          "/opt/gopherus",    "gopherus.py"},
+			{"liffy",       "https://github.com/mzfr/liffy",                  "/opt/liffy",       "liffy.py"},
+		}
+
+		for _, gt := range gitTools {
+			fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-20s"), gt.name)
+			if err := installPythonGitTool(gt.name, gt.repo, gt.dir, gt.script); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(" ✗ " + err.Error()))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ installed"))
+				installed++
+			}
+		}
+
+		// ── TruffleHog — official install script ──────────────────────────────
+		fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-20s"), "trufflehog")
+		if _, err := exec.LookPath("trufflehog"); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ already installed"))
+			installed++
+		} else {
+			thCmd := exec.Command("bash", "-c",
+				"curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin 2>/dev/null")
+			thCmd.Stdin = nil
+			if err := thCmd.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(" ✗ failed"))
+				failed++
+			} else {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ installed"))
 				installed++
 			}

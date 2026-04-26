@@ -118,6 +118,9 @@ func SelfThink(profile TargetProfile) ThinkResult {
 			"Prototype pollution via JSON merge: {\"__proto__\":{\"isAdmin\":true}}",
 			"Express.js path traversal: /static/../../../etc/passwd",
 			"Node.js SSRF via URL parsing inconsistencies",
+			"Next.js path traversal: /_next/static/../../../etc/passwd",
+			"React server components: check for server-side data leakage",
+			"Next.js API routes: test for missing auth on /api/* endpoints",
 		)
 		toolPriority = append(toolPriority, "nuclei", "dalfox")
 		reasoning = append(reasoning, "Node.js/Express — prototype pollution and SSRF are high-value targets")
@@ -312,12 +315,121 @@ func SelfThink(profile TargetProfile) ThinkResult {
 		}
 	}
 
+	// ── Advanced tech-specific attack patterns ────────────────────────────
+
+	// Kubernetes / Docker / Cloud
+	if strings.Contains(techStr, "kubernetes") || strings.Contains(techStr, "k8s") ||
+		strings.Contains(urlStr, "k8s") || strings.Contains(headerStr, "kubernetes") {
+		novelAngles = append(novelAngles,
+			"K8s SSRF: curl http://169.254.169.254/latest/meta-data/ for cloud metadata",
+			"K8s API server: curl https://kubernetes.default.svc/api/v1/namespaces",
+			"K8s service account token: /var/run/secrets/kubernetes.io/serviceaccount/token",
+			"K8s etcd: curl http://etcd:2379/v2/keys/?recursive=true",
+		)
+		reasoning = append(reasoning, "Kubernetes detected — SSRF to metadata service and API server are critical")
+		result.Confidence = min64(result.Confidence+0.1, 1.0)
+	}
+
+	if strings.Contains(techStr, "aws") || strings.Contains(techStr, "s3") ||
+		strings.Contains(urlStr, "amazonaws") || strings.Contains(urlStr, "s3.") {
+		novelAngles = append(novelAngles,
+			"AWS SSRF: http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+			"S3 bucket enumeration: aws s3 ls s3://target-bucket --no-sign-request",
+			"S3 ACL misconfiguration: public read/write on sensitive buckets",
+			"AWS metadata v2 bypass: X-aws-ec2-metadata-token header required",
+		)
+		reasoning = append(reasoning, "AWS/S3 detected — SSRF to metadata service and S3 misconfiguration are high-value")
+		result.Confidence = min64(result.Confidence+0.1, 1.0)
+	}
+
+	// API-specific attacks
+	if strings.Contains(urlStr, "/api/") || strings.Contains(urlStr, "/v1/") ||
+		strings.Contains(urlStr, "/v2/") || strings.Contains(urlStr, "/rest/") {
+		attackChain = append(attackChain,
+			"Test IDOR: change user_id/account_id in API requests",
+			"Test mass assignment: add admin=true to JSON body",
+			"Test HTTP method override: X-HTTP-Method-Override: DELETE",
+			"Test API versioning: /api/v1/ vs /api/v2/ for different security",
+			"Test JWT manipulation: decode, modify claims, re-sign with weak secret",
+		)
+		novelAngles = append(novelAngles,
+			"API BOLA: GET /api/v1/users/1 → try /api/v1/users/2,3,4...",
+			"API mass assignment: POST {\"role\":\"admin\",\"verified\":true}",
+			"API rate limit bypass: X-Forwarded-For rotation",
+		)
+		reasoning = append(reasoning, "REST API detected — IDOR/BOLA and mass assignment are primary vectors")
+	}
+
+	// WebSocket attacks
+	if strings.Contains(urlStr, "ws://") || strings.Contains(urlStr, "wss://") ||
+		strings.Contains(headerStr, "upgrade: websocket") {
+		novelAngles = append(novelAngles,
+			"WebSocket CSRF: cross-origin WebSocket hijacking",
+			"WebSocket injection: inject malicious frames",
+			"WebSocket SSRF: use WebSocket to reach internal services",
+		)
+		reasoning = append(reasoning, "WebSocket detected — CSRF and injection are primary vectors")
+	}
+
+	// CORS misconfiguration
+	if strings.Contains(headerStr, "access-control-allow-origin") {
+		novelAngles = append(novelAngles,
+			"CORS misconfiguration: Origin: https://evil.com → check if reflected",
+			"CORS null origin: Origin: null → check if allowed",
+			"CORS subdomain: Origin: https://evil.target.com → check if wildcard subdomain",
+		)
+		reasoning = append(reasoning, "CORS headers detected — test for misconfiguration with evil origin")
+	}
+
+	// File upload attacks
+	if strings.Contains(urlStr, "upload") || strings.Contains(urlStr, "file") ||
+		strings.Contains(urlStr, "import") || strings.Contains(urlStr, "attachment") {
+		attackChain = append(attackChain,
+			"File upload: upload PHP/JSP/ASPX webshell with double extension (shell.php.jpg)",
+			"File upload: bypass MIME type check with Content-Type: image/jpeg",
+			"File upload: SVG XSS: <svg onload=alert(1)>",
+			"File upload: XXE via SVG/XML upload",
+			"File upload: path traversal in filename: ../../etc/passwd",
+		)
+		result.Confidence = min64(result.Confidence+0.1, 1.0)
+		reasoning = append(reasoning, "File upload detected — webshell upload and path traversal are critical vectors")
+	}
+
+	// Admin panel detection
+	if strings.Contains(urlStr, "admin") || strings.Contains(urlStr, "dashboard") ||
+		strings.Contains(urlStr, "manage") || strings.Contains(urlStr, "panel") {
+		attackChain = append(attackChain,
+			"Admin panel: test default credentials (admin:admin, admin:password, admin:123456)",
+			"Admin panel: test for authentication bypass via SQL injection",
+			"Admin panel: test for IDOR to access other admin accounts",
+			"Admin panel: check for exposed debug endpoints",
+		)
+		bizLogic = append(bizLogic,
+			"Admin panel access: privilege escalation via role parameter manipulation",
+			"Admin panel: horizontal privilege escalation between admin accounts",
+		)
+		result.Confidence = min64(result.Confidence+0.05, 1.0)
+		reasoning = append(reasoning, "Admin panel detected — default credentials and auth bypass are primary vectors")
+	}
+
 	// ── Novel attack chain generation ─────────────────────────────────────
 
 	novelAngles = append(novelAngles,
 		"HTTP Request Smuggling: CL.TE and TE.CL variants",
 		"Web Cache Poisoning: unkeyed header injection (X-Forwarded-Host)",
 		"Host Header Injection: password reset poisoning",
+		"SSRF chain: internal metadata → cloud credentials → lateral movement",
+		"2FA bypass: race condition on OTP validation window",
+		"Account takeover via password reset token predictability",
+		"JWT none algorithm: alg=none for signature bypass",
+		"IDOR via UUID prediction: sequential/timestamp-based UUIDs",
+		"Mass assignment via HTTP PATCH with undocumented fields",
+		"Insecure Direct Object Reference via GraphQL ID parameter",
+		"Server-Side Template Injection via error messages",
+		"XXE via file upload (SVG, DOCX, XLSX, PDF)",
+		"CRLF injection in HTTP headers for response splitting",
+		"Open redirect chaining for OAuth token theft",
+		"Subdomain takeover via expired cloud service CNAME",
 	)
 
 	if len(profile.Subdomains) > 5 {

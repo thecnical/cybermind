@@ -35,7 +35,7 @@ export default {
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, X-API-Key, X-Device-OS, X-Device-ID, X-User-Name",
+      "Access-Control-Allow-Headers": "Content-Type, X-API-Key, X-Device-OS, X-Device-ID, X-User-Name, X-User-Plan, Authorization",
     };
 
     if (request.method === "OPTIONS") {
@@ -153,6 +153,116 @@ export default {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
+        return Response.json({ success: false, error: "Backend unavailable" }, { status: 503, headers: corsHeaders });
+      } catch (e) {
+        return Response.json({ success: false, error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // ── /api/attack-session/* — proxy to Render for dashboard tracking ───
+    if (path.startsWith("/api/attack-session/") && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const renderResult = await tryRender(path, body, request, 10000);
+        if (renderResult) {
+          return new Response(renderResult.body, {
+            status: renderResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        // Silently succeed if Render is down — non-critical tracking
+        return Response.json({ success: true, edge: true }, { headers: corsHeaders });
+      } catch {
+        return Response.json({ success: true, edge: true }, { headers: corsHeaders });
+      }
+    }
+
+    // ── /api/vibe-hack/stream — proxy SSE stream to Render ───────────────
+    if (path === "/api/vibe-hack/stream") {
+      try {
+        const renderURL = RENDER_BACKEND + path + url.search;
+        const proxyReq = new Request(renderURL, {
+          method: request.method,
+          headers: {
+            ...Object.fromEntries(request.headers),
+            "Accept": "text/event-stream",
+          },
+        });
+        const resp = await fetch(proxyReq, { signal: AbortSignal.timeout(300000) });
+        return new Response(resp.body, {
+          status: resp.status,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+          },
+        });
+      } catch (e) {
+        return Response.json({ success: false, error: "Stream unavailable" }, { status: 503, headers: corsHeaders });
+      }
+    }
+
+    // ── /api/chain/analyze — proxy to Render ─────────────────────────────
+    if (path === "/api/chain/analyze" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const renderResult = await tryRender(path, body, request, 30000);
+        if (renderResult) {
+          return new Response(renderResult.body, {
+            status: renderResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        // Fallback: route to /chat
+        const bugs = (body.bugs || []).slice(0, 10);
+        const prompt = `Vulnerability Chain Analysis for ${body.target}:\n\nBugs found:\n${bugs.map((b, i) => `${i+1}. [${b.severity?.toUpperCase()}] ${b.title} at ${b.url}`).join("\n")}\n\nGenerate exploit chains. Format each as:\nChain N: VULN1 + VULN2 -> Impact\nPoC: step-by-step exploitation\nCVSS Uplift: X.X`;
+        const chatResult = await tryRender("/chat", { prompt, messages: [] }, request, 30000);
+        if (chatResult) return new Response(chatResult.body, { status: chatResult.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return Response.json({ success: false, error: "Backend unavailable" }, { status: 503, headers: corsHeaders });
+      } catch (e) {
+        return Response.json({ success: false, error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // ── /api/red-team/phase — proxy to Render ────────────────────────────
+    if (path === "/api/red-team/phase" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const renderResult = await tryRender(path, body, request, 60000);
+        if (renderResult) {
+          return new Response(renderResult.body, {
+            status: renderResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        // Fallback: route to /chat
+        const phaseNames = ["OSINT", "Phishing Prep", "Initial Access", "Lateral Movement", "Lateral Movement (continued)", "Persistence", "Report"];
+        const phaseName = phaseNames[(body.phase || 1) - 1] || `Phase ${body.phase}`;
+        const prompt = `Red Team Campaign - ${body.company}\nPhase ${body.phase}: ${phaseName}\nScope: ${JSON.stringify(body.scope)}\n${body.prior_summaries?.length ? `Prior phases:\n${body.prior_summaries.join("\n")}` : ""}\n\nProvide detailed guidance for this phase including: objectives, tools, techniques, MITRE ATT&CK TTPs, and expected outcomes.`;
+        const chatResult = await tryRender("/chat", { prompt, messages: [] }, request, 60000);
+        if (chatResult) return new Response(chatResult.body, { status: chatResult.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return Response.json({ success: false, error: "Backend unavailable" }, { status: 503, headers: corsHeaders });
+      } catch (e) {
+        return Response.json({ success: false, error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // ── /api/devsec/analyze — proxy to Render ────────────────────────────
+    if (path === "/api/devsec/analyze" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const renderResult = await tryRender(path, body, request, 30000);
+        if (renderResult) {
+          return new Response(renderResult.body, {
+            status: renderResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        // Fallback: route to /chat
+        const prompt = `DevSec Analysis for: ${body.target}\n\nFindings:\n${(body.findings || "").slice(0, 20000)}\n\nProvide: 1) Critical secrets/credentials found 2) SAST vulnerabilities with severity 3) Vulnerable dependencies with CVEs 4) Remediation priority list 5) Security score (0-100)`;
+        const chatResult = await tryRender("/chat", { prompt, messages: [] }, request, 30000);
+        if (chatResult) return new Response(chatResult.body, { status: chatResult.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         return Response.json({ success: false, error: "Backend unavailable" }, { status: 503, headers: corsHeaders });
       } catch (e) {
         return Response.json({ success: false, error: e.message }, { status: 500, headers: corsHeaders });

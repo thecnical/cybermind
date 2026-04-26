@@ -1939,6 +1939,9 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
 	fmt.Println()
 
+	// Track attack session in web dashboard (non-blocking)
+	api.SendAttackSessionStart(target, "omega")
+
 	// ── Step 0: Ask user about anonymization ─────────────────────────────
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
 		"  🔒 ANONYMIZATION — Route traffic through Tor? (slower but hides your IP)"))
@@ -3261,6 +3264,15 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	}
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
 	fmt.Println()
+
+	// Track attack session completion in web dashboard (non-blocking)
+	findingChance := 30
+	if state.BugsFound > 0 {
+		findingChance = 85
+	} else if state.HuntDone {
+		findingChance = 45
+	}
+	api.SendAttackSessionComplete(target, "omega", state.BugsFound, len(state.ToolsRan), findingChance)
 }
 
 // localAgentDecision makes a decision without AI — pure logic fallback

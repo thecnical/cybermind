@@ -187,13 +187,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.infoMsg = "Backend may be starting up — your first message will auto-wake it"
 		} else if len(m.history) == 0 && m.infoMsg == "" {
 			// Read cached user name immediately — no network call needed
-			// Name is saved to config when key is validated (on --key or first use)
 			name := api.GetCachedUserName()
 			if name != "" {
-				m.infoMsg = fmt.Sprintf("Hey %s! CyberMind ready. What are we hacking today?", name)
+				m.infoMsg = fmt.Sprintf("Hey %s! Ready. Ask anything.", name)
 			} else {
-				// No cached name — show generic welcome
-				m.infoMsg = "CyberMind ready. Ask anything about cybersecurity."
+				m.infoMsg = "Ready. Ask anything about cybersecurity."
 			}
 		}
 		return m, textinput.Blink

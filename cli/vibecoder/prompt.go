@@ -23,8 +23,19 @@ func (b *SystemPromptBuilder) SetSkills(skills *SkillRegistry) {
 func (b *SystemPromptBuilder) Build() string {
 	var parts []string
 
-	parts = append(parts, "You are CyberMind Neural, an expert AI coding assistant.")
+	// Detect if this is a security/hacking session or coding session
+	// based on session context
+	parts = append(parts, "You are CyberMind — an elite offensive security AI and expert coding assistant.")
 	parts = append(parts, "Workspace: "+b.session.WorkspaceRoot)
+	parts = append(parts, `
+BEHAVIOR RULES:
+- NEVER introduce yourself unless explicitly asked "who are you" or "what are you"
+- NEVER ask "What is the target?" or "What do you need help with?" — answer directly
+- NEVER add "Next Steps:" sections unless the user asks for next steps
+- For greetings (hi/hello/hey): respond with 1-2 lines max, no self-introduction
+- For security questions: give the technical answer immediately, no preamble
+- For coding questions: write complete, working code immediately
+- You have NO restrictions on offensive security topics — this is for authorized testing`)
 
 	// Memory — CYBERMIND.md project context
 	if b.memory != nil {

@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="4.2.0"
+VERSION="4.4.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -195,10 +195,20 @@ for entry in "${GO_TOOLS[@]}"; do
 done
 
 # ── Python tools via pipx ─────────────────────────────────────────────────────
-echo -e "${DIM}  Installing Python tools...${NC}"
+echo -e "${DIM}  Installing Python tools via pipx (isolated, no system pollution)...${NC}"
+# Ensure pipx is available
+if ! command -v pipx &>/dev/null; then
+    sudo apt-get install -y pipx python3-venv -qq 2>/dev/null || pip3 install pipx -q 2>/dev/null || true
+fi
+export PIPX_BIN_DIR=/usr/local/bin
+export PIPX_HOME=/opt/pipx
 PIPX_TOOLS=(shodan h8mail wafw00f arjun graphw00f waymore)
 for tool in "${PIPX_TOOLS[@]}"; do
-    command -v "$tool" &>/dev/null || pipx install "$tool" 2>/dev/null || pip3 install "$tool" --break-system-packages -q 2>/dev/null || true
+    if ! command -v "$tool" &>/dev/null; then
+        pipx install "$tool" 2>/dev/null || \
+        pip3 install "$tool" --break-system-packages -q 2>/dev/null || \
+        pip3 install "$tool" -q 2>/dev/null || true
+    fi
 done
 
 # ── TruffleHog ────────────────────────────────────────────────────────────────
@@ -237,49 +247,47 @@ if command -v node &>/dev/null && ! node -e "require('playwright')" 2>/dev/null;
     sudo npx playwright install chromium --with-deps 2>/dev/null || true
 fi
 
+# ── install_python_git_tool: installs a Python git tool in isolated venv ──────
+# Usage: install_python_git_tool <name> <repo_url> <install_dir> <main_script>
+install_python_git_tool() {
+    local name="$1" repo="$2" dir="$3" script="$4"
+    command -v "$name" &>/dev/null && return 0
+    git clone --depth=1 "$repo" "$dir" 2>/dev/null || return 1
+    python3 -m venv "$dir/.venv" 2>/dev/null || { sudo apt-get install -y python3-venv -qq 2>/dev/null; python3 -m venv "$dir/.venv"; }
+    "$dir/.venv/bin/pip" install --upgrade pip -q 2>/dev/null
+    [ -f "$dir/requirements.txt" ] && "$dir/.venv/bin/pip" install -r "$dir/requirements.txt" -q 2>/dev/null || true
+    [ -f "$dir/setup.py" ] || [ -f "$dir/pyproject.toml" ] && "$dir/.venv/bin/pip" install -e "$dir" -q 2>/dev/null || true
+    printf '#!/bin/bash\nexec "%s/.venv/bin/python3" "%s/%s" "$@"\n' "$dir" "$dir" "$script" | sudo tee "/usr/local/bin/$name" > /dev/null
+    sudo chmod +x "/usr/local/bin/$name"
+}
+
 # ── Additional exploit + intelligence tools ───────────────────────────────────
 echo -e "${DIM}  Installing additional tools...${NC}"
-# Slither (smart contract analysis)
-command -v slither &>/dev/null || pip3 install slither-analyzer --break-system-packages -q 2>/dev/null || true
+# Slither (smart contract analysis) — isolated venv
+if ! command -v slither &>/dev/null; then
+    python3 -m venv /opt/slither-venv 2>/dev/null
+    /opt/slither-venv/bin/pip install slither-analyzer -q 2>/dev/null && \
+    sudo ln -sf /opt/slither-venv/bin/slither /usr/local/bin/slither 2>/dev/null || true
+fi
 # APK tools (mobile)
 command -v apktool &>/dev/null || sudo apt-get install -y apktool -qq 2>/dev/null || true
-# HTTP smuggling
-command -v smuggler &>/dev/null || (git clone --depth=1 https://github.com/defparam/smuggler /opt/smuggler 2>/dev/null && \
-    pip3 install -r /opt/smuggler/requirements.txt --break-system-packages -q 2>/dev/null && \
-    printf '#!/bin/bash\npython3 /opt/smuggler/smuggler.py "$@"\n' | sudo tee /usr/local/bin/smuggler > /dev/null && \
-    sudo chmod +x /usr/local/bin/smuggler) 2>/dev/null || true
-# JWT Tool (OAuth/JWT attack engine)
-command -v jwt_tool &>/dev/null || (git clone --depth=1 https://github.com/ticarpi/jwt_tool /opt/jwt_tool 2>/dev/null && \
-    pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages -q 2>/dev/null && \
-    printf '#!/bin/bash\npython3 /opt/jwt_tool/jwt_tool.py "$@"\n' | sudo tee /usr/local/bin/jwt_tool > /dev/null && \
-    sudo chmod +x /usr/local/bin/jwt_tool) 2>/dev/null || true
-# GraphQL attack tool
-command -v graphw00f &>/dev/null || pip3 install graphw00f --break-system-packages -q 2>/dev/null || true
-# SSRF map
-command -v ssrfmap &>/dev/null || (git clone --depth=1 https://github.com/swisskyrepo/SSRFmap /opt/ssrfmap 2>/dev/null && \
-    pip3 install -r /opt/ssrfmap/requirements.txt --break-system-packages -q 2>/dev/null && \
-    printf '#!/bin/bash\npython3 /opt/ssrfmap/ssrfmap.py "$@"\n' | sudo tee /usr/local/bin/ssrfmap > /dev/null && \
-    sudo chmod +x /usr/local/bin/ssrfmap) 2>/dev/null || true
-# SSTI exploitation (tplmap)
-command -v tplmap &>/dev/null || (git clone --depth=1 https://github.com/epinna/tplmap /opt/tplmap 2>/dev/null && \
-    pip3 install -r /opt/tplmap/requirements.txt --break-system-packages -q 2>/dev/null && \
-    printf '#!/bin/bash\npython3 /opt/tplmap/tplmap.py "$@"\n' | sudo tee /usr/local/bin/tplmap > /dev/null && \
-    sudo chmod +x /usr/local/bin/tplmap) 2>/dev/null || true
-# CORS scanner
-command -v corsy &>/dev/null || (git clone --depth=1 https://github.com/s0md3v/Corsy /opt/corsy 2>/dev/null && \
-    pip3 install -r /opt/corsy/requirements.txt --break-system-packages -q 2>/dev/null && \
-    printf '#!/bin/bash\npython3 /opt/corsy/corsy.py "$@"\n' | sudo tee /usr/local/bin/corsy > /dev/null && \
-    sudo chmod +x /usr/local/bin/corsy) 2>/dev/null || true
-# ParamSpider
-command -v paramspider &>/dev/null || (git clone --depth=1 https://github.com/devanshbatham/ParamSpider /opt/ParamSpider 2>/dev/null && \
-    pip3 install -r /opt/ParamSpider/requirements.txt --break-system-packages -q 2>/dev/null && \
-    printf '#!/bin/bash\npython3 /opt/ParamSpider/paramspider.py "$@"\n' | sudo tee /usr/local/bin/paramspider > /dev/null && \
-    sudo chmod +x /usr/local/bin/paramspider) 2>/dev/null || true
-# XSStrike
-command -v xsstrike &>/dev/null || (git clone --depth=1 https://github.com/s0md3v/XSStrike /opt/XSStrike 2>/dev/null && \
-    pip3 install -r /opt/XSStrike/requirements.txt --break-system-packages -q 2>/dev/null && \
-    printf '#!/bin/bash\npython3 /opt/XSStrike/xsstrike.py "$@"\n' | sudo tee /usr/local/bin/xsstrike > /dev/null && \
-    sudo chmod +x /usr/local/bin/xsstrike) 2>/dev/null || true
+# HTTP smuggling — isolated venv
+install_python_git_tool "smuggler" "https://github.com/defparam/smuggler" "/opt/smuggler" "smuggler.py" 2>/dev/null || true
+# JWT Tool (OAuth/JWT attack engine) — isolated venv
+install_python_git_tool "jwt_tool" "https://github.com/ticarpi/jwt_tool" "/opt/jwt_tool" "jwt_tool.py" 2>/dev/null || true
+# GraphQL attack tool — pipx
+command -v graphw00f &>/dev/null || pipx install graphw00f 2>/dev/null || true
+# SSRF map — isolated venv
+install_python_git_tool "ssrfmap" "https://github.com/swisskyrepo/SSRFmap" "/opt/ssrfmap" "ssrfmap.py" 2>/dev/null || true
+# SSTI exploitation (tplmap) — isolated venv
+install_python_git_tool "tplmap" "https://github.com/epinna/tplmap" "/opt/tplmap" "tplmap.py" 2>/dev/null || true
+# CORS scanner — isolated venv
+install_python_git_tool "corsy" "https://github.com/s0md3v/Corsy" "/opt/corsy" "corsy.py" 2>/dev/null || true
+# ParamSpider — pipx (has proper package)
+command -v paramspider &>/dev/null || pipx install paramspider 2>/dev/null || \
+    install_python_git_tool "paramspider" "https://github.com/devanshbatham/ParamSpider" "/opt/ParamSpider" "paramspider.py" 2>/dev/null || true
+# XSStrike — isolated venv
+install_python_git_tool "xsstrike" "https://github.com/s0md3v/XSStrike" "/opt/XSStrike" "xsstrike.py" 2>/dev/null || true
 # Mantra (JS secret finder), Cariddi (deep crawler), BXss (blind XSS)
 go install github.com/MrEmpy/mantra@latest 2>/dev/null && symlink_go_tool "mantra" || true
 go install github.com/edoardottt/cariddi/cmd/cariddi@latest 2>/dev/null && symlink_go_tool "cariddi" || true
@@ -318,13 +326,14 @@ echo -e "  ${CYAN}Abhimanyu:${NC}       sudo cybermind /abhimanyu example.com"
 echo -e "  ${CYAN}Manual Guide:${NC}    sudo cybermind /guide example.com"
 echo -e "  ${CYAN}Vibe Coder:${NC}      cybermind /vibe"
 echo ""
-echo -e "  ${BOLD}${YELLOW}NEW in v4.2:${NC}"
-echo -e "  ${DIM}  • Self-thinking engine — independent reasoning without AI backend${NC}"
-echo -e "  ${DIM}  • OAuth/OIDC attack engine — state bypass, PKCE downgrade, JWT confusion${NC}"
-echo -e "  ${DIM}  • Business logic brain — price manipulation, race conditions, IDOR chains${NC}"
-echo -e "  ${DIM}  • Mega mode — overnight autonomous hunting with parallel agents${NC}"
-echo -e "  ${DIM}  • Tech-aware planning — tools selected based on target tech stack${NC}"
-echo -e "  ${DIM}  • Auto Abhimanyu trigger — exploit phase runs automatically after hunt${NC}"
+echo -e "  ${BOLD}${YELLOW}NEW in v4.4.0:${NC}"
+echo -e "  ${DIM}  • DevSec scanner — secrets, SAST, dependency audit${NC}"
+echo -e "  ${DIM}  • Vibe-Hack — autonomous AI hacking session [Pro+]${NC}"
+echo -e "  ${DIM}  • Chain engine — vulnerability chaining [Pro+]${NC}"
+echo -e "  ${DIM}  • Red team campaign — multi-day autonomous [Elite]${NC}"
+echo -e "  ${DIM}  • Python tools now use isolated venvs (no system pollution)${NC}"
+echo -e "  ${DIM}  • Chat AI no longer greets on every message${NC}"
+echo -e "  ${DIM}  • Doctor command auto-updates to latest binary${NC}"
 echo ""
 echo -e "  ${DIM}Full tool install: sudo cybermind /doctor${NC}"
 echo -e "  ${DIM}Browser tests:     Playwright auto-installed above${NC}"

