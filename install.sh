@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="4.4.0"
+VERSION="4.5.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -186,6 +186,19 @@ GO_TOOLS=(
     "httprobe:github.com/tomnomnom/httprobe"
     "gf:github.com/tomnomnom/gf"
     "chisel:github.com/jpillora/chisel"
+    "interactsh-client:github.com/projectdiscovery/interactsh/cmd/interactsh-client"
+    "puredns:github.com/d3mondev/puredns/v2"
+    "cariddi:github.com/edoardottt/cariddi/cmd/cariddi"
+    "bxss:github.com/ethicalhackingplayground/bxss"
+    "mantra:github.com/MrEmpy/mantra"
+    "mapcidr:github.com/projectdiscovery/mapcidr/cmd/mapcidr"
+    "cdncheck:github.com/projectdiscovery/cdncheck/cmd/cdncheck"
+    "asnmap:github.com/projectdiscovery/asnmap/cmd/asnmap"
+    "uncover:github.com/projectdiscovery/uncover/cmd/uncover"
+    "notify:github.com/projectdiscovery/notify/cmd/notify"
+    "alterx:github.com/projectdiscovery/alterx/cmd/alterx"
+    "shuffledns:github.com/projectdiscovery/shuffledns/cmd/shuffledns"
+    "ligolo-ng:github.com/nicocha30/ligolo-ng/cmd/proxy"
 )
 for entry in "${GO_TOOLS[@]}"; do
     bin="${entry%%:*}"; module="${entry##*:}"
@@ -202,7 +215,7 @@ if ! command -v pipx &>/dev/null; then
 fi
 export PIPX_BIN_DIR=/usr/local/bin
 export PIPX_HOME=/opt/pipx
-PIPX_TOOLS=(shodan h8mail wafw00f arjun graphw00f waymore)
+PIPX_TOOLS=(shodan h8mail wafw00f arjun graphw00f waymore ghauri semgrep pip-audit)
 for tool in "${PIPX_TOOLS[@]}"; do
     if ! command -v "$tool" &>/dev/null; then
         pipx install "$tool" 2>/dev/null || \
@@ -292,6 +305,45 @@ install_python_git_tool "xsstrike" "https://github.com/s0md3v/XSStrike" "/opt/XS
 go install github.com/MrEmpy/mantra@latest 2>/dev/null && symlink_go_tool "mantra" || true
 go install github.com/edoardottt/cariddi/cmd/cariddi@latest 2>/dev/null && symlink_go_tool "cariddi" || true
 go install github.com/ethicalhackingplayground/bxss@latest 2>/dev/null && symlink_go_tool "bxss" || true
+# ── 2025 NEW: ghauri — advanced SQLi (better than sqlmap for modern apps) ─────
+command -v ghauri &>/dev/null || pipx install ghauri 2>/dev/null || \
+    pip3 install ghauri --break-system-packages -q 2>/dev/null || true
+# ── 2025 NEW: puredns — fast DNS brute-force with wildcard filtering ──────────
+command -v puredns &>/dev/null || \
+    (go install github.com/d3mondev/puredns/v2@latest 2>/dev/null && symlink_go_tool "puredns") || true
+# ── 2025 NEW: alterx — subdomain permutation engine ──────────────────────────
+command -v alterx &>/dev/null || \
+    (go install github.com/projectdiscovery/alterx/cmd/alterx@latest 2>/dev/null && symlink_go_tool "alterx") || true
+# ── 2025 NEW: shuffledns — mass DNS resolver ─────────────────────────────────
+command -v shuffledns &>/dev/null || \
+    (go install github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest 2>/dev/null && symlink_go_tool "shuffledns") || true
+# ── 2025 NEW: uncover — expose internet-facing assets (Shodan/Fofa/Censys) ───
+command -v uncover &>/dev/null || \
+    (go install github.com/projectdiscovery/uncover/cmd/uncover@latest 2>/dev/null && symlink_go_tool "uncover") || true
+# ── 2025 NEW: cdncheck — CDN/WAF detection ───────────────────────────────────
+command -v cdncheck &>/dev/null || \
+    (go install github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest 2>/dev/null && symlink_go_tool "cdncheck") || true
+# ── 2025 NEW: asnmap — ASN to IP range mapping ───────────────────────────────
+command -v asnmap &>/dev/null || \
+    (go install github.com/projectdiscovery/asnmap/cmd/asnmap@latest 2>/dev/null && symlink_go_tool "asnmap") || true
+# ── 2025 NEW: notify — bug found notifications (Telegram/Slack/Discord) ──────
+command -v notify &>/dev/null || \
+    (go install github.com/projectdiscovery/notify/cmd/notify@latest 2>/dev/null && symlink_go_tool "notify") || true
+# ── 2025 NEW: ligolo-ng — advanced tunneling for lateral movement ─────────────
+command -v ligolo-ng &>/dev/null || \
+    (go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest 2>/dev/null && symlink_go_tool "ligolo-ng") || true
+# ── 2025 NEW: semgrep — SAST code analysis ───────────────────────────────────
+command -v semgrep &>/dev/null || pipx install semgrep 2>/dev/null || \
+    pip3 install semgrep --break-system-packages -q 2>/dev/null || true
+# ── 2025 NEW: liffy — LFI exploitation framework ─────────────────────────────
+install_python_git_tool "liffy" "https://github.com/mzfr/liffy" "/opt/liffy" "liffy.py" 2>/dev/null || true
+# ── 2025 NEW: gopherus — SSRF payload generator ──────────────────────────────
+install_python_git_tool "gopherus" "https://github.com/tarunkant/Gopherus" "/opt/gopherus" "gopherus.py" 2>/dev/null || true
+# ── puredns resolvers list ────────────────────────────────────────────────────
+if command -v puredns &>/dev/null && [ ! -f /tmp/cybermind_resolvers.txt ]; then
+    curl -sL "https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt" \
+        -o /tmp/cybermind_resolvers.txt 2>/dev/null || true
+fi
 # Mega Mode: Reconftw
 if ! command -v reconftw &>/dev/null && [ ! -f /opt/reconftw/reconftw.sh ]; then
     echo -e "${DIM}  Installing reconftw (Mega Mode — 5-10 min)...${NC}"
@@ -310,33 +362,32 @@ echo ""
 echo -e "  ${CYAN}Verify:${NC}          cybermind --version"
 echo -e "  ${CYAN}AI Chat:${NC}         cybermind"
 echo -e "  ${CYAN}Doctor:${NC}          sudo cybermind /doctor"
-echo -e "  ${CYAN}Recon:${NC}           sudo cybermind /recon example.com"
-echo -e "  ${CYAN}Hunt:${NC}            sudo cybermind /hunt example.com"
 echo -e "  ${CYAN}OMEGA Plan:${NC}      sudo cybermind /plan example.com"
 echo -e "  ${CYAN}Auto-Target:${NC}     sudo cybermind /plan --auto-target --skill intermediate"
 echo -e "  ${CYAN}Mega Mode:${NC}       sudo cybermind /plan --auto-target --mode overnight --continuous"
-echo -e "  ${CYAN}BizLogic:${NC}        sudo cybermind /bizlogic example.com"
-echo -e "  ${CYAN}OAuth Scan:${NC}      sudo cybermind /guide example.com --focus oauth"
-echo -e "  ${CYAN}Novel Attacks:${NC}   sudo cybermind /novel example.com"
-echo -e "  ${CYAN}ZAP Scan:${NC}        sudo cybermind /zap https://example.com full"
-echo -e "  ${CYAN}Cloud Scan:${NC}      cybermind /cloud example.com"
-echo -e "  ${CYAN}Mobile APK:${NC}      sudo cybermind /mobile /tmp/app.apk"
-echo -e "  ${CYAN}CVE Feed:${NC}        cybermind /cve-feed example.com"
+echo -e "  ${CYAN}Recon:${NC}           sudo cybermind /recon example.com"
+echo -e "  ${CYAN}Hunt:${NC}            sudo cybermind /hunt example.com"
 echo -e "  ${CYAN}Abhimanyu:${NC}       sudo cybermind /abhimanyu example.com"
-echo -e "  ${CYAN}Manual Guide:${NC}    sudo cybermind /guide example.com"
+echo -e "  ${CYAN}DevSec:${NC}          cybermind /devsec <github-url|path>"
+echo -e "  ${CYAN}Vibe-Hack:${NC}       sudo cybermind /vibe-hack example.com"
+echo -e "  ${CYAN}Chain:${NC}           sudo cybermind /chain example.com"
+echo -e "  ${CYAN}Red Team:${NC}        sudo cybermind /red-team company.com"
+echo -e "  ${CYAN}BizLogic:${NC}        sudo cybermind /bizlogic example.com"
+echo -e "  ${CYAN}OSINT Deep:${NC}      sudo cybermind /osint-deep example.com"
+echo -e "  ${CYAN}Novel Attacks:${NC}   sudo cybermind /novel example.com"
+echo -e "  ${CYAN}Python Tools:${NC}    sudo cybermind /install-python-tools"
 echo -e "  ${CYAN}Vibe Coder:${NC}      cybermind /vibe"
 echo ""
-echo -e "  ${BOLD}${YELLOW}NEW in v4.4.0:${NC}"
-echo -e "  ${DIM}  • DevSec scanner — secrets, SAST, dependency audit${NC}"
-echo -e "  ${DIM}  • Vibe-Hack — autonomous AI hacking session [Pro+]${NC}"
-echo -e "  ${DIM}  • Chain engine — vulnerability chaining [Pro+]${NC}"
-echo -e "  ${DIM}  • Red team campaign — multi-day autonomous [Elite]${NC}"
-echo -e "  ${DIM}  • Python tools now use isolated venvs (no system pollution)${NC}"
-echo -e "  ${DIM}  • Chat AI no longer greets on every message${NC}"
-echo -e "  ${DIM}  • Doctor command auto-updates to latest binary${NC}"
+echo -e "  ${BOLD}${YELLOW}NEW in v4.5.0:${NC}"
+echo -e "  ${DIM}  • 13 new tools: puredns, alterx, shuffledns, uncover, cdncheck, asnmap, notify${NC}"
+echo -e "  ${DIM}  • ghauri — advanced SQLi (better than sqlmap for modern apps)${NC}"
+echo -e "  ${DIM}  • ligolo-ng — advanced tunneling for lateral movement${NC}"
+echo -e "  ${DIM}  • semgrep — SAST code analysis for DevSec mode${NC}"
+echo -e "  ${DIM}  • Chat AI strict no-greeting (edge-level enforcement)${NC}"
+echo -e "  ${DIM}  • OMEGA brain upgraded with 2025/2026 attack patterns${NC}"
+echo -e "  ${DIM}  • 18 novel attack detectors (CRLF, XXE, LFI, Mass Assignment)${NC}"
 echo ""
 echo -e "  ${DIM}Full tool install: sudo cybermind /doctor${NC}"
-echo -e "  ${DIM}Browser tests:     Playwright auto-installed above${NC}"
 echo -e "  ${DIM}OOB verification:  interactsh-client auto-installed above${NC}"
 echo ""
 if [ -n "$CYBERMIND_KEY" ]; then

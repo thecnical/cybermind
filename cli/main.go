@@ -40,7 +40,7 @@ import (
 )
 
 var (
-	Version = "4.4.0"
+	Version = "4.5.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -222,7 +222,7 @@ func printHelp() {
 		fmt.Println(d.Render("  TELEGRAM_BOT_TOKEN   → bug found notifications via Telegram"))
 		fmt.Println(d.Render("  TELEGRAM_CHAT_ID     → your Telegram chat ID for notifications"))
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔐 New in v4.4.0:"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔐 New in v4.5.0:"))
 		fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
 		fmt.Println(g.Render("  cybermind /vibe-hack <target>") + d.Render("        → Autonomous AI hacking session [Pro+]"))
 		fmt.Println(g.Render("  cybermind /chain <target>") + d.Render("            → Vulnerability chaining engine [Pro+]"))
@@ -264,7 +264,7 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind report") + d.Render("                → generate pentest report from history"))
 	fmt.Println(g.Render("  cybermind --local") + d.Render("               → use local Ollama AI (CYBERMIND_LOCAL=true)"))
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔐 New in v4.4.0:"))
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔐 New in v4.5.0:"))
 	fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
 	fmt.Println(g.Render("  cybermind /vibe-hack <target>") + d.Render("        → Autonomous AI hacking session [Pro+]"))
 	fmt.Println(g.Render("  cybermind /chain <target>") + d.Render("            → Vulnerability chaining engine [Pro+]"))
@@ -2699,7 +2699,7 @@ func main() {
 			{"mitm6", "exploit", "pipx:mitm6", false, false},
 			// ── Tunneling + Exfil ───────────────────────────────────────────────
 			{"chisel", "exploit", "go:github.com/jpillora/chisel@latest", true, false},
-			{"ligolo-ng", "exploit", "apt:ligolo-ng", false, false},
+			{"ligolo-ng", "exploit", "go:github.com/nicocha30/ligolo-ng/cmd/proxy@latest", true, false},
 			{"iodine", "exploit", "apt:iodine", false, false},
 			// ── C2 Frameworks ───────────────────────────────────────────────────
 			{"sliver", "exploit", "special:sliver", false, false},
@@ -2713,6 +2713,24 @@ func main() {
 			{"jadx", "exploit", "apt:jadx", false, false},
 			// ── Browser Automation (XSS verify + authenticated scanning) ─────────
 			{"node", "recon", "apt:nodejs", false, false},
+			// ── 2025 NEW: Advanced Recon ─────────────────────────────────────────
+			{"puredns", "recon", "go:github.com/d3mondev/puredns/v2@latest", true, false},
+			{"alterx", "recon", "go:github.com/projectdiscovery/alterx/cmd/alterx@latest", true, false},
+			{"shuffledns", "recon", "go:github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest", true, false},
+			{"uncover", "recon", "go:github.com/projectdiscovery/uncover/cmd/uncover@latest", true, false},
+			{"cdncheck", "recon", "go:github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest", true, false},
+			{"asnmap", "recon", "go:github.com/projectdiscovery/asnmap/cmd/asnmap@latest", true, false},
+			{"notify", "recon", "go:github.com/projectdiscovery/notify/cmd/notify@latest", true, false},
+			{"mapcidr", "recon", "go:github.com/projectdiscovery/mapcidr/cmd/mapcidr@latest", true, false},
+			{"interactsh-client", "hunt", "go:github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest", true, false},
+			// ── 2025 NEW: Advanced Hunt ───────────────────────────────────────────
+			{"ghauri", "hunt", "pipx:ghauri", false, false},
+			{"cariddi", "hunt", "go:github.com/edoardottt/cariddi/cmd/cariddi@latest", true, false},
+			{"bxss", "hunt", "go:github.com/ethicalhackingplayground/bxss@latest", true, false},
+			{"mantra", "hunt", "go:github.com/MrEmpy/mantra@latest", true, false},
+			{"semgrep", "hunt", "pipx:semgrep", false, false},
+			{"liffy", "hunt", "venv:https://github.com/mzfr/liffy:/opt/liffy:liffy.py", false, false},
+			{"gopherus", "hunt", "venv:https://github.com/tarunkant/Gopherus:/opt/gopherus:gopherus.py", false, false},
 		}
 
 		var missing []toolEntry
@@ -5311,7 +5329,7 @@ rm -f /tmp/evilginx2.tar.gz`)
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Just run: cybermind"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Or ask directly: cybermind \"refactor my auth module\""))
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  New in v4.4.0:"))
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  New in v4.5.0:"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  cybermind /devsec <repo>      → DevSec scanner [Starter+]"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  cybermind /vibe-hack <target> → Autonomous AI hacking [Pro+]"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  cybermind /chain <target>     → Vuln chaining engine [Pro+]"))
