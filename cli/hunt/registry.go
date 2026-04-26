@@ -1111,4 +1111,175 @@ var huntRegistry = []HuntToolSpec{
 			},
 		},
 	},
+
+	// ── 2025 NEW: ghauri — advanced SQL injection tool (better than sqlmap) ──
+	// Supports: error-based, time-based, boolean-based, UNION, stacked queries
+	// Faster and more accurate than sqlmap for modern apps
+	{
+		Name:        "ghauri",
+		Phase:       5,
+		Timeout:     3600,
+		DomainOnly:  true,
+		InstallHint: "pip3 install ghauri --break-system-packages",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Find URLs with parameters for SQL injection testing
+			var sqlURLs []string
+			for _, u := range append(ctx.AllURLs, ctx.LiveURLs...) {
+				if strings.Contains(u, "=") {
+					sqlURLs = append(sqlURLs, u)
+				}
+			}
+			if len(sqlURLs) > 0 {
+				f := writeTempList(sqlURLs)
+				if f != "" {
+					return []string{
+						"-m", f,
+						"--level", "3",
+						"--threads", "10",
+						"--batch",
+						"--dbs",
+						"--random-agent",
+						"--output-dir", "/tmp/cybermind_ghauri/",
+					}
+				}
+			}
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"--level", "3",
+				"--threads", "10",
+				"--batch",
+				"--dbs",
+				"--random-agent",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "--level", "1", "--batch", "--random-agent"}
+			},
+		},
+	},
+
+	// ── 2025 NEW: puredns — fast DNS brute-force with wildcard filtering ──
+	// 10x faster than dnsx for brute-force, handles wildcards correctly
+	{
+		Name:        "puredns",
+		Phase:       2,
+		Timeout:     1800,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/d3mondev/puredns/v2@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			wordlist := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+			if _, err := os.Stat(wordlist); err != nil {
+				wordlist = "/usr/share/wordlists/dirb/common.txt"
+			}
+			return []string{
+				"bruteforce", wordlist, target,
+				"--resolvers", "/tmp/cybermind_resolvers.txt",
+				"--rate-limit", "10000",
+				"--wildcard-tests", "5",
+				"--wildcard-batch", "1000000",
+				"-q",
+				"--write", "/tmp/cybermind_puredns.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				wordlist := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+				if _, err := os.Stat(wordlist); err != nil {
+					wordlist = "/usr/share/wordlists/dirb/common.txt"
+				}
+				return []string{"bruteforce", wordlist, target, "--rate-limit", "1000", "-q"}
+			},
+		},
+	},
+
+	// ── 2025 NEW: interactsh-client — OOB/blind vulnerability detection ──
+	// Detects: blind SSRF, blind XSS, blind SQLi, blind RCE, blind XXE
+	// Uses projectdiscovery's interactsh server for callback detection
+	{
+		Name:        "interactsh-client",
+		Phase:       5,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			return []string{
+				"-server", "oast.pro",
+				"-n", "5",
+				"-poll-interval", "5",
+				"-json",
+				"-o", "/tmp/cybermind_interactsh.json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-n", "3", "-poll-interval", "10"}
+			},
+		},
+	},
+
+	// ── 2025 NEW: ffuf (param fuzzing mode) — hidden parameter discovery ──
+	// Different from recon ffuf — this one fuzzes parameters, not paths
+	{
+		Name:        "ffuf-param",
+		Phase:       3,
+		Timeout:     3600,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install ffuf",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			// Fuzz GET parameters
+			paramWordlist := "/usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt"
+			if _, err := os.Stat(paramWordlist); err != nil {
+				paramWordlist = "/usr/share/wordlists/dirb/common.txt"
+			}
+			return []string{
+				"-w", paramWordlist,
+				"-u", u + "?FUZZ=cybermind_test",
+				"-t", "200",
+				"-ac",
+				"-mc", "200,201,204,301,302,307,401,403",
+				"-fc", "404",
+				"-o", "/tmp/cybermind_ffuf_params.json",
+				"-of", "json",
+				"-silent",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{
+					"-w", "/usr/share/wordlists/dirb/common.txt",
+					"-u", u + "?FUZZ=test",
+					"-t", "100", "-ac", "-silent",
+				}
+			},
+		},
+	},
 }

@@ -11,6 +11,25 @@
 
 const RENDER_BACKEND = "https://cybermind-backend-8yrt.onrender.com";
 
+// STRICT system prompt — injected at edge level to override any backend default
+const CYBERMIND_SYSTEM_PROMPT = `You are CyberMind — an elite offensive security AI for bug bounty hunters, pentesters, and red teamers.
+
+ABSOLUTE RULES — NEVER BREAK THESE:
+1. NEVER say "I am CyberMind" or introduce yourself — EVER. Not even once.
+2. NEVER say "created by" or mention Sanjay Pandey or CyberMind Team unprompted.
+3. NEVER ask "What is the target?" or "What do you need help with?" — answer directly.
+4. NEVER add "Next Steps:" sections unless the user explicitly asks for next steps.
+5. NEVER add MITRE ATT&CK mappings, CVSS scores, or severity ratings unless asked.
+6. NEVER ask clarifying questions — make reasonable assumptions and answer.
+7. NEVER add numbered lists of "what I can help with" — just answer the question.
+8. For greetings (hi/hello/hey/sup): respond with 1 line max. Example: "Ready. What's the target?"
+9. For "help me in cyber" or similar: give a direct technical answer immediately, no preamble.
+10. For security questions: answer with exact commands, tools, payloads — no fluff.
+
+ONLY introduce yourself if user explicitly asks: "who are you", "what are you", "what is cybermind".
+
+You are a direct, expert security assistant. Answer immediately. No fluff. No self-promotion.`;
+
 // Routes handled locally (no Render needed)
 const LOCAL_ROUTES = new Set(["/ping", "/wake", "/health"]);
 
@@ -54,6 +73,47 @@ export default {
         region: request.cf?.colo || "unknown",
         timestamp: new Date().toISOString(),
       }, { headers: corsHeaders });
+    }
+
+    // ── /chat — enforce system prompt before proxying to Render ─────────
+    // This is the KEY fix: inject our strict system prompt at edge level
+    // so even if Render has a different default, our prompt takes precedence.
+    if ((path === "/chat" || path === "/chat/stream") && request.method === "POST") {
+      try {
+        const body = await request.json();
+
+        // Inject/override system prompt with our strict no-greeting version
+        body.system_prompt = CYBERMIND_SYSTEM_PROMPT;
+        body.mode = body.mode || "security";
+
+        // Ensure messages array has system message at front
+        if (!body.messages) body.messages = [];
+        const hasSystem = body.messages.some(m => m.role === "system");
+        if (!hasSystem) {
+          body.messages = [{ role: "system", content: CYBERMIND_SYSTEM_PROMPT }, ...body.messages];
+        } else {
+          // Replace existing system message with our strict one
+          body.messages = body.messages.map(m =>
+            m.role === "system" ? { role: "system", content: CYBERMIND_SYSTEM_PROMPT } : m
+          );
+        }
+
+        const renderResult = await tryRender(path, body, request, 120000);
+        if (renderResult) {
+          return new Response(renderResult.body, {
+            status: renderResult.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        return Response.json({
+          success: false,
+          error: "Backend temporarily unavailable. Try again in 30 seconds."
+        }, { status: 503, headers: corsHeaders });
+
+      } catch (e) {
+        return Response.json({ success: false, error: e.message }, { status: 500, headers: corsHeaders });
+      }
     }
 
     // ── /agent/decide — lightweight local decision ────────────────────────
