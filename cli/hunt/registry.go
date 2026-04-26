@@ -869,7 +869,7 @@ var huntRegistry = []HuntToolSpec{
 	{
 		Name:        "nuclei",
 		Phase:       5,
-		Timeout:     7200,
+		Timeout:     1800,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
 		BuildArgs: func(target string, ctx *HuntContext) []string {

@@ -76,6 +76,17 @@ func getLocalIP() string {
 	return "unknown"
 }
 
+// isWSL returns true if running inside Windows Subsystem for Linux.
+func isWSL() bool {
+	// Check /proc/version for Microsoft/WSL
+	data, err := os.ReadFile("/proc/version")
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(data))
+	return strings.Contains(lower, "microsoft") || strings.Contains(lower, "wsl")
+}
+
 // getOSLabel returns a styled OS label
 func getOSLabel() (string, string) {
 	switch runtime.GOOS {
@@ -520,7 +531,7 @@ func truncateFindings(findings map[string]string) map[string]string {
 	toolLimits := map[string]int{
 		"nuclei": 8000, "nikto": 5000, "nmap": 3000,
 		"reconftw": 6000, "katana": 3000, "httpx": 2000,
-		"masscan": 1500, "rustscan": 1500, "subfinder": 2000,
+		"masscan": 1500, "naabu": 1500, "subfinder": 2000,
 		"amass": 2000, "dalfox": 3000, "sqlmap": 3000,
 	}
 	out := make(map[string]string, len(findings))
@@ -1727,75 +1738,117 @@ func aptInstall(packages ...string) error {
 }
 
 // ensurePipx installs pipx if missing and ensures /usr/local/bin is in pipx path.
+// Handles permission errors gracefully — falls back to apt install if sudo fails.
 func ensurePipx() {
 	if _, err := exec.LookPath("pipx"); err != nil {
-		aptInstall("pipx", "python3-venv")
+		// Try apt install first
+		if aptErr := aptInstall("pipx", "python3-venv"); aptErr != nil {
+			// Fallback: pip3 install pipx --break-system-packages
+			cmd := exec.Command("pip3", "install", "pipx", "--break-system-packages", "-q")
+			cmd.Stdin = nil
+			if cmd.Run() != nil {
+				// Last resort: pip3 install pipx without flag
+				cmd2 := exec.Command("pip3", "install", "pipx", "-q")
+				cmd2.Stdin = nil
+				cmd2.Run()
+			}
+		}
 	}
 	// Set PIPX_BIN_DIR so binaries land in /usr/local/bin (accessible system-wide)
 	os.Setenv("PIPX_BIN_DIR", "/usr/local/bin")
 	os.Setenv("PIPX_HOME", "/opt/pipx")
 }
 
+// findBinaryInCommonLocations searches common install locations for a binary
+// and symlinks it to /usr/local/bin if found. Returns true if found.
+func findBinaryInCommonLocations(name string) bool {
+	home, _ := os.UserHomeDir()
+	searchPaths := []string{
+		"/usr/local/bin/" + name,
+		"/opt/pipx/venvs/" + name + "/bin/" + name,
+		home + "/.local/bin/" + name,
+		"/root/.local/bin/" + name,
+		home + "/go/bin/" + name,
+		"/root/go/bin/" + name,
+	}
+	for _, p := range searchPaths {
+		if _, e := os.Stat(p); e == nil {
+			exec.Command("sudo", "ln", "-sf", p, "/usr/local/bin/"+name).Run()
+			return true
+		}
+	}
+	return false
+}
+
 // installPythonPipTool installs a Python CLI tool using the best available method.
-// Priority: pipx (isolated) → venv → pip3 --break-system-packages
-// The pkgName parameter is the pip package name to install (passed directly).
+// Priority: pipx --force → pip3 --break-system-packages → pip3 (plain)
+// After each method, searches common locations and symlinks to /usr/local/bin.
+// Verifies the binary actually works with --version or --help.
 func installPythonPipTool(pkgName string) error {
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Installing %s (isolated env)...", pkgName)))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Installing %s...", pkgName)))
 
 	ensurePipx()
 
-	// Method 1: pipx with PIPX_BIN_DIR=/usr/local/bin
 	pipxEnv := append(os.Environ(),
 		"PIPX_BIN_DIR=/usr/local/bin",
 		"PIPX_HOME=/opt/pipx",
 	)
+
+	// Method 1: pipx install --force with PIPX_BIN_DIR=/usr/local/bin
 	cmd := exec.Command("pipx", "install", "--force", pkgName)
 	cmd.Env = pipxEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Stdin = nil
 	if err := cmd.Run(); err == nil {
-		// Verify binary landed somewhere accessible
-		if _, e := exec.LookPath(pkgName); e == nil {
-			return nil
-		}
-		// Try symlinking from common pipx locations
-		for _, searchDir := range []string{
-			"/usr/local/bin/" + pkgName,
-			"/opt/pipx/venvs/" + pkgName + "/bin/" + pkgName,
-			os.Getenv("HOME") + "/.local/bin/" + pkgName,
-			"/root/.local/bin/" + pkgName,
-		} {
-			if _, e := os.Stat(searchDir); e == nil {
-				exec.Command("sudo", "ln", "-sf", searchDir, "/usr/local/bin/"+pkgName).Run()
-				return nil
-			}
-		}
-		return nil
-	}
-
-	// Method 2: venv in /opt/<pkgName>-venv
-	venvDir := "/opt/" + pkgName + "-venv"
-	exec.Command("python3", "-m", "venv", venvDir).Run()
-	venvPip := venvDir + "/bin/pip"
-	venvBin := venvDir + "/bin/" + pkgName
-
-	installCmd := exec.Command(venvPip, "install", pkgName, "-q")
-	installCmd.Stdout = os.Stdout
-	installCmd.Stderr = os.Stderr
-	installCmd.Stdin = nil
-	if err := installCmd.Run(); err == nil {
-		if _, e := os.Stat(venvBin); e == nil {
-			exec.Command("sudo", "ln", "-sf", venvBin, "/usr/local/bin/"+pkgName).Run()
+		findBinaryInCommonLocations(pkgName)
+		if verifyBinary(pkgName) {
 			return nil
 		}
 	}
 
-	// Method 3: pip3 --break-system-packages (last resort)
-	cmd3 := exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q")
+	// Method 2: pip3 install --break-system-packages
+	cmd2 := exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q")
+	cmd2.Stdout = os.Stdout
+	cmd2.Stderr = os.Stderr
+	cmd2.Stdin = nil
+	if err := cmd2.Run(); err == nil {
+		findBinaryInCommonLocations(pkgName)
+		if verifyBinary(pkgName) {
+			return nil
+		}
+	}
+
+	// Method 3: pip3 install (without --break-system-packages)
+	cmd3 := exec.Command("pip3", "install", pkgName, "-q")
 	cmd3.Stdout = os.Stdout
 	cmd3.Stderr = os.Stderr
 	cmd3.Stdin = nil
-	return cmd3.Run()
+	if err := cmd3.Run(); err != nil {
+		return err
+	}
+	findBinaryInCommonLocations(pkgName)
+	if verifyBinary(pkgName) {
+		return nil
+	}
+	return fmt.Errorf("%s: installed but binary not found in PATH", pkgName)
+}
+
+// verifyBinary checks that a binary is accessible and runs successfully.
+func verifyBinary(name string) bool {
+	if _, err := exec.LookPath(name); err != nil {
+		return false
+	}
+	// Try --version first, then --help
+	for _, flag := range []string{"--version", "--help"} {
+		cmd := exec.Command(name, flag)
+		cmd.Stdin = nil
+		if cmd.Run() == nil {
+			return true
+		}
+	}
+	// Binary exists in PATH even if --version/--help fail — consider it OK
+	return true
 }
 
 // installPythonGitTool installs a Python tool from git using venv isolation.
@@ -1972,85 +2025,6 @@ x8 --version`)
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	return buildCmd.Run()
-}
-
-// installRustscan installs rustscan via .deb release (most reliable on Kali).
-func installRustscan() error {
-	// Check if already installed via cargo — just symlink it
-	for _, cargoPath := range []string{
-		"/root/.cargo/bin/rustscan",
-		os.Getenv("HOME") + "/.cargo/bin/rustscan",
-	} {
-		if _, err := os.Stat(cargoPath); err == nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ rustscan found in cargo — symlinking to /usr/local/bin/"))
-			exec.Command("sudo", "ln", "-sf", cargoPath, "/usr/local/bin/rustscan").Run()
-			// Add cargo to PATH permanently
-			for _, profile := range []string{"/root/.bashrc", "/root/.zshrc"} {
-				if _, e := os.Stat(profile); e == nil {
-					exec.Command("bash", "-c", fmt.Sprintf(
-						`grep -q "cargo/bin" %s || echo 'export PATH=$PATH:$HOME/.cargo/bin' >> %s`, profile, profile)).Run()
-				}
-			}
-			return nil
-		}
-	}
-
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Downloading RustScan 2.4.1 .deb..."))
-
-	// Method 1: Direct 2.4.1 .deb (known good URL)
-	knownURL := "https://github.com/bee-san/RustScan/releases/download/2.4.1/rustscan_2.4.1_amd64.deb"
-	dlCmd := exec.Command("bash", "-c", fmt.Sprintf(
-		`set -e
-DEBIAN_FRONTEND=noninteractive
-curl -fsSL "%s" -o /tmp/rustscan.deb 2>/dev/null || wget -q "%s" -O /tmp/rustscan.deb
-DEBIAN_FRONTEND=noninteractive sudo dpkg -i /tmp/rustscan.deb
-sudo apt-get install -f -y -qq -o Dpkg::Options::=--force-confdef 2>/dev/null || true
-rm -f /tmp/rustscan.deb`, knownURL, knownURL))
-	dlCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
-	dlCmd.Stdout = os.Stdout
-	dlCmd.Stderr = os.Stderr
-	dlCmd.Stdin = nil
-	if err := dlCmd.Run(); err == nil {
-		if _, e := exec.LookPath("rustscan"); e == nil {
-			return nil
-		}
-	}
-
-	// Method 2: Latest release .deb from GitHub API
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Trying latest RustScan release..."))
-	latestCmd := exec.Command("bash", "-c",
-		`set -e
-DEBIAN_FRONTEND=noninteractive
-LATEST=$(curl -s https://api.github.com/repos/bee-san/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4 | head -1)
-if [ -z "$LATEST" ]; then
-  LATEST=$(curl -s https://api.github.com/repos/RustScan/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4 | head -1)
-fi
-if [ -n "$LATEST" ]; then
-  curl -fsSL "$LATEST" -o /tmp/rustscan.deb
-  DEBIAN_FRONTEND=noninteractive sudo dpkg -i /tmp/rustscan.deb
-  sudo apt-get install -f -y -qq 2>/dev/null || true
-  rm -f /tmp/rustscan.deb
-fi`)
-	latestCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
-	latestCmd.Stdout = os.Stdout
-	latestCmd.Stderr = os.Stderr
-	latestCmd.Stdin = nil
-	if err := latestCmd.Run(); err == nil {
-		return nil
-	}
-
-	// Method 3: snap install
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ↳ Trying snap install rustscan..."))
-	snapCmd := exec.Command("bash", "-c", "sudo snap install rustscan 2>/dev/null && sudo ln -sf /snap/bin/rustscan /usr/local/bin/rustscan 2>/dev/null || true")
-	snapCmd.Stdout = os.Stdout
-	snapCmd.Stderr = os.Stderr
-	snapCmd.Stdin = nil
-	snapCmd.Run()
-
-	if _, e := exec.LookPath("rustscan"); e == nil {
-		return nil
-	}
-	return fmt.Errorf("rustscan install failed — skip and continue")
 }
 
 // updateAllTools silently updates all installed tools to latest versions.
@@ -2541,11 +2515,10 @@ func main() {
 			return
 		}
 
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ② Checking recon + hunt tools..."))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ② Installing system dependencies first..."))
 		fmt.Println()
 
-		// ── Pre-seed ALL debconf dialogs so NOTHING ever prompts ─────────────
-		// This handles krb5-config, postfix, tzdata, neo4j, etc.
+		// ── Step 1.5: Install system dependencies FIRST ───────────────────────
 		os.Setenv("DEBIAN_FRONTEND", "noninteractive")
 		os.Setenv("DEBCONF_NONINTERACTIVE_SEEN", "true")
 		preseedCmd := exec.Command("bash", "-c", `
@@ -2558,7 +2531,21 @@ func main() {
 			echo "tzdata tzdata/Areas select Etc" | debconf-set-selections 2>/dev/null || true
 			echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections 2>/dev/null || true
 		`)
-		preseedCmd.Run() // ignore errors — debconf-set-selections may not exist on all systems
+		preseedCmd.Run()
+
+		fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Installing build-essential git curl wget python3-pip python3-venv libpcap-dev..."))
+		sysDeps := []string{"build-essential", "git", "curl", "wget", "python3-pip", "python3-venv", "libpcap-dev"}
+		aptInstall(sysDeps...)
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ System dependencies installed"))
+		fmt.Println()
+
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ③ Checking recon + hunt tools..."))
+		fmt.Println()
+
+		// ── Pre-seed ALL debconf dialogs so NOTHING ever prompts ─────────────
+		// This handles krb5-config, postfix, tzdata, neo4j, etc.
+		os.Setenv("DEBIAN_FRONTEND", "noninteractive")
+		os.Setenv("DEBCONF_NONINTERACTIVE_SEEN", "true")
 
 		type toolEntry struct {
 			name    string
@@ -2585,7 +2572,6 @@ func main() {
 			{"reconftw", "recon", "special:reconftw", false, false},
 			{"dnsx", "recon", "go:github.com/projectdiscovery/dnsx/cmd/dnsx@latest", true, false},
 			// ── Recon Phase 3 — Port Scanning ──────────────────────────────────
-			{"rustscan", "recon", "special:rustscan", false, false},
 			{"naabu", "recon", "go:github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", true, false},
 			{"nmap", "recon", "apt:nmap", false, false},
 			{"masscan", "recon", "apt:masscan", false, false},
@@ -2775,6 +2761,7 @@ func main() {
 			fmt.Println()
 
 			instOK, instFail := 0, 0
+			totalMissing := len(missing)
 			// helper: symlink go binary
 			symlinkGoTool := func(name string) {
 				homedir2, _ := os.UserHomeDir()
@@ -2813,7 +2800,7 @@ func main() {
 					continue
 				}
 
-				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-20s installing...", t.name)))
+				fmt.Println(lipgloss.NewStyle().Foreground(purple).Render(fmt.Sprintf("  ⟳ %-20s installing... [%d/%d]", t.name, instOK+instFail+1, totalMissing)))
 
 				var installErr error
 
@@ -2872,9 +2859,6 @@ func main() {
 
 				case t.install == "special:reconftw":
 					installErr = installReconftw()
-
-				case t.install == "special:rustscan":
-					installErr = installRustscan()
 
 				case t.install == "special:trufflehog":
 					cmd2 := exec.Command("bash", "-c",
@@ -2981,7 +2965,12 @@ rm -f /tmp/evilginx2.tar.gz`)
 				default:
 					// apt fallback for any unhandled tool
 					if t.isCargo {
-						installErr = installRustscan() // only rustscan uses cargo now
+						// cargo tools: install via cargo
+						cmd2 := exec.Command("cargo", "install", t.name)
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						cmd2.Stdin = nil
+						installErr = cmd2.Run()
 					} else if t.isGo {
 						parts := strings.Fields(t.install)
 						cmd2 := exec.Command("go", "install", parts[len(parts)-1])
@@ -3003,6 +2992,36 @@ rm -f /tmp/evilginx2.tar.gz`)
 				}
 
 				if installErr != nil {
+					// ── Retry once before marking as failed ──────────────────
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(fmt.Sprintf("  ↻ %-20s retrying...", t.name)))
+					retryErr := installErr
+					switch {
+					case strings.HasPrefix(t.install, "apt:"):
+						pkg := strings.TrimPrefix(t.install, "apt:")
+						retryErr = aptInstall(pkg)
+					case strings.HasPrefix(t.install, "go:"):
+						module := strings.TrimPrefix(t.install, "go:")
+						cmd2 := exec.Command("go", "install", module)
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						cmd2.Stdin = nil
+						retryErr = cmd2.Run()
+						if retryErr == nil {
+							symlinkGoTool(t.name)
+						}
+					case strings.HasPrefix(t.install, "pipx:"):
+						pkg := strings.TrimPrefix(t.install, "pipx:")
+						retryErr = installPythonPipTool(pkg)
+					}
+					if retryErr == nil {
+						if _, checkErr := exec.LookPath(t.name); checkErr == nil {
+							fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed (retry)", t.name)))
+							instOK++
+							continue
+						}
+					}
+					installErr = retryErr
+
 					fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s failed: %v", t.name, installErr)))
 
 					// ── AI Auto-Fix: get fix commands and execute them ────────
@@ -3147,26 +3166,17 @@ rm -f /tmp/evilginx2.tar.gz`)
 			runInstall(tool, exec.Command("sudo", "apt", "install", "-y", tool))
 		}
 
-		// ── Step 2: rustscan from GitHub (not in apt) ────────────────────────
+		// ── Step 2: naabu (needs libpcap) ───────────────────────────────────
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [2/4] Installing rustscan..."))
-		if _, err := exec.LookPath("rustscan"); err == nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - rustscan         already installed"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  [2/4] Installing naabu (primary port scanner)..."))
+		if _, err := exec.LookPath("naabu"); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  - naabu            already installed"))
 			skipped2++
 		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ rustscan         installing from GitHub..."))
-			// Try cargo install first (fastest)
-			if _, cargoErr := exec.LookPath("cargo"); cargoErr == nil {
-				if runInstall("rustscan", exec.Command("cargo", "install", "rustscan")) {
-					symlinkGo("rustscan")
-				}
-			} else {
-				// Fallback: download latest release binary
-				dlCmd := exec.Command("bash", "-c",
-					`LATEST=$(curl -s https://api.github.com/repos/RustScan/RustScan/releases/latest | grep browser_download_url | grep amd64.deb | cut -d'"' -f4) && curl -sL "$LATEST" -o /tmp/rustscan.deb && sudo dpkg -i /tmp/rustscan.deb`)
-				if runInstall("rustscan", dlCmd) {
-					// already in /usr/bin from dpkg
-				}
+			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ naabu            installing via go install..."))
+			aptInstall("libpcap-dev")
+			if runInstall("naabu", exec.Command("go", "install", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest")) {
+				symlinkGo("naabu")
 			}
 		}
 

@@ -19,6 +19,23 @@ func IsLinux() bool {
 	return runtime.GOOS == "linux"
 }
 
+// isWSL returns true if running inside Windows Subsystem for Linux.
+// Raw socket tools (masscan, zmap) don't work on WSL due to kernel limitations.
+func isWSL() bool {
+	data, err := os.ReadFile("/proc/version")
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(data))
+	return strings.Contains(lower, "microsoft") || strings.Contains(lower, "wsl")
+}
+
+// rawSocketTools are tools that require raw socket access — they fail on WSL.
+var rawSocketTools = map[string]bool{
+	"masscan": true,
+	"zmap":    true,
+}
+
 var wordlistCandidates = []string{
 	"/usr/share/seclists/Discovery/Web-Content/raft-medium-words.txt",
 	"/usr/share/seclists/Discovery/Web-Content/common.txt",
@@ -148,6 +165,11 @@ func detectTools(requested []string) (available []ToolSpec, skipped []SkippedToo
 	for _, spec := range toolRegistry {
 		if requested != nil && !containsStr(requested, spec.Name) {
 			skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "not in --tools list"})
+			continue
+		}
+		// Skip raw socket tools on WSL — they require kernel raw socket support
+		if rawSocketTools[spec.Name] && isWSL() {
+			skipped = append(skipped, SkippedTool{Tool: spec.Name, Reason: "skipped on WSL (raw sockets not supported)"})
 			continue
 		}
 		if _, err := lookPath(spec.Name); err != nil {
@@ -342,6 +364,80 @@ func addResult(result *ReconResult, spec ToolSpec, output string, err error, too
 	result.Results = append(result.Results, tr)
 }
 
+// autoInstallMissingTools checks which tools from the provided list are missing
+// and installs them silently using apt/go install/pip3.
+// Returns the list of tools that were successfully installed.
+func autoInstallMissingTools(tools []string) []string {
+	var installed []string
+	for _, tool := range tools {
+		if _, err := exec.LookPath(tool); err == nil {
+			continue // already installed
+		}
+		// Find the tool spec to get install hint
+		var hint string
+		for _, spec := range toolRegistry {
+			if spec.Name == tool {
+				hint = spec.InstallHint
+				break
+			}
+		}
+		if hint == "" {
+			continue
+		}
+		// Try apt install
+		if strings.HasPrefix(hint, "sudo apt install") {
+			pkg := strings.TrimPrefix(hint, "sudo apt install ")
+			pkg = strings.Fields(pkg)[0]
+			cmd := exec.Command("sudo", "apt-get", "install", "-y", "-qq", pkg)
+			cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+			cmd.Stdin = nil
+			if cmd.Run() == nil {
+				if _, e := exec.LookPath(tool); e == nil {
+					installed = append(installed, tool)
+					continue
+				}
+			}
+		}
+		// Try go install
+		if strings.HasPrefix(hint, "go install") {
+			parts := strings.Fields(hint)
+			if len(parts) >= 3 {
+				cmd := exec.Command("go", "install", parts[2])
+				cmd.Stdin = nil
+				if cmd.Run() == nil {
+					// Symlink from ~/go/bin
+					home, _ := os.UserHomeDir()
+					for _, gobin := range []string{home + "/go/bin/" + tool, "/root/go/bin/" + tool} {
+						if _, e := os.Stat(gobin); e == nil {
+							exec.Command("sudo", "ln", "-sf", gobin, "/usr/local/bin/"+tool).Run()
+							break
+						}
+					}
+					if _, e := exec.LookPath(tool); e == nil {
+						installed = append(installed, tool)
+						continue
+					}
+				}
+			}
+		}
+		// Try pip3 install
+		if strings.HasPrefix(hint, "pip3 install") {
+			parts := strings.Fields(hint)
+			if len(parts) >= 3 {
+				pkg := parts[2]
+				cmd := exec.Command("pip3", "install", pkg, "--break-system-packages", "-q")
+				cmd.Stdin = nil
+				if cmd.Run() == nil {
+					if _, e := exec.LookPath(tool); e == nil {
+						installed = append(installed, tool)
+					}
+				}
+			}
+		}
+	}
+	return installed
+}
+
 // RunAutoRecon runs all available recon tools against target in phase order.
 // Each tool is run exhaustively — primary args first, then fallbacks if empty.
 func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) ReconResult {
@@ -356,6 +452,10 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 		Target:     target,
 		TargetType: targetType(target),
 	}
+
+	// Auto-install missing tools silently before running
+	allToolNames := ToolNames()
+	autoInstallMissingTools(allToolNames)
 
 	available, skipped, err := detectTools(requested)
 	if err != nil {

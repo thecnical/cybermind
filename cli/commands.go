@@ -560,6 +560,8 @@ func runCVELatest(severity string, localMode bool) {
 // ─── Feature 5: Report Writer ─────────────────────────────────────────────────
 
 // runReport generates a professional pentest report from session history.
+// If filename is provided, saves to that path. Otherwise auto-generates a name
+// based on the last scanned target and saves to ~/.cybermind/reports/.
 func runReport(format string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).Render("  📄 PENTEST REPORT WRITER"))
@@ -601,9 +603,44 @@ func runReport(format string, localMode bool) {
 		return
 	}
 
-	// Save to file
-	ts := time.Now().Format("2006-01-02_15-04-05")
-	outputFile := fmt.Sprintf("cybermind_report_%s.md", ts)
+	// Auto-generate filename: cybermind_report_<target>_<date>.md
+	// Try to extract target from Brain Memory or last history entry
+	target := "unknown"
+	globalMem := brain.LoadGlobal()
+	if globalMem != nil && len(globalMem.TargetStats) > 0 {
+		// Use the target with the most bugs (most recently worked on)
+		maxBugs := -1
+		for t, count := range globalMem.TargetStats {
+			if count > maxBugs {
+				maxBugs = count
+				target = t
+			}
+		}
+	}
+	if target == "unknown" && len(history) > 0 {
+		// Extract target from last recon/scan entry
+		for i := len(history) - 1; i >= 0; i-- {
+			u := history[i].User
+			if strings.Contains(u, "/recon ") || strings.Contains(u, "/scan ") || strings.Contains(u, "/hunt ") {
+				parts := strings.Fields(u)
+				if len(parts) >= 2 {
+					target = parts[len(parts)-1]
+					break
+				}
+			}
+		}
+	}
+	// Sanitize target for filename
+	target = strings.NewReplacer("/", "_", ":", "_", " ", "_").Replace(target)
+
+	// Save to ~/.cybermind/reports/
+	home, _ := os.UserHomeDir()
+	reportsDir := filepath.Join(home, ".cybermind", "reports")
+	os.MkdirAll(reportsDir, 0700)
+
+	date := time.Now().Format("2006-01-02")
+	outputFile := filepath.Join(reportsDir, fmt.Sprintf("cybermind_report_%s_%s.md", target, date))
+
 	if err := os.WriteFile(outputFile, []byte(result), 0644); err != nil {
 		printError("Could not save report: " + err.Error())
 	} else {
@@ -1484,17 +1521,35 @@ func runBreachCheck(args []string, localMode bool) {
 		return
 	}
 	// Determine target type
-tType := breach.DetectTargetType(target)
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-fmt.Sprintf("  Target: %s | Type: %s", target, tType)))
-fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-"  Sources: HIBP + BreachDirectory (RapidAPI) + LeakCheck + Local SQLite"))
-fmt.Println()
+	tType := breach.DetectTargetType(target)
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		fmt.Sprintf("  Target: %s | Type: %s", target, tType)))
 
-// Show API key status
-hibpKey := "free tier (breach names only)"
-if os.Getenv("HIBP_API_KEY") != "" {
-hibpKey = "configured ✓ (full details)"
+	// Plan-based source selection
+	// Free: HIBP only (breach names, no passwords)
+	// Starter+: HIBP + LeakCheck
+	// Pro+: All sources including BreachDirectory
+	plan := strings.ToLower(api.GetCachedPlan())
+	isStarter := plan == "starter" || plan == "pro" || plan == "elite"
+	isPro := plan == "pro" || plan == "elite"
+
+	var sourceList string
+	switch {
+	case isPro:
+		sourceList = "HIBP + BreachDirectory + LeakCheck + Local SQLite"
+	case isStarter:
+		sourceList = "HIBP + LeakCheck + Local SQLite (upgrade to Pro+ for BreachDirectory)"
+	default:
+		sourceList = "HIBP only — breach names (upgrade to Starter+ for LeakCheck, Pro+ for BreachDirectory)"
+	}
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+		"  Sources: " + sourceList))
+	fmt.Println()
+
+	// Show API key status
+	hibpKey := "free tier (breach names only)"
+	if os.Getenv("HIBP_API_KEY") != "" {
+		hibpKey = "configured ✓ (full details)"
 	}
 	intelxKey := "not set (free tier)"
 	if os.Getenv("INTELX_API_KEY") != "" {
@@ -1507,7 +1562,45 @@ hibpKey = "configured ✓ (full details)"
 	// Run breach check
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Checking breach databases..."))
 	start := time.Now()
-	result := breach.CheckAll(target)
+
+	var result breach.BreachResult
+	if isPro {
+		// Pro+: all sources
+		result = breach.CheckAll(target)
+	} else if isStarter {
+		// Starter+: HIBP + LeakCheck (no BreachDirectory)
+		result.Target = target
+		result.Type = tType
+		if hibpEntries, err := breach.CheckHIBP(target); err == nil && len(hibpEntries) > 0 {
+			result.Breaches = append(result.Breaches, hibpEntries...)
+			result.Sources = append(result.Sources, "hibp")
+		}
+		if lcEntries, err := breach.CheckLeakCheck(target); err == nil && len(lcEntries) > 0 {
+			result.Breaches = append(result.Breaches, lcEntries...)
+			result.Sources = append(result.Sources, "leakcheck")
+		}
+		if localEntries, err := breach.SearchLocalDump(target); err == nil && len(localEntries) > 0 {
+			result.Breaches = append(result.Breaches, localEntries...)
+			result.Sources = append(result.Sources, "local")
+		}
+	} else {
+		// Free: HIBP only (breach names, no passwords)
+		result.Target = target
+		result.Type = tType
+		if hibpEntries, err := breach.CheckHIBP(target); err == nil {
+			result.Breaches = append(result.Breaches, hibpEntries...)
+			if len(hibpEntries) > 0 {
+				result.Sources = append(result.Sources, "hibp")
+			}
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				"  ⚠ HIBP check failed: " + err.Error()))
+		}
+		if len(result.Breaches) == 0 && len(result.Sources) == 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+				"  ℹ  Free tier uses HIBP only. Upgrade to Starter+ for LeakCheck, Pro+ for BreachDirectory."))
+		}
+	}
 	took := time.Since(start)
 
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(

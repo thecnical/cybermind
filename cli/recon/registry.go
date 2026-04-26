@@ -435,33 +435,10 @@ var toolRegistry = []ToolSpec{
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 3 — PORT SCANNING
 	// Goal: find every open port, service version, OS, WAF — full coverage
-	// Cascade: rustscan (fastest) → naabu (fast+nmap) → nmap (deepest)
+	// Cascade: naabu (primary, fast+nmap) → nmap (deepest)
 	// masscan runs independently (no cascade) for ultra-fast initial sweep
 	// ══════════════════════════════════════════════════════════════════════════
 
-	{
-		Name:         "rustscan",
-		Phase:        3,
-		Timeout:      600,
-		CascadeGroup: "portscan",
-		InstallHint:  "sudo apt install rustscan",
-		// Power command: all 65535 ports, 10k ulimit, 2000 batch, pipe to nmap for deep service scan
-		BuildArgs: func(target string, ctx *ReconContext) []string {
-			return []string{
-				"-a", target,
-				"--ulimit", "10000",
-				"-b", "2000",
-				"-t", "50",
-				"--",
-				// nmap args after --
-				"-sS", "-sV", "-sC",
-				"-T4", "--open", "-Pn",
-				"--script", "http-waf-detect,http-headers,banner,ssl-cert,http-title",
-				"-O", "--osscan-guess",
-				"--version-intensity", "9",
-			}
-		},
-	},
 	{
 		Name:         "naabu",
 		Phase:        3,
@@ -670,7 +647,7 @@ var toolRegistry = []ToolSpec{
 	{
 		Name:         "ffuf",
 		Phase:        5,
-		Timeout:      1800,
+		Timeout:      900,
 		DomainOnly:   true,
 		CascadeGroup: "dirfuzz",
 		NeedsFile:    "wordlist",
@@ -710,7 +687,7 @@ var toolRegistry = []ToolSpec{
 	{
 		Name:         "feroxbuster",
 		Phase:        5,
-		Timeout:      1800,
+		Timeout:      600,
 		DomainOnly:   true,
 		CascadeGroup: "dirfuzz",
 		NeedsFile:    "wordlist",
@@ -793,7 +770,7 @@ var toolRegistry = []ToolSpec{
 	{
 		Name:        "nuclei",
 		Phase:       6,
-		Timeout:     3600,
+		Timeout:     1800,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
 		// Power command: 500 concurrency, all templates, all tags
