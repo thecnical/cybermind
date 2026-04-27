@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -218,12 +219,18 @@ func RunVibeHack(target string, apiKey string) error {
 
 	resp, err := sseClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to connect to vibe-hack stream: %w", err)
+		// Backend unavailable — run local vibe-hack with real tools
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+			"  ⚠  Backend unavailable — running local vibe-hack with real tools..."))
+		return runLocalVibeHack(target, &session)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("vibe-hack stream returned HTTP %d", resp.StatusCode)
+		// Backend returned error — run local fallback
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+			fmt.Sprintf("  ⚠  Backend returned HTTP %d — running local vibe-hack...", resp.StatusCode)))
+		return runLocalVibeHack(target, &session)
 	}
 
 	fmt.Println()
@@ -351,4 +358,173 @@ func RunVibeHack(target string, apiKey string) error {
 	fmt.Print(buildSummary(&session))
 
 	return nil
+}
+
+// runLocalVibeHack runs a real autonomous hacking session using local tools.
+// Used as fallback when the backend SSE stream is unavailable.
+// Runs: quick recon → parameter discovery → XSS/SQLi hunt → nuclei scan
+func runLocalVibeHack(target string, session *VibeHackSession) error {
+	fmt.Println()
+	fmt.Println(boldStyle.Render("  ╔══════════════════════════════════════════════════════════╗"))
+	fmt.Println(boldStyle.Render("  ║        🤖 Vibe-Hack — Local Autonomous Mode              ║"))
+	fmt.Println(boldStyle.Render("  ╚══════════════════════════════════════════════════════════╝"))
+	fmt.Printf("  Target: %s\n\n", cyanStyle.Render(target))
+
+	baseURL := target
+	if !strings.HasPrefix(baseURL, "http") {
+		baseURL = "https://" + target
+	}
+
+	step := 0
+	addStep := func(tool, reasoning, output string) {
+		step++
+		session.Steps = append(session.Steps, VibeStep{
+			N:         step,
+			Tool:      tool,
+			Reasoning: reasoning,
+			Output:    output,
+		})
+		fmt.Printf("  %s\n", cyanStyle.Render(fmt.Sprintf("[Step %d] %s — %s", step, tool, reasoning)))
+		if output != "" {
+			lines := strings.Split(output, "\n")
+			shown := 0
+			for _, l := range lines {
+				if strings.TrimSpace(l) != "" && shown < 5 {
+					fmt.Printf("      %s\n", l)
+					shown++
+				}
+			}
+			if len(lines) > 5 {
+				fmt.Printf("      ... (%d more lines)\n", len(lines)-5)
+			}
+		}
+	}
+
+	addFinding := func(severity, vulnType, evidence string) {
+		session.Findings = append(session.Findings, VibeFinding{
+			Severity: severity,
+			VulnType: vulnType,
+			Evidence: evidence,
+		})
+		label := fmt.Sprintf("[FINDING][%s] %s", strings.ToUpper(severity), vulnType)
+		fmt.Printf("  %s\n", findingStyle.Render(label))
+		if evidence != "" {
+			fmt.Printf("    Evidence: %s\n", evidence)
+		}
+	}
+
+	runTool := func(name string, args ...string) string {
+		if _, err := exec.LookPath(name); err != nil {
+			return ""
+		}
+		cmd := exec.Command(name, args...)
+		cmd.Stdin = nil
+		out, _ := cmd.Output()
+		return strings.TrimSpace(string(out))
+	}
+
+	// ── Step 1: Quick subdomain enum ─────────────────────────────────────
+	addStep("subfinder", "Discovering subdomains passively", "")
+	subOut := runTool("subfinder", "-d", target, "-silent", "-t", "100")
+	if subOut != "" {
+		addStep("subfinder", fmt.Sprintf("Found %d subdomains", strings.Count(subOut, "\n")+1), subOut)
+	}
+
+	// ── Step 2: HTTP probe ────────────────────────────────────────────────
+	addStep("httpx", "Probing live hosts and fingerprinting tech stack", "")
+	httpxOut := runTool("httpx", "-u", baseURL, "-title", "-tech-detect", "-status-code", "-silent")
+	if httpxOut != "" {
+		addStep("httpx", "Tech stack identified", httpxOut)
+	}
+
+	// ── Step 3: URL collection ────────────────────────────────────────────
+	addStep("gau", "Collecting historical URLs from archives", "")
+	gauOut := runTool("gau", "--subs", "--threads", "20", "--blacklist", "png,jpg,gif,css,woff", target)
+	urlCount := 0
+	if gauOut != "" {
+		urlCount = strings.Count(gauOut, "\n") + 1
+		addStep("gau", fmt.Sprintf("Collected %d historical URLs", urlCount), "")
+	}
+
+	// ── Step 4: Parameter discovery ──────────────────────────────────────
+	addStep("arjun", "Discovering hidden parameters", "")
+	arjunOut := runTool("arjun", "-u", baseURL, "-t", "50", "--stable")
+	if arjunOut != "" {
+		addStep("arjun", "Hidden parameters found", arjunOut)
+		if strings.Contains(strings.ToLower(arjunOut), "found") {
+			addFinding("medium", "Hidden Parameters Discovered", arjunOut[:min(200, len(arjunOut))])
+		}
+	}
+
+	// ── Step 5: XSS scan ─────────────────────────────────────────────────
+	addStep("dalfox", "Scanning for XSS vulnerabilities", "")
+	dalfoxOut := runTool("dalfox", "url", baseURL, "--silence", "--no-color", "--waf-bypass")
+	if dalfoxOut != "" {
+		addStep("dalfox", "XSS scan complete", dalfoxOut)
+		lower := strings.ToLower(dalfoxOut)
+		if strings.Contains(lower, "[v]") || strings.Contains(lower, "poc") || strings.Contains(lower, "verified") {
+			addFinding("high", "Cross-Site Scripting (XSS)", dalfoxOut[:min(300, len(dalfoxOut))])
+		}
+	}
+
+	// ── Step 6: Nuclei scan ───────────────────────────────────────────────
+	addStep("nuclei", "Running vulnerability templates", "")
+	nucleiOut := runTool("nuclei", "-u", baseURL,
+		"-severity", "critical,high,medium",
+		"-silent", "-no-color",
+		"-c", "50", "-timeout", "10")
+	if nucleiOut != "" {
+		addStep("nuclei", "Vulnerability scan complete", nucleiOut)
+		for _, line := range strings.Split(nucleiOut, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			lower := strings.ToLower(line)
+			sev := "medium"
+			if strings.Contains(lower, "[critical]") {
+				sev = "critical"
+			} else if strings.Contains(lower, "[high]") {
+				sev = "high"
+			}
+			if strings.Contains(lower, "[critical]") || strings.Contains(lower, "[high]") {
+				addFinding(sev, "Nuclei: "+line[:min(80, len(line))], line)
+			}
+		}
+	}
+
+	// ── Step 7: Secrets scan ──────────────────────────────────────────────
+	addStep("trufflehog", "Scanning for exposed secrets and API keys", "")
+	truffleOut := runTool("trufflehog", "http", "--url", baseURL, "--json", "--no-update")
+	if truffleOut != "" && strings.Contains(truffleOut, "DetectorName") {
+		addStep("trufflehog", "Secrets found!", truffleOut[:min(500, len(truffleOut))])
+		addFinding("critical", "Exposed Secrets/API Keys", truffleOut[:min(300, len(truffleOut))])
+	}
+
+	// ── Finalize ──────────────────────────────────────────────────────────
+	session.EndTime = time.Now()
+	transcript := buildTranscript(session)
+	storage.AddEntry("/vibe-hack "+target, transcript)
+
+	fmt.Println()
+	fmt.Println(boldStyle.Render("  ╔══════════════════════════════════════════════════════════╗"))
+	fmt.Println(boldStyle.Render("  ║                   Session Summary                       ║"))
+	fmt.Println(boldStyle.Render("  ╚══════════════════════════════════════════════════════════╝"))
+	fmt.Print(buildSummary(session))
+
+	if len(session.Findings) > 0 {
+		fmt.Println(findingStyle.Render(fmt.Sprintf("\n  🔴 %d vulnerabilities found!", len(session.Findings))))
+	} else {
+		fmt.Println(cyanStyle.Render("\n  ✓ No critical vulnerabilities found in quick scan"))
+		fmt.Println(cyanStyle.Render("  Run: cybermind /plan " + target + " --mode deep  for full scan"))
+	}
+
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

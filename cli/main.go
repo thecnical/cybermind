@@ -22,6 +22,7 @@ import (
 	"cybermind-cli/bizlogic"
 	"cybermind-cli/breach"
 	"cybermind-cli/brain"
+	"cybermind-cli/bugdetect"
 	"cybermind-cli/chain"
 	"cybermind-cli/devsec"
 	"cybermind-cli/hunt"
@@ -215,6 +216,8 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /install-python-tools") + d.Render("             → Install ALL Python tools in isolated venv (one command)"))
 		fmt.Println(g.Render("  cybermind /platform --setup") + d.Render("                 → Save HackerOne/Bugcrowd credentials"))
 		fmt.Println(g.Render("  cybermind /platform --programs") + d.Render("              → List your HackerOne programs"))
+		fmt.Println(g.Render("  cybermind /notify --setup") + d.Render("                   → Setup Telegram bug notifications"))
+		fmt.Println(g.Render("  cybermind /notify --test") + d.Render("                    → Test Telegram notification"))
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#777777")).Render("  ⚙️  Optional API Keys (enhance specific features):"))
 		fmt.Println(d.Render("  VIRUSTOTAL_API_KEY   → /threat command — 500 req/day free at virustotal.com"))
@@ -495,8 +498,56 @@ func runAutoRecon(target string, requested []string) {
 
 	_ = storage.AddEntry("/recon "+target, clean)
 
+	// ── Parse bugs from recon output ──────────────────────────────────────
+	var reconBugs []bugdetect.Bug
+	for _, tr := range result.Results {
+		if tr.Output != "" {
+			bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+			reconBugs = append(reconBugs, bugs...)
+		}
+	}
+	reconBugs = dedupBugsByKey(reconBugs)
+
+	// ── Save recon report ─────────────────────────────────────────────────
+	{
+		home, _ := os.UserHomeDir()
+		reportsDir := filepath.Join(home, ".cybermind", "reports")
+		os.MkdirAll(reportsDir, 0700)
+		ts := time.Now().Format("2006-01-02_15-04-05")
+		safeTarget := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
+
+		// Save AI analysis
+		analysisPath := filepath.Join(reportsDir, fmt.Sprintf("recon_%s_%s.md", safeTarget, ts))
+		reconContent := fmt.Sprintf("# Recon Report — %s\n\n**Date:** %s\n**Tools Run:** %d\n**Subdomains:** %d\n**Open Ports:** %v\n**Technologies:** %v\n\n## AI Analysis\n\n%s\n",
+			target, time.Now().Format("2006-01-02 15:04:05"),
+			len(result.Tools), len(ctx.Subdomains), openPorts, technologies, analysis)
+		if err2 := os.WriteFile(analysisPath, []byte(reconContent), 0644); err2 == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Recon report saved: " + analysisPath))
+		}
+
+		// Save bug report if bugs found
+		if len(reconBugs) > 0 {
+			bugReport := bugdetect.BugReport{
+				Target:    target,
+				Bugs:      reconBugs,
+				StartTime: time.Now().Add(-30 * time.Minute),
+				EndTime:   time.Now(),
+			}
+			bugPath := filepath.Join(reportsDir, fmt.Sprintf("bugs_%s_%s.md", safeTarget, ts))
+			bugContent := bugdetect.GenerateReport(bugReport)
+			if os.WriteFile(bugPath, []byte(bugContent), 0644) == nil {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+					fmt.Sprintf("  🔴 %d bugs found! Report: %s", len(reconBugs), bugPath)))
+				// Telegram notification
+				brain.NotifyBugFound(target,
+					fmt.Sprintf("%d bugs found during recon", len(reconBugs)),
+					"high", target, bugPath)
+			}
+		}
+	}
+
 	// Track attack session completion in web dashboard (non-blocking)
-	api.SendAttackSessionComplete(target, "recon", 0, len(result.Tools), 40)
+	api.SendAttackSessionComplete(target, "recon", len(reconBugs), len(result.Tools), 40)
 
 	// ── Auto-prompt: offer to run /hunt on recon results ──────────────────
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
@@ -1037,9 +1088,89 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	printResult("Hunt Analysis → "+target, clean)
 	_ = storage.AddEntry("/hunt "+target, clean)
 
-	// Track attack session completion in web dashboard (non-blocking)
-	bugsFoundCount := 0
+	// ── Parse bugs from hunt output ───────────────────────────────────────
+	var huntBugs []bugdetect.Bug
+	for _, tr := range result.Results {
+		if tr.Output != "" {
+			bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+			huntBugs = append(huntBugs, bugs...)
+		}
+	}
+	// Also add context-extracted findings
 	if result.Context != nil {
+		for _, xss := range result.Context.XSSFound {
+			huntBugs = append(huntBugs, bugdetect.Bug{
+				Title:    "[HIGH] XSS Confirmed",
+				Severity: bugdetect.SeverityHigh,
+				Tool:     "dalfox",
+				Target:   target,
+				URL:      xss,
+				Evidence: xss,
+				CWE:      "CWE-79",
+				CVSS:     7.5,
+				FoundAt:  time.Now(),
+			})
+		}
+		for _, vuln := range result.Context.VulnsFound {
+			huntBugs = append(huntBugs, bugdetect.Bug{
+				Title:    "[MEDIUM] Vulnerability Found",
+				Severity: bugdetect.SeverityMedium,
+				Tool:     "nuclei",
+				Target:   target,
+				URL:      target,
+				Evidence: vuln,
+				FoundAt:  time.Now(),
+			})
+		}
+	}
+	huntBugs = dedupBugsByKey(huntBugs)
+
+	// ── Save hunt report ──────────────────────────────────────────────────
+	{
+		home, _ := os.UserHomeDir()
+		reportsDir := filepath.Join(home, ".cybermind", "reports")
+		os.MkdirAll(reportsDir, 0700)
+		ts := time.Now().Format("2006-01-02_15-04-05")
+		safeTarget := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
+
+		// Save AI analysis
+		analysisPath := filepath.Join(reportsDir, fmt.Sprintf("hunt_%s_%s.md", safeTarget, ts))
+		huntContent := fmt.Sprintf("# Hunt Report — %s\n\n**Date:** %s\n**Tools Run:** %d\n\n## AI Analysis\n\n%s\n",
+			target, time.Now().Format("2006-01-02 15:04:05"), len(result.Tools), analysis)
+		if err2 := os.WriteFile(analysisPath, []byte(huntContent), 0644); err2 == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Hunt report saved: " + analysisPath))
+		}
+
+		// Save bug report if bugs found
+		if len(huntBugs) > 0 {
+			bugReport := bugdetect.BugReport{
+				Target:    target,
+				Bugs:      huntBugs,
+				StartTime: time.Now().Add(-1 * time.Hour),
+				EndTime:   time.Now(),
+			}
+			bugPath := filepath.Join(reportsDir, fmt.Sprintf("bugs_%s_%s.md", safeTarget, ts))
+			bugContent := bugdetect.GenerateReport(bugReport)
+			if os.WriteFile(bugPath, []byte(bugContent), 0644) == nil {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+					fmt.Sprintf("  🔴 %d bugs found! Report: %s", len(huntBugs), bugPath)))
+				brain.NotifyBugFound(target,
+					fmt.Sprintf("%d bugs found during hunt", len(huntBugs)),
+					"high", target, bugPath)
+			}
+			// Also save HackerOne format
+			h1Content := bugdetect.GenerateH1Report(bugReport, map[int]string{})
+			if h1Content != "" {
+				h1Path := filepath.Join(reportsDir, fmt.Sprintf("h1_report_%s_%s.md", safeTarget, ts))
+				os.WriteFile(h1Path, []byte(h1Content), 0644)
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ HackerOne report: " + h1Path))
+			}
+		}
+	}
+
+	// Track attack session completion in web dashboard (non-blocking)
+	bugsFoundCount := len(huntBugs)
+	if bugsFoundCount == 0 && result.Context != nil {
 		bugsFoundCount = len(result.Context.VulnsFound) + len(result.Context.XSSFound)
 	}
 	api.SendAttackSessionComplete(target, "hunt", bugsFoundCount, len(result.Tools), 60)
@@ -1334,6 +1465,20 @@ func deduplicateStrings(items []string) []string {
 	return out
 }
 
+// dedupBugsByKey deduplicates bugs by title+url key
+func dedupBugsByKey(bugs []bugdetect.Bug) []bugdetect.Bug {
+	seen := map[string]bool{}
+	var out []bugdetect.Bug
+	for _, b := range bugs {
+		key := b.Title + "|" + b.URL
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // extractTechnologiesFromFindings extracts technology names from tool findings.
 func extractTechnologiesFromFindings(findings map[string]string) []string {
 	techRe := regexp.MustCompile(`(?i)(wordpress|joomla|drupal|nginx|apache|iis|php|python|ruby|node|react|angular|vue|laravel|django|rails|spring|tomcat|jenkins|grafana|kibana|elasticsearch)`)
@@ -1447,9 +1592,51 @@ func runAbhimanyu(target, vulnType string) {
 		fmt.Sprintf("  💾 Session saved: %s/session.json", abhCtx.SessionDir)))
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 		"  Resume next session: cybermind /abhimanyu " + target))
-}
 
-// printAbhimanyuSummary prints a per-tool status table after abhimanyu completes.
+	// ── Save standalone Abhimanyu bug report ─────────────────────────────
+	{
+		var abhiBugs []bugdetect.Bug
+		for _, r := range results {
+			if r.Output != "" {
+				bugs := bugdetect.ParseToolOutput(r.Tool, r.Output, target)
+				abhiBugs = append(abhiBugs, bugs...)
+			}
+		}
+		if abhCtx.ShellObtained {
+			abhiBugs = append([]bugdetect.Bug{{
+				Title:    "[CRITICAL] Remote Code Execution — Shell Obtained",
+				Severity: bugdetect.SeverityCritical,
+				Tool:     "abhimanyu",
+				Target:   target,
+				URL:      target,
+				Evidence: abhCtx.ShellEvidence,
+				CWE:      "CWE-78",
+				CVSS:     10.0,
+				FoundAt:  time.Now(),
+			}}, abhiBugs...)
+		}
+		abhiBugs = dedupBugsByKey(abhiBugs)
+		if len(abhiBugs) > 0 {
+			home, _ := os.UserHomeDir()
+			reportsDir := filepath.Join(home, ".cybermind", "reports")
+			os.MkdirAll(reportsDir, 0700)
+			ts := time.Now().Format("2006-01-02_15-04-05")
+			safeTarget := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
+			bugReport := bugdetect.BugReport{
+				Target:    target,
+				Bugs:      abhiBugs,
+				StartTime: abhCtx.StartedAt,
+				EndTime:   time.Now(),
+			}
+			bugPath := filepath.Join(reportsDir, fmt.Sprintf("abhimanyu_bugs_%s_%s.md", safeTarget, ts))
+			if os.WriteFile(bugPath, []byte(bugdetect.GenerateReport(bugReport)), 0644) == nil {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+					fmt.Sprintf("  🔴 %d bugs confirmed! Report: %s", len(abhiBugs), bugPath)))
+				brain.NotifyBugFound(target, fmt.Sprintf("%d bugs confirmed", len(abhiBugs)), "critical", target, bugPath)
+			}
+		}
+	}
+}
 func printAbhimanyuSummary(results []abhimanyu.ExploitResult, ctx *abhimanyu.AbhimanyuContext) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  ⚔️  Abhimanyu Summary"))
@@ -4838,6 +5025,90 @@ rm -f /tmp/evilginx2.tar.gz`)
 				fmt.Println()
 				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Quick setup:"))
 				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  cybermind /platform --setup"))
+			}
+		}
+
+	case "/notify":
+		// Telegram/notification setup — one command to configure alerts
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🔔 NOTIFICATION SETUP — Telegram / Slack"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		subCmd := ""
+		if len(args) > 1 {
+			subCmd = args[1]
+		}
+
+		switch subCmd {
+		case "--setup":
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  How to get Telegram Bot Token:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1. Open Telegram → search @BotFather"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  2. Send: /newbot → follow instructions"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  3. Copy the token (format: 123456:ABC-DEF...)"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  How to get Chat ID:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1. Send any message to your bot"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  2. Visit: https://api.telegram.org/bot<TOKEN>/getUpdates"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  3. Find 'chat':{'id': YOUR_CHAT_ID}"))
+			fmt.Println()
+
+			var cfg brain.NotifyConfig
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Telegram Bot Token: "))
+			fmt.Scanln(&cfg.TelegramBotToken)
+			if cfg.TelegramBotToken == "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  No token entered — skipping"))
+				break
+			}
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Telegram Chat ID: "))
+			fmt.Scanln(&cfg.TelegramChatID)
+			cfg.Enabled = true
+
+			if err := brain.SaveNotifyConfig(&cfg); err != nil {
+				printError("Failed to save config: " + err.Error())
+				break
+			}
+
+			// Test the notification
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending test notification..."))
+			testErr := brain.SendTelegram(cfg.TelegramBotToken, cfg.TelegramChatID,
+				"✅ *CyberMind Notifications Active!*\n\nYou will receive alerts when bugs are found.")
+			if testErr != nil {
+				printError("Test failed: " + testErr.Error() + " — check your token and chat ID")
+			} else {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ✓ Test notification sent! Check your Telegram."))
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Config saved to ~/.cybermind/notify_config.json"))
+			}
+
+		case "--test":
+			cfg := brain.LoadNotifyConfig()
+			if cfg.TelegramBotToken == "" {
+				printError("Not configured. Run: cybermind /notify --setup")
+				break
+			}
+			testErr := brain.SendTelegram(cfg.TelegramBotToken, cfg.TelegramChatID,
+				"🧪 *CyberMind Test* — Notifications working!")
+			if testErr != nil {
+				printError("Test failed: " + testErr.Error())
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Test notification sent!"))
+			}
+
+		case "--disable":
+			cfg := brain.LoadNotifyConfig()
+			cfg.Enabled = false
+			brain.SaveNotifyConfig(cfg)
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ✓ Notifications disabled"))
+
+		default:
+			cfg := brain.LoadNotifyConfig()
+			if cfg.TelegramBotToken == "" && os.Getenv("TELEGRAM_BOT_TOKEN") == "" {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  Notifications not configured"))
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Setup: cybermind /notify --setup"))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Notifications configured"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Test: cybermind /notify --test"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Disable: cybermind /notify --disable"))
 			}
 		}
 
