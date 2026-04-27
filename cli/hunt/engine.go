@@ -183,6 +183,7 @@ var lookPath = func(name string) (string, error) {
 }
 
 // run executes a command with timeout, returns stdout+stderr.
+// Uses process group kill to ensure child processes are also terminated on timeout.
 func run(timeoutSec int, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	var out bytes.Buffer
@@ -191,8 +192,14 @@ func run(timeoutSec int, name string, args ...string) (string, error) {
 	cmd.Stderr = &errOut
 	cmd.Stdin = nil // never read from tty — prevents zsh: suspended (tty input)
 
+	setSysProcAttr(cmd) // platform-specific: set process group on Linux
+
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
 	done := make(chan error, 1)
-	go func() { done <- cmd.Run() }()
+	go func() { done <- cmd.Wait() }()
 
 	select {
 	case err := <-done:
@@ -205,9 +212,7 @@ func run(timeoutSec int, name string, args ...string) (string, error) {
 		}
 		return combined, nil
 	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
+		killProcess(cmd) // platform-specific kill
 		partial := out.String()
 		if partial != "" {
 			return partial + "\n[timeout — partial results]", nil
@@ -821,4 +826,12 @@ func extractCMSType(result HuntResult) string {
 		}
 	}
 	return ""
+}
+
+// min returns the smaller of two ints.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

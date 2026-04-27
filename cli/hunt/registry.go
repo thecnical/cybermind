@@ -165,10 +165,9 @@ var huntRegistry = []HuntToolSpec{
 	{
 		Name:        "gospider",
 		Phase:       2,
-		Timeout:     1800,
+		Timeout:     600, // reduced from 1800 — kills on small targets
 		DomainOnly:  true,
 		InstallHint: "go install github.com/jaeles-project/gospider@latest",
-		// Power: JS-aware, headless, infinite depth, 1000 threads
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			u := target
 			if len(ctx.LiveURLs) > 0 {
@@ -179,24 +178,25 @@ var huntRegistry = []HuntToolSpec{
 			}
 			args := []string{
 				"-s", u,
-				"-d", "10",        // depth 10
-				"-t", "200",       // 200 threads
-				"-c", "5",         // 5 concurrent
-				"--js",            // parse JS files
-				"--sitemap",       // parse sitemap
-				"--robots",        // parse robots.txt
+				"-d", "3",         // depth 3 (was 10 — too deep, causes kill)
+				"-t", "50",        // 50 threads (was 200 — too many)
+				"-c", "3",         // 3 concurrent (was 5)
+				"--js",
+				"--sitemap",
+				"--robots",
 				"-o", "/tmp/cybermind_gospider/",
 				"--no-redirect",
+				"--timeout", "10", // per-request timeout
 			}
 			if len(ctx.LiveURLs) > 1 {
-				// Multiple live URLs — use list mode
-				f := writeTempList(ctx.LiveURLs)
+				f := writeTempList(ctx.LiveURLs[:min(50, len(ctx.LiveURLs))]) // cap at 50 URLs
 				if f != "" {
 					return []string{
 						"-S", f,
-						"-d", "10", "-t", "200", "-c", "5",
+						"-d", "3", "-t", "50", "-c", "3",
 						"--js", "--sitemap", "--robots",
 						"-o", "/tmp/cybermind_gospider/",
+						"--timeout", "10",
 					}
 				}
 			}
@@ -211,25 +211,27 @@ var huntRegistry = []HuntToolSpec{
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}
-				return []string{"-s", u, "-d", "5", "-t", "100", "--js", "-o", "/tmp/cybermind_gospider/"}
+				return []string{"-s", u, "-d", "2", "-t", "20", "--js", "-o", "/tmp/cybermind_gospider/", "--timeout", "10"}
 			},
 		},
 	},
 	{
 		Name:        "katana",
 		Phase:       2,
-		Timeout:     1800,
+		Timeout:     600, // reduced from 1800
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/katana/cmd/katana@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			if len(ctx.LiveURLs) > 1 {
-				f := writeTempList(ctx.LiveURLs)
+				f := writeTempList(ctx.LiveURLs[:min(50, len(ctx.LiveURLs))])
 				if f != "" {
 					return []string{
 						"-list", f,
-						"-d", "10", "-c", "500",
+						"-d", "3",   // depth 3 (was 10)
+						"-c", "25",  // 25 concurrent (was 500 — kills process)
 						"-jc", "-kf", "all", "-aff",
 						"-no-color", "-silent",
+						"-timeout", "10",
 						"-o", "/tmp/cybermind_katana_hunt.txt",
 					}
 				}
@@ -243,9 +245,10 @@ var huntRegistry = []HuntToolSpec{
 			}
 			return []string{
 				"-u", u,
-				"-d", "10", "-c", "500",
+				"-d", "3", "-c", "25",
 				"-jc", "-kf", "all", "-aff",
 				"-no-color", "-silent",
+				"-timeout", "10",
 				"-o", "/tmp/cybermind_katana_hunt.txt",
 			}
 		},
@@ -258,7 +261,7 @@ var huntRegistry = []HuntToolSpec{
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}
-				return []string{"-u", u, "-d", "5", "-c", "200", "-jc", "-silent"}
+				return []string{"-u", u, "-d", "2", "-c", "10", "-jc", "-silent", "-timeout", "10"}
 			},
 		},
 	},
@@ -284,8 +287,8 @@ var huntRegistry = []HuntToolSpec{
 				"-ef", "3",    // extract files level 3
 				"-secrets",    // find secrets
 				"-err",        // show errors
-				"-c", "200",   // 200 concurrent
-				"-d", "8",     // depth 8
+				"-c", "50",    // 50 concurrent (was 200 — too many)
+				"-d", "3",     // depth 3 (was 8)
 				"-o", "/tmp/cybermind_cariddi.txt",
 			}
 		},
@@ -877,7 +880,7 @@ var huntRegistry = []HuntToolSpec{
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			args := []string{
 				"-silent", "-no-color", "-stats",
-				"-c", "50", "-rl", "50", "-bs", "25",
+				"-c", "25", "-rl", "25", "-bs", "10", // reduced from 50/50/25
 				"-timeout", "10", "-retries", "2",
 				"-H", "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1)",
 				"-o", "/tmp/cybermind_nuclei_hunt.txt",

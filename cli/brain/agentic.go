@@ -429,42 +429,83 @@ func SuggestNextAction(
 }
 
 // selectFocusByTech returns the best vuln focus based on tech stack
+// Enhanced with 2025/2026 attack patterns
 func selectFocusByTech(techStr string) string {
 	switch {
+	// CMS platforms — plugin/theme vulns
 	case strings.Contains(techStr, "wordpress"):
-		return "sqli,xss,rce"
+		return "sqli,xss,rce,plugin_vuln"
+	case strings.Contains(techStr, "drupal"):
+		return "rce,sqli,xxe"
+	case strings.Contains(techStr, "joomla"):
+		return "sqli,rce,lfi"
+	case strings.Contains(techStr, "magento"):
+		return "sqli,rce,idor"
+	// API frameworks
 	case strings.Contains(techStr, "graphql"):
-		return "idor,ssrf,introspection"
+		return "idor,ssrf,introspection,batching_dos"
+	case strings.Contains(techStr, "rest") || strings.Contains(techStr, "swagger"):
+		return "idor,ssrf,auth_bypass,mass_assignment"
+	// Node.js ecosystem
 	case strings.Contains(techStr, "node") || strings.Contains(techStr, "express"):
-		return "ssrf,xss,prototype_pollution"
+		return "ssrf,xss,prototype_pollution,rce"
 	case strings.Contains(techStr, "next") || strings.Contains(techStr, "react"):
-		return "ssrf,xss,idor"
-	case strings.Contains(techStr, "php"):
-		return "sqli,lfi,rce"
+		return "ssrf,xss,idor,open_redirect"
+	case strings.Contains(techStr, "nuxt") || strings.Contains(techStr, "vue"):
+		return "xss,ssrf,idor"
+	// PHP frameworks
 	case strings.Contains(techStr, "laravel"):
-		return "sqli,deserialization,ssrf"
-	case strings.Contains(techStr, "asp.net") || strings.Contains(techStr, "iis"):
-		return "sqli,xxe,deserialization"
-	case strings.Contains(techStr, "java") || strings.Contains(techStr, "spring"):
-		return "deserialization,ssrf,log4shell"
-	case strings.Contains(techStr, "django") || strings.Contains(techStr, "flask"):
+		return "sqli,deserialization,ssrf,debug_rce"
+	case strings.Contains(techStr, "php"):
+		return "sqli,lfi,rce,xxe"
+	case strings.Contains(techStr, "symfony"):
+		return "deserialization,ssrf,sqli"
+	// Java ecosystem
+	case strings.Contains(techStr, "spring"):
+		return "deserialization,ssrf,log4shell,spel_injection"
+	case strings.Contains(techStr, "java") || strings.Contains(techStr, "tomcat"):
+		return "deserialization,rce,ssrf,log4shell"
+	case strings.Contains(techStr, "struts"):
+		return "rce,ognl_injection"
+	// Python frameworks
+	case strings.Contains(techStr, "django"):
+		return "ssti,ssrf,idor,sqli"
+	case strings.Contains(techStr, "flask"):
 		return "ssti,ssrf,idor"
-	case strings.Contains(techStr, "ruby") || strings.Contains(techStr, "rails"):
-		return "sqli,deserialization,ssrf"
-	case strings.Contains(techStr, "nginx") || strings.Contains(techStr, "apache"):
-		return "path_traversal,ssrf,smuggling"
-	case strings.Contains(techStr, "tomcat"):
-		return "deserialization,rce,ssrf"
-	case strings.Contains(techStr, "jenkins"):
-		return "rce,ssrf,groovy_injection"
+	case strings.Contains(techStr, "fastapi"):
+		return "ssrf,idor,auth_bypass"
+	// Ruby
+	case strings.Contains(techStr, "rails") || strings.Contains(techStr, "ruby"):
+		return "sqli,deserialization,ssrf,mass_assignment"
+	// .NET
+	case strings.Contains(techStr, "asp.net") || strings.Contains(techStr, "iis"):
+		return "sqli,xxe,deserialization,viewstate_rce"
+	// Web servers
+	case strings.Contains(techStr, "nginx"):
+		return "path_traversal,ssrf,smuggling,alias_traversal"
+	case strings.Contains(techStr, "apache"):
+		return "path_traversal,ssrf,mod_status"
+	// Databases exposed
 	case strings.Contains(techStr, "elasticsearch") || strings.Contains(techStr, "kibana"):
 		return "unauth_access,ssrf,rce"
 	case strings.Contains(techStr, "redis"):
 		return "unauth_rce,ssrf"
 	case strings.Contains(techStr, "mongodb"):
 		return "nosqli,unauth_access"
+	// Cloud/DevOps
+	case strings.Contains(techStr, "jenkins"):
+		return "rce,ssrf,groovy_injection,unauth_access"
+	case strings.Contains(techStr, "kubernetes") || strings.Contains(techStr, "k8s"):
+		return "ssrf,unauth_access,secret_exposure"
+	case strings.Contains(techStr, "docker"):
+		return "ssrf,container_escape,secret_exposure"
+	// Mobile/API backends
+	case strings.Contains(techStr, "firebase"):
+		return "unauth_access,idor,data_exposure"
+	case strings.Contains(techStr, "aws") || strings.Contains(techStr, "s3"):
+		return "ssrf,bucket_exposure,iam_privesc"
 	default:
-		return "all"
+		return "xss,sqli,ssrf,idor,lfi"
 	}
 }
 
