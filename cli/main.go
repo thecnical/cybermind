@@ -41,7 +41,7 @@ import (
 )
 
 var (
-	Version = "5.0.0"
+	Version = "5.1.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -2186,6 +2186,35 @@ func runUninstall() {
 
 	// ── 3. Summary ────────────────────────────────────────────────────────
 	fmt.Println()
+
+	// Also offer to remove installed security tools
+	fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Remove installed security tools (nuclei, subfinder, httpx, etc.)? [y/N] → "))
+	var removeTools string
+	fmt.Scanln(&removeTools)
+	if strings.ToLower(strings.TrimSpace(removeTools)) == "y" {
+		goTools := []string{"subfinder", "httpx", "nuclei", "dnsx", "naabu", "katana", "tlsx",
+			"gau", "waybackurls", "hakrawler", "dalfox", "shuffledns", "uncover", "cdncheck",
+			"asnmap", "alterx", "puredns", "mapcidr", "interactsh-client", "notify",
+			"github-subdomains", "webanalyze", "favirecon", "jsluice", "sourcemapper",
+			"dnstake", "second-order", "misconfig-mapper", "analyticsrelationships", "gitleaks",
+			"smap", "ctfr", "uro", "gospider", "cariddi", "urlfinder", "httprobe", "subjs",
+			"mantra", "kxss", "bxss", "gf", "chisel", "ligolo-ng", "kerbrute"}
+		for _, tool := range goTools {
+			for _, p := range []string{"/usr/local/bin/" + tool, "/root/go/bin/" + tool} {
+				os.Remove(p)
+			}
+		}
+		// Remove opt directories
+		optDirs := []string{"/opt/reconftw", "/opt/secretfinder", "/opt/linkfinder", "/opt/cmseek",
+			"/opt/xsstrike", "/opt/corsy", "/opt/ssrfmap", "/opt/tplmap", "/opt/liffy",
+			"/opt/gopherus", "/opt/smuggler", "/opt/jwt_tool", "/opt/graphw00f",
+			"/opt/paramspider", "/opt/nosqlmap", "/opt/spoofcheck", "/opt/dorks_hunter"}
+		for _, d := range optDirs {
+			os.RemoveAll(d)
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Security tools removed"))
+	}
+
 	if failed == 0 {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
 			fmt.Sprintf("  ✓ CyberMind CLI fully uninstalled (%d items removed).", removed)))
@@ -2981,7 +3010,6 @@ func main() {
 				prevSnap, _ := brain.LoadLatestSnapshot(target)
 
 				// Run scan
-				updateAllTools()
 				runAutoRecon(target, requested)
 
 				// Load new snapshot and compute diff
@@ -3005,9 +3033,10 @@ func main() {
 			break
 		}
 
-		// Auto-update all tools before running recon — ensures latest versions
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ⟳ Updating tools before recon..."))
-		updateAllTools()
+		// Check if any recon tools are installed — if not, show install hint
+		if len(recon.CheckTools()) == 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ℹ  No recon tools found. Run: sudo cybermind /doctor"))
+		}
 		runAutoRecon(target, requested)
 
 	case "/tools":
@@ -3086,9 +3115,10 @@ func main() {
 		if !requirePlan("starter") {
 			os.Exit(1)
 		}
-		// Auto-update all tools before running hunt — ensures latest versions
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ⟳ Updating tools before hunt..."))
-		updateAllTools()
+		// Check if any recon tools are installed — if not, show install hint
+		if len(recon.CheckTools()) == 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ℹ  No recon tools found. Run: sudo cybermind /doctor"))
+		}
 		// Manual mode — no recon context
 		runHunt(huntTarget, nil, huntRequested)
 
@@ -3098,6 +3128,35 @@ func main() {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🩺 CyberMind Doctor — Health Check + Auto-Update"))
 		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 		fmt.Println()
+
+		// isToolInstalled checks PATH + all common install locations in real-time
+		isToolInstalled := func(name string) bool {
+			if _, err := exec.LookPath(name); err == nil {
+				return true
+			}
+			home2, _ := os.UserHomeDir()
+			paths := []string{
+				home2 + "/go/bin/" + name,
+				"/root/go/bin/" + name,
+				home2 + "/.local/bin/" + name,
+				"/root/.local/bin/" + name,
+				"/usr/local/bin/" + name,
+				"/opt/pipx/venvs/" + name + "/bin/" + name,
+				"/opt/" + name + "/.venv/bin/" + name,
+				home2 + "/.cargo/bin/" + name,
+				"/root/.cargo/bin/" + name,
+				"/snap/bin/" + name,
+				"/opt/" + name + "/" + name,
+			}
+			for _, p := range paths {
+				if _, err := os.Stat(p); err == nil {
+					// Auto-symlink so future calls find it in PATH
+					exec.Command("sudo", "ln", "-sf", p, "/usr/local/bin/"+name).Run()
+					return true
+				}
+			}
+			return false
+		}
 
 		// ── Step 0: Self-update (all platforms) ──────────────────────────────
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ① Checking for CLI updates..."))
@@ -3321,7 +3380,7 @@ func main() {
 			if t.mode != "recon" {
 				continue
 			}
-			if _, err := exec.LookPath(t.name); err == nil {
+			if isToolInstalled(t.name) {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 				reconOK++
 			} else if strings.HasPrefix(t.install, "pipx:") || strings.HasPrefix(t.install, "venv:") {
@@ -3338,7 +3397,7 @@ func main() {
 			if t.mode != "hunt" {
 				continue
 			}
-			if _, err := exec.LookPath(t.name); err == nil {
+			if isToolInstalled(t.name) {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 				huntOK++
 			} else if strings.HasPrefix(t.install, "pipx:") || strings.HasPrefix(t.install, "venv:") {
@@ -3355,7 +3414,7 @@ func main() {
 			if t.mode != "exploit" {
 				continue
 			}
-			if _, err := exec.LookPath(t.name); err == nil {
+			if isToolInstalled(t.name) {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 				exploitOK++
 			} else if strings.HasPrefix(t.install, "pipx:") || strings.HasPrefix(t.install, "venv:") {
@@ -3399,26 +3458,7 @@ func main() {
 			}
 			for _, t := range missing {
 				// ── Skip if already installed (PATH + common locations) ──────
-				alreadyInstalled := false
-				if _, err := exec.LookPath(t.name); err == nil {
-					alreadyInstalled = true
-				} else {
-					// Check common non-PATH locations
-					homedir2, _ := os.UserHomeDir()
-					for _, p := range []string{
-						homedir2 + "/go/bin/" + t.name,
-						"/root/go/bin/" + t.name,
-						homedir2 + "/.local/bin/" + t.name,
-						"/root/.local/bin/" + t.name,
-					} {
-						if _, e := os.Stat(p); e == nil {
-							// Found — just symlink it
-							exec.Command("sudo", "ln", "-sf", p, "/usr/local/bin/"+t.name).Run()
-							alreadyInstalled = true
-							break
-						}
-					}
-				}
+				alreadyInstalled := isToolInstalled(t.name)
 				if alreadyInstalled {
 					fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s already installed (symlinked)", t.name)))
 					instOK++

@@ -652,7 +652,40 @@ OUTDIR="%s"
 		},
 	},
 
-	// ── gau — Get All URLs from Wayback + OTX + CommonCrawl ──────────────────
+	// ── gospider — fast JS-aware crawler for recon phase ─────────────────────
+	{
+		Name:        "gospider",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/jaeles-project/gospider@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-s", u,
+				"-d", "2",
+				"-t", "30",
+				"-c", "3",
+				"--js",
+				"--sitemap",
+				"--robots",
+				"-o", "/tmp/cybermind_gospider_recon/",
+				"--timeout", "10",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-s", u, "-d", "1", "-t", "10", "--js", "-o", "/tmp/cybermind_gospider_recon/", "--timeout", "10"}
+			},
+		},
+	},
 	{
 		Name:        "gau",
 		Phase:       2,
@@ -756,6 +789,75 @@ OUTDIR="%s"
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				return []string{"-i", target, "-mode", "U", "-oU", "/tmp/cybermind_waymore_recon.txt"}
+			},
+		},
+	},
+
+	// ── gospider — fast JS-aware crawler for recon phase ─────────────────────────
+	{
+		Name:        "gospider",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/jaeles-project/gospider@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-s", u,
+				"-d", "2",
+				"-t", "30",
+				"-c", "3",
+				"--js",
+				"--sitemap",
+				"--robots",
+				"-o", "/tmp/cybermind_gospider_recon/",
+				"--timeout", "10",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-s", u, "-d", "1", "-t", "10", "--js", "-o", "/tmp/cybermind_gospider_recon/"}
+			},
+		},
+	},
+	// ── katana-recon — structured crawl for endpoint discovery ───────────────
+	{
+		Name:        "katana",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/katana/cmd/katana@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"-d", "2",
+				"-c", "20",
+				"-jc",
+				"-kf", "all",
+				"-no-color",
+				"-silent",
+				"-timeout", "10",
+				"-o", "/tmp/cybermind_katana_recon.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-d", "1", "-c", "10", "-silent", "-timeout", "10"}
 			},
 		},
 	},

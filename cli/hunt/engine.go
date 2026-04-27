@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"cybermind-cli/brain"
@@ -660,65 +661,80 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 	}
 
 	// runPhase executes all available tools for a given phase number.
-	// Mirrors recon's runPhase for consistency.
+	// runPhase executes all tools for a phase — PARALLEL for speed
 	runPhase := func(phase int) {
-		// Track which cascade groups produced output (primary succeeded)
 		cascadeGroupSuccess := map[string]bool{}
+		var mu sync.Mutex
 
+		var phaseTools []HuntToolSpec
 		for _, spec := range available {
-			if spec.Phase != phase {
-				continue
-			}
-			// Skip cascade backup if primary already produced output
-			if spec.CascadeBackup {
-				if cascadeGroupSuccess[spec.CascadeGroup] {
-					result.Skipped = append(result.Skipped, HuntSkipped{
-						Tool:   spec.Name,
-						Reason: "cascade: primary succeeded",
-					})
-					progress(HuntStatus{Tool: spec.Name, Kind: HuntKindSkipped, Reason: "cascade: primary succeeded"})
-					continue
-				}
-			}
-			// Skip domain-only tools for IP targets
-			if spec.DomainOnly && ctx.TargetType == "ip" {
-				result.Skipped = append(result.Skipped, HuntSkipped{
-					Tool:   spec.Name,
-					Reason: "domain-only tool",
-				})
-				progress(HuntStatus{Tool: spec.Name, Kind: HuntKindSkipped, Reason: "domain-only tool"})
-				continue
-			}
-
-			progress(HuntStatus{Tool: spec.Name, Kind: HuntRunning})
-			start := time.Now()
-			// Exhaustive run: primary → fallbacks → give up
-			output, runErr := runHuntToolExhaustive(spec, target, ctx, progress)
-			took := time.Since(start)
-
-			addResult(&result, spec, output, runErr, took)
-
-			last := result.Results[len(result.Results)-1]
-			var kind HuntStatusKind
-			switch {
-			case last.Partial:
-				kind = HuntPartial
-			case last.Error != "" && last.Output == "":
-				kind = HuntFailed
-			default:
-				kind = HuntDone
-			}
-			progress(HuntStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
-
-			// ── Brain self-learning: record every tool run ─────────────────
-			toolSuccess := last.Output != "" && last.Error == ""
-			brain.RecordToolRun(target, spec.Name, took, toolSuccess, 0, nil, last.Error)
-
-			// Mark cascade group as succeeded if this tool produced output
-			if spec.CascadeGroup != "" && last.Output != "" {
-				cascadeGroupSuccess[spec.CascadeGroup] = true
+			if spec.Phase == phase {
+				phaseTools = append(phaseTools, spec)
 			}
 		}
+
+		// Workers per phase tuned for safety + speed
+		maxWorkers := map[int]int{1: 3, 2: 3, 3: 2, 4: 3, 5: 2, 6: 1}
+		workers := maxWorkers[phase]
+		if workers == 0 {
+			workers = 2
+		}
+
+		sem := make(chan struct{}, workers)
+		var wg sync.WaitGroup
+
+		for _, spec := range phaseTools {
+			spec := spec
+
+			mu.Lock()
+			if spec.CascadeBackup && cascadeGroupSuccess[spec.CascadeGroup] {
+				result.Skipped = append(result.Skipped, HuntSkipped{Tool: spec.Name, Reason: "cascade: primary succeeded"})
+				progress(HuntStatus{Tool: spec.Name, Kind: HuntKindSkipped, Reason: "cascade: primary succeeded"})
+				mu.Unlock()
+				continue
+			}
+			if spec.DomainOnly && ctx.TargetType == "ip" {
+				result.Skipped = append(result.Skipped, HuntSkipped{Tool: spec.Name, Reason: "domain-only tool"})
+				progress(HuntStatus{Tool: spec.Name, Kind: HuntKindSkipped, Reason: "domain-only tool"})
+				mu.Unlock()
+				continue
+			}
+			mu.Unlock()
+
+			wg.Add(1)
+			sem <- struct{}{}
+
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				progress(HuntStatus{Tool: spec.Name, Kind: HuntRunning})
+				start := time.Now()
+				output, runErr := runHuntToolExhaustive(spec, target, ctx, progress)
+				took := time.Since(start)
+
+				mu.Lock()
+				addResult(&result, spec, output, runErr, took)
+				last := result.Results[len(result.Results)-1]
+				var kind HuntStatusKind
+				switch {
+				case last.Partial:
+					kind = HuntPartial
+				case last.Error != "" && last.Output == "":
+					kind = HuntFailed
+				default:
+					kind = HuntDone
+				}
+				progress(HuntStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
+				toolSuccess := last.Output != "" && last.Error == ""
+				brain.RecordToolRun(target, spec.Name, took, toolSuccess, 0, nil, last.Error)
+				if spec.CascadeGroup != "" && last.Output != "" {
+					cascadeGroupSuccess[spec.CascadeGroup] = true
+				}
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
 	}
 
 	// ── Phase 1: URL Collection ──────────────────────────────────────────────

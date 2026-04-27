@@ -1934,11 +1934,11 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	var allFindings = make(map[string]string)
 	_ = bestPatterns // used in future iterations
 
-	maxIterations := 15 // prevent infinite loops — enough for: recon+hunt+bizlogic+deep_hunt+exploit+poc+guide
+	maxIterations := 20 // increased from 15
 	if mode == "overnight" {
-		maxIterations = 30
+		maxIterations = 40 // increased from 30
 	} else if mode == "quick" {
-		maxIterations = 8 // quick: recon+hunt+exploit+poc minimum
+		maxIterations = 10 // increased from 8
 	}
 
 	for iter := 0; iter < maxIterations; iter++ {
@@ -3341,100 +3341,24 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 // 3. Runs deep_hunt for second-pass scanning when first hunt finds nothing
 // 4. Exits early on critical findings in quick mode
 func localAgentDecision(state api.AgentState) *api.AgentDecision {
-	d := &api.AgentDecision{
-		VulnFocus:  "all",
-		Depth:      "deep",
-		Confidence: 60,
+	// Use brain intelligence for local decisions
+	action, vulnFocus, reason := brain.SuggestNextAction(
+		state.Target,
+		state.ReconDone,
+		state.HuntDone,
+		state.AbhiDone,
+		state.BugsFound,
+		state.BugTypes,
+		state.Technologies,
+		state.WAFDetected,
+		state.Mode,
+	)
+	return &api.AgentDecision{
+		Action:    action,
+		VulnFocus: vulnFocus,
+		Reason:    reason,
+		Depth:     "deep",
 	}
-
-	// ── Quick mode: exit early if critical bug found ──────────────────────
-	if state.Mode == "quick" && state.BugsFound > 0 {
-		for _, bt := range state.BugTypes {
-			if bt == "rce" || bt == "sqli" || bt == "critical" {
-				if state.AbhiDone {
-					d.Action = "poc"
-					d.Reason = fmt.Sprintf("Critical bug found (%s) — generating PoC immediately", bt)
-					return d
-				}
-				d.Action = "exploit"
-				d.Reason = fmt.Sprintf("Critical bug found (%s) — exploiting immediately", bt)
-				d.VulnFocus = bt
-				return d
-			}
-		}
-	}
-
-	switch {
-	case !state.ReconDone:
-		d.Action = "recon"
-		d.Reason = "Recon not done yet — gather target intelligence first"
-
-	case !state.HuntDone:
-		d.Action = "hunt"
-		d.Reason = "Hunt not done yet — find vulnerabilities"
-		if state.WAFDetected {
-			d.WAFBypass = "random-agent,delay,tamper"
-		}
-		// Tech-aware vuln focus
-		d.VulnFocus = selectVulnFocusByTech(state.Technologies)
-
-	case state.HuntDone && state.BugsFound == 0 && state.Phase == "hunt_done":
-		// After hunt with no bugs — try business logic first, then deep hunt
-		if state.LastAction != "bizlogic" {
-			d.Action = "bizlogic"
-			d.Reason = "No bugs from standard hunt — trying business logic scanner"
-		} else {
-			// BizLogic also found nothing — run deep hunt with different tools
-			d.Action = "deep_hunt"
-			d.Reason = "Standard hunt + bizlogic found nothing — running deep second-pass scan"
-			d.Depth = "exhaustive"
-		}
-
-	// ── FIX: After deep_hunt, if bugs found → exploit; if still 0 → force Abhimanyu anyway ──
-	// Elite/Pro users always get Abhimanyu — it may find things hunt missed
-	case state.HuntDone && state.LastAction == "deep_hunt" && !state.AbhiDone:
-		d.Action = "exploit"
-		if state.BugsFound > 0 {
-			d.Reason = fmt.Sprintf("Deep hunt found %d bugs — running Abhimanyu exploit phase", state.BugsFound)
-			d.VulnFocus = selectExploitFocusByBugs(state.BugTypes)
-		} else {
-			// Force Abhimanyu even with 0 bugs — tools may have been missing during hunt
-			// Abhimanyu runs its own tool installs and may find what hunt missed
-			d.Reason = "Deep hunt found 0 bugs — forcing Abhimanyu anyway (may find what hunt missed)"
-			d.VulnFocus = selectVulnFocusByTech(state.Technologies)
-		}
-		if state.WAFDetected {
-			d.WAFBypass = "tamper,random-agent,chunked"
-		}
-
-	case state.BugsFound > 0 && !state.AbhiDone:
-		// ── CRITICAL FIX: Always run Abhimanyu when bugs are found ──────
-		d.Action = "exploit"
-		d.Reason = fmt.Sprintf("Found %d bugs — running Abhimanyu exploit phase", state.BugsFound)
-		// Select specific vuln focus based on what was found
-		d.VulnFocus = selectExploitFocusByBugs(state.BugTypes)
-		if state.WAFDetected {
-			d.WAFBypass = "tamper,random-agent,chunked"
-		}
-
-	case state.BugsFound > 0 && state.AbhiDone && state.Phase != "poc_done":
-		d.Action = "poc"
-		d.Reason = "Bugs confirmed + exploited — generating PoC + submitting"
-
-	case state.Phase == "poc_done":
-		d.Action = "guide"
-		d.Reason = "PoC done — generate manual testing guide for remaining attack surface"
-
-	case state.ReconDone && state.HuntDone && state.BugsFound == 0 && state.LastAction == "deep_hunt":
-		d.Action = "next_target"
-		d.Reason = "Exhaustive scan complete — no bugs found, moving to next target"
-
-	default:
-		d.Action = "done"
-		d.Reason = "All phases complete"
-	}
-
-	return d
 }
 
 // selectVulnFocusByTech returns the best vuln focus based on detected tech stack.
