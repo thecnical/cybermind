@@ -41,7 +41,7 @@ import (
 )
 
 var (
-	Version = "4.6.0"
+	Version = "4.7.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")

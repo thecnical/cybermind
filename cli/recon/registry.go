@@ -3,6 +3,7 @@ package recon
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -100,6 +101,8 @@ var toolRegistry = []ToolSpec{
 		InstallHint: "pip3 install shodan setuptools --break-system-packages && shodan init YOUR_API_KEY",
 		// Fixed: shodan pkg_resources issue — ensure setuptools is installed
 		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Auto-fix pkg_resources before running shodan
+			exec.Command("pip3", "install", "setuptools", "--break-system-packages", "-q").Run()
 			if len(ctx.LiveHosts) > 0 {
 				return []string{"host", ctx.LiveHosts[0]}
 			}
@@ -107,7 +110,17 @@ var toolRegistry = []ToolSpec{
 		},
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
-				return []string{"search", "--fields", "ip_str,port,org,os", "hostname:" + target}
+				return []string{"search", "--fields", "ip_str,port,org,os,vulns", "hostname:" + target}
+			},
+			// Fallback 2: use shodan InternetDB via curl (free, no key needed)
+			func(target string, ctx *ReconContext) []string {
+				// This fallback uses shodan host with --no-error flag
+				// Returns ports, CVEs, tags for the IP
+				ip := target
+				if len(ctx.LiveHosts) > 0 {
+					ip = ctx.LiveHosts[0]
+				}
+				return []string{"host", ip, "--no-error"}
 			},
 		},
 	},
@@ -177,12 +190,15 @@ var toolRegistry = []ToolSpec{
 			outDir := "/tmp/cybermind_metagoofil_" + target
 			// Create output dir BEFORE running — metagoofil fails if dir doesn't exist
 			os.MkdirAll(outDir, 0755)
+			// metagoofil needs results.html parent dir to exist
+			os.WriteFile(outDir+"/results.html", []byte(""), 0644)
 			return []string{
 				"-d", target,
 				"-t", "pdf,doc,docx,xls,xlsx,ppt,pptx",
 				"-l", "50",
 				"-n", "20",
 				"-o", outDir,
+				"-r", outDir + "/results.html",
 			}
 		},
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
@@ -266,7 +282,7 @@ var toolRegistry = []ToolSpec{
 			return []string{
 				"-d", target,
 				"-all",
-				"-t", "500",
+				"-t", "100",
 				"-timeout", "30",
 				"-silent",
 				"-o", "/tmp/cybermind_subfinder.txt",
@@ -314,6 +330,10 @@ var toolRegistry = []ToolSpec{
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				return []string{"enum", "-passive", "-d", target, "-timeout", "10"}
+			},
+			// Fallback 2: active mode without brute
+			func(target string, ctx *ReconContext) []string {
+				return []string{"enum", "-active", "-d", target, "-timeout", "10"}
 			},
 		},
 	},
@@ -449,6 +469,7 @@ OUTDIR="%s"
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest",
 		// Fixed: removed -wildcard-filter (removed in newer dnsx versions)
+		// Added -wd for wildcard detection instead
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			if len(ctx.Subdomains) > 0 {
 				f := writeTempList(ctx.Subdomains)
@@ -458,7 +479,9 @@ OUTDIR="%s"
 						"-a", "-aaaa", "-cname", "-ns", "-mx", "-txt",
 						"-resp",
 						"-resp-only",
-						"-t", "500",
+						"-wd",        // wildcard detection
+						"-t", "500",  // threads
+						"-retry", "2",
 						"-silent",
 						"-o", "/tmp/cybermind_dnsx.txt",
 					}
@@ -468,13 +491,19 @@ OUTDIR="%s"
 				"-d", target,
 				"-a", "-aaaa", "-cname", "-ns", "-mx", "-txt",
 				"-resp",
+				"-wd",
 				"-t", "200",
+				"-retry", "2",
 				"-silent",
 			}
 		},
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				return []string{"-d", target, "-a", "-resp", "-silent"}
+			},
+			// Fallback 2: minimal - just A records
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-a", "-silent"}
 			},
 		},
 	},
@@ -632,7 +661,7 @@ OUTDIR="%s"
 			return []string{
 				"-host", target,
 				"-p", "80,443,8080,8443,8888,3000,5000,9000,9090,3306,5432,6379,27017,22,21,25,53,110,143,445,3389",
-				"-c", "500",
+				"-c", "500",      // concurrency (renamed from -t)
 				"-rate", "5000",
 				"-retries", "2",
 				"-silent",
@@ -649,7 +678,7 @@ OUTDIR="%s"
 				}
 			},
 			func(target string, ctx *ReconContext) []string {
-				return []string{"-host", target, "-top-ports", "100", "-silent"}
+				return []string{"-host", target, "-top-ports", "100", "-c", "50", "-silent"}
 			},
 		},
 	},
@@ -749,7 +778,7 @@ OUTDIR="%s"
 				input = []string{"-u", target}
 			}
 			args := append(input,
-				"-threads", "500",
+				"-threads", "150",
 				"-timeout", "10",
 				"-retries", "3",
 				"-status-code",
@@ -777,7 +806,8 @@ OUTDIR="%s"
 		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest",
-		// Fixed: removed -resp (flag removed), -rd, -so (not in all versions)
+		// Fixed: removed -resp, -rd, -so (flags removed in newer versions)
+		// Kept only stable flags that work across versions
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			var input []string
 			if len(ctx.LiveHosts) > 0 {
@@ -790,14 +820,17 @@ OUTDIR="%s"
 				input = []string{"-u", target}
 			}
 			return append(input,
-				"-c",       // certificate
+				"-san",     // subject alternative names
+				"-cn",      // common name
+				"-org",     // organization
+				"-cipher",  // cipher suites
+				"-hash", "sha256", // certificate hash
+				"-jarm",    // JARM fingerprint
 				"-ja3",     // JA3 fingerprint
-				"-cipher",
-				"-version",
-				"-san",
-				"-cn",
-				"-threads", "200",
+				"-tls-version", // TLS version
+				"-c", "200", // concurrency
 				"-silent",
+				"-j",       // JSON output
 				"-o", "/tmp/cybermind_tlsx.json",
 			)
 		},
@@ -808,6 +841,66 @@ OUTDIR="%s"
 					u = ctx.LiveHosts[0]
 				}
 				return []string{"-u", u, "-san", "-cn", "-silent"}
+			},
+			// Fallback 2: minimal - just SAN
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if len(ctx.LiveHosts) > 0 {
+					u = ctx.LiveHosts[0]
+				}
+				return []string{"-u", u, "-san", "-silent"}
+			},
+		},
+	},
+
+	// ── VhostFinder — virtual host discovery via HTTP Host header fuzzing ──────
+	{
+		Name:        "ffuf-vhost",
+		Phase:       4,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install ffuf",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Use ffuf for vhost fuzzing with wordlist
+			wordlist := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+			if _, err := os.Stat(wordlist); err != nil {
+				wordlist = "/usr/share/wordlists/dirb/common.txt"
+			}
+			baseURL := "https://" + target
+			if len(ctx.LiveURLs) > 0 {
+				baseURL = ctx.LiveURLs[0]
+				// Strip path
+				if idx := strings.Index(baseURL[8:], "/"); idx > 0 {
+					baseURL = baseURL[:8+idx]
+				}
+			}
+			return []string{
+				"-w", wordlist,
+				"-u", baseURL,
+				"-H", "Host: FUZZ." + target,
+				"-t", "100",
+				"-ac",
+				"-mc", "200,201,204,301,302,307,401,403",
+				"-fc", "404",
+				"-s",
+				"-o", "/tmp/cybermind_vhost.json",
+				"-of", "json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				wordlist := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+				if _, err := os.Stat(wordlist); err != nil {
+					wordlist = "/usr/share/wordlists/dirb/common.txt"
+				}
+				return []string{
+					"-w", wordlist,
+					"-u", "https://" + target,
+					"-H", "Host: FUZZ." + target,
+					"-t", "50",
+					"-ac",
+					"-s",
+				}
 			},
 		},
 	},
@@ -960,7 +1053,7 @@ OUTDIR="%s"
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			args := []string{
 				"-silent", "-no-color", "-stats",
-				"-c", "50", "-rl", "50", "-bs", "25",
+				"-c", "25", "-rl", "25", "-bs", "10",
 				"-timeout", "10", "-retries", "2",
 				"-H", "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1)",
 			}

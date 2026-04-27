@@ -205,7 +205,7 @@ return []OmegaToolEntry{
 {"pywhisker", "exploit", "pip3 install pywhisker --break-system-packages", false, false, true, false, "", "", ""},
 // ── Abhimanyu Phase 6 — Persistence + Exfil ─────────────────────────
 {"chisel", "exploit", "go install github.com/jpillora/chisel@latest", true, false, false, false, "", "", ""},
-{"ligolo-ng", "exploit", "go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest", true, false, false, false, "", "", ""},
+{"ligolo-ng", "exploit", "go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest && sudo ln -sf ~/go/bin/proxy /usr/local/bin/ligolo-ng", true, false, false, false, "", "", ""},
 {"iodine", "exploit", "sudo apt install -y iodine", false, false, false, false, "", "", ""},
 {"donut", "exploit", "pip3 install donut-shellcode --break-system-packages", false, false, true, false, "", "", ""},
 {"evilginx2", "exploit", "go install github.com/kgretzky/evilginx2@latest", true, false, false, false, "", "", ""},
@@ -271,7 +271,8 @@ return []OmegaToolEntry{
 {"cloud_enum", "exploit", "pip3 install cloud-enum --break-system-packages", false, false, true, false, "", "", ""},
 {"pacu", "exploit", "pip3 install pacu --break-system-packages", false, false, true, false, "", "", ""},
 {"roadrecon", "exploit", "pip3 install roadrecon --break-system-packages", false, false, true, false, "", "", ""},
-{"sliver", "exploit", "curl https://sliver.sh/install | sudo bash", false, false, false, false, "", "", ""},
+{"sliver", "exploit", "# Manual: curl https://sliver.sh/install | sudo bash", false, false, false, false, "", "", ""},
+{"rsf", "exploit", "pip3 install routersploit --break-system-packages", false, false, true, false, "", "", ""},
 {"nuclei-fuzz", "exploit", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false, false, false, "", "", ""},
 {"corscanner", "exploit", "pip3 install corscanner --break-system-packages", false, false, true, false, "", "", ""},
 {"h2csmuggler", "exploit", "pip3 install h2csmuggler --break-system-packages", false, false, true, false, "", "", ""},

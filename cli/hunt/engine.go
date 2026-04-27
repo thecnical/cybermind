@@ -159,6 +159,14 @@ var lookPath = func(name string) (string, error) {
 		home + "/.cargo/bin/" + name,
 		"/root/.cargo/bin/" + name,
 	}
+	// Special case: graphw00f is installed as main.py in /opt/graphw00f
+	if name == "graphw00f" {
+		if _, err := os.Stat("/opt/graphw00f/main.py"); err == nil {
+			exec.Command("sudo", "ln", "-sf", "/opt/graphw00f/main.py", "/usr/local/bin/graphw00f").Run()
+			exec.Command("sudo", "chmod", "+x", "/usr/local/bin/graphw00f").Run()
+			return "/usr/local/bin/graphw00f", nil
+		}
+	}
 	for _, p := range extraPaths {
 		if _, err := os.Stat(p); err == nil {
 			exec.Command("sudo", "ln", "-sf", p, "/usr/local/bin/"+name).Run()

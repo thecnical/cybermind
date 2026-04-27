@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="4.6.0"
+VERSION="4.7.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -215,6 +215,8 @@ if ! command -v pipx &>/dev/null; then
 fi
 export PIPX_BIN_DIR=/usr/local/bin
 export PIPX_HOME=/opt/pipx
+# Fix shodan pkg_resources error
+pip3 install setuptools --break-system-packages -q 2>/dev/null || true
 PIPX_TOOLS=(shodan h8mail wafw00f arjun graphw00f waymore ghauri semgrep pip-audit)
 for tool in "${PIPX_TOOLS[@]}"; do
     if ! command -v "$tool" &>/dev/null; then
@@ -288,8 +290,14 @@ command -v apktool &>/dev/null || sudo apt-get install -y apktool -qq 2>/dev/nul
 install_python_git_tool "smuggler" "https://github.com/defparam/smuggler" "/opt/smuggler" "smuggler.py" 2>/dev/null || true
 # JWT Tool (OAuth/JWT attack engine) — isolated venv
 install_python_git_tool "jwt_tool" "https://github.com/ticarpi/jwt_tool" "/opt/jwt_tool" "jwt_tool.py" 2>/dev/null || true
-# GraphQL attack tool — pipx
-command -v graphw00f &>/dev/null || pipx install graphw00f 2>/dev/null || true
+# GraphQL attack tool — proper git install
+# graphw00f — GraphQL fingerprinting (git install, not pip)
+if ! command -v graphw00f &>/dev/null; then
+    git clone --depth=1 https://github.com/dolevf/graphw00f.git /opt/graphw00f 2>/dev/null && \
+    pip3 install -r /opt/graphw00f/requirements.txt --break-system-packages -q 2>/dev/null && \
+    sudo ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f && \
+    sudo chmod +x /usr/local/bin/graphw00f 2>/dev/null || true
+fi
 # SSRF map — isolated venv
 install_python_git_tool "ssrfmap" "https://github.com/swisskyrepo/SSRFmap" "/opt/ssrfmap" "ssrfmap.py" 2>/dev/null || true
 # SSTI exploitation (tplmap) — isolated venv
@@ -332,6 +340,10 @@ command -v notify &>/dev/null || \
 # ── 2025 NEW: ligolo-ng — advanced tunneling for lateral movement ─────────────
 command -v ligolo-ng &>/dev/null || \
     (go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest 2>/dev/null && symlink_go_tool "ligolo-ng") || true
+# ligolo-ng symlink fix (binary is named 'proxy' not 'ligolo-ng')
+if [ -f "$HOME/go/bin/proxy" ] && ! command -v ligolo-ng &>/dev/null; then
+    sudo ln -sf "$HOME/go/bin/proxy" /usr/local/bin/ligolo-ng 2>/dev/null || true
+fi
 # ── 2025 NEW: semgrep — SAST code analysis ───────────────────────────────────
 command -v semgrep &>/dev/null || pipx install semgrep 2>/dev/null || \
     pip3 install semgrep --break-system-packages -q 2>/dev/null || true
@@ -400,7 +412,7 @@ echo -e "  ${CYAN}Novel Attacks:${NC}   sudo cybermind /novel example.com"
 echo -e "  ${CYAN}Python Tools:${NC}    sudo cybermind /install-python-tools"
 echo -e "  ${CYAN}Vibe Coder:${NC}      cybermind /vibe"
 echo ""
-echo -e "  ${BOLD}${YELLOW}NEW in v4.6.0:${NC}"
+echo -e "  ${BOLD}${YELLOW}NEW in v4.7.0:${NC}"
 echo -e "  ${DIM}  • reconFTW fully integrated — mode-aware: quick(-s) / deep(-r) / overnight(-a --deep)${NC}"
 echo -e "  ${DIM}  • reconFTW output parsing: subdomains, URLs, vulns, secrets, emails, takeover, buckets${NC}"
 echo -e "  ${DIM}  • reconFTW tech stack + WAF detection fed into agentic brain${NC}"
