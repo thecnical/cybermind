@@ -2598,10 +2598,37 @@ func GetAPIKeyExported() string {
 }
 
 // SendDevSecAnalyze sends DevSec scan findings to the backend for AI analysis.
+// Falls back to /chat if the dedicated /api/devsec/analyze route returns 404.
 func SendDevSecAnalyze(target, findings string) (string, error) {
-	return post("/api/devsec/analyze", map[string]string{
+	// Try dedicated route first
+	result, err := post("/api/devsec/analyze", map[string]string{
 		"target":   target,
 		"findings": findings,
+	})
+	if err == nil {
+		return result, nil
+	}
+
+	// Fallback: use /chat with structured prompt
+	truncated := findings
+	if len(truncated) > 20000 {
+		truncated = truncated[:20000] + "\n...[truncated]"
+	}
+	prompt := fmt.Sprintf(
+		"DevSec Analysis for: %s\n\nFindings:\n%s\n\n"+
+			"Provide:\n"+
+			"1. Critical secrets/credentials found (exact values if present)\n"+
+			"2. SAST vulnerabilities with severity and file location\n"+
+			"3. Vulnerable dependencies with CVEs and fix versions\n"+
+			"4. Remediation priority list (Critical → High → Medium)\n"+
+			"5. Security score (0-100) with justification",
+		target, truncated)
+
+	return post("/chat", chatRequest{
+		Prompt:       prompt,
+		Messages:     []Message{},
+		SystemPrompt: cyberSecSystemPrompt,
+		Mode:         "security",
 	})
 }
 

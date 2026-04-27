@@ -97,9 +97,9 @@ var toolRegistry = []ToolSpec{
 		Phase:       1,
 		Timeout:     60,
 		DomainOnly:  false,
-		InstallHint: "pip3 install shodan --break-system-packages && shodan init YOUR_API_KEY",
+		InstallHint: "pip3 install shodan setuptools --break-system-packages && shodan init YOUR_API_KEY",
+		// Fixed: shodan pkg_resources issue — ensure setuptools is installed
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			// shodan host <ip> — full host intelligence
 			if len(ctx.LiveHosts) > 0 {
 				return []string{"host", ctx.LiveHosts[0]}
 			}
@@ -107,8 +107,7 @@ var toolRegistry = []ToolSpec{
 		},
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
-				// shodan search — domain-based search
-				return []string{"search", "--fields", "ip_str,port,org,os,vulns", "hostname:" + target}
+				return []string{"search", "--fields", "ip_str,port,org,os", "hostname:" + target}
 			},
 		},
 	},
@@ -175,19 +174,22 @@ var toolRegistry = []ToolSpec{
 		DomainOnly:  true,
 		InstallHint: "sudo apt install -y metagoofil",
 		BuildArgs: func(target string, ctx *ReconContext) []string {
+			outDir := "/tmp/cybermind_metagoofil_" + target
+			// Create output dir BEFORE running — metagoofil fails if dir doesn't exist
+			os.MkdirAll(outDir, 0755)
 			return []string{
 				"-d", target,
 				"-t", "pdf,doc,docx,xls,xlsx,ppt,pptx",
-				"-l", "50",    // limit 50 results
-				"-n", "20",    // download 20 files
-				"-o", "/tmp/cybermind_metagoofil_" + target,
-				"-f", "/tmp/cybermind_metagoofil_" + target + "/results.html",
+				"-l", "50",
+				"-n", "20",
+				"-o", outDir,
 			}
 		},
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
-				return []string{"-d", target, "-t", "pdf,doc,docx", "-l", "20", "-n", "10",
-					"-o", "/tmp/cybermind_metagoofil_" + target}
+				outDir := "/tmp/cybermind_metagoofil_" + target
+				os.MkdirAll(outDir, 0755)
+				return []string{"-d", target, "-t", "pdf,doc,docx", "-l", "20", "-n", "10", "-o", outDir}
 			},
 		},
 	},
@@ -224,21 +226,25 @@ var toolRegistry = []ToolSpec{
 		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "sudo apt install -y recon-ng",
+		// Fixed: recon-ng uses -r <script_file> not -x for batch commands
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			// Run recon-ng in batch mode with key modules
+			// Write batch script to temp file
+			scriptPath := "/tmp/cybermind_reconng_" + target + ".rc"
 			script := fmt.Sprintf(
-				"workspaces create %s; "+
-					"modules load recon/domains-hosts/hackertarget; run; "+
-					"modules load recon/domains-contacts/whois_pocs; run; "+
-					"modules load recon/domains-hosts/certificate_transparency; run; "+
-					"show hosts; show contacts",
+				"workspaces create %s\n"+
+					"modules load recon/domains-hosts/hackertarget\nrun\n"+
+					"modules load recon/domains-hosts/certificate_transparency\nrun\n"+
+					"show hosts\n",
 				target)
-			return []string{"-w", target, "-x", script}
+			os.WriteFile(scriptPath, []byte(script), 0600)
+			return []string{"-w", target, "-r", scriptPath}
 		},
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
-				return []string{"-w", target, "-x",
-					fmt.Sprintf("modules load recon/domains-hosts/hackertarget; run; show hosts")}
+				scriptPath := "/tmp/cybermind_reconng_fb_" + target + ".rc"
+				script := fmt.Sprintf("workspaces create %s\nmodules load recon/domains-hosts/hackertarget\nrun\nshow hosts\n", target)
+				os.WriteFile(scriptPath, []byte(script), 0600)
+				return []string{"-w", target, "-r", scriptPath}
 			},
 		},
 	},
@@ -283,9 +289,8 @@ var toolRegistry = []ToolSpec{
 		Timeout:     900,
 		DomainOnly:  true,
 		InstallHint: "sudo apt install amass",
-		// Power command: passive + active brute with top 5M wordlist, 100 netblocks
+		// Fixed: removed -maxnets (removed in amass v4+), use -timeout instead
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			// Check if large wordlist exists for brute force
 			bruteList := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
 			if _, err := os.Stat(bruteList); err == nil {
 				return []string{
@@ -294,12 +299,10 @@ var toolRegistry = []ToolSpec{
 					"-passive",
 					"-brute",
 					"-w", bruteList,
-					"-maxnets", "100",
 					"-timeout", "15",
 					"-o", "/tmp/cybermind_amass.txt",
 				}
 			}
-			// Fallback: passive only
 			return []string{
 				"enum",
 				"-passive",
@@ -307,6 +310,11 @@ var toolRegistry = []ToolSpec{
 				"-timeout", "15",
 				"-o", "/tmp/cybermind_amass.txt",
 			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"enum", "-passive", "-d", target, "-timeout", "10"}
+			},
 		},
 	},
 	// reconftw — PHASE 2 PRIMARY TOOL — runs BEFORE subfinder/amass
@@ -346,39 +354,19 @@ var toolRegistry = []ToolSpec{
 				// Return empty to trigger fallback skip
 				return nil
 			}
+			os.MkdirAll(outDir, 0755)
 			return []string{
 				"-d", target,
-				"-a",          // ALL mode — every function enabled
-				"--deep",      // deep scanning
+				"-r",          // full recon (not -a which is too slow)
 				"--parallel",  // parallel execution
 				"-o", outDir,
 			}
 		},
-		// Fallback 1: full recon (-r) with deep — used when -a is too slow
+		// Fallback 1: subdomain + web only (-s) — faster
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
-				return []string{
-					"-d", target,
-					"-r",
-					"--deep",
-					"--parallel",
-					"-o", outDir,
-				}
-			},
-			// Fallback 2: full recon without --deep
-			func(target string, ctx *ReconContext) []string {
-				outDir := "/tmp/cybermind_reconftw_" + target
-				return []string{
-					"-d", target,
-					"-r",
-					"--parallel",
-					"-o", outDir,
-				}
-			},
-			// Fallback 3: subdomain + web only (-s)
-			func(target string, ctx *ReconContext) []string {
-				outDir := "/tmp/cybermind_reconftw_" + target
+				os.MkdirAll(outDir, 0755)
 				return []string{
 					"-d", target,
 					"-s",
@@ -386,9 +374,10 @@ var toolRegistry = []ToolSpec{
 					"-o", outDir,
 				}
 			},
-			// Fallback 4: passive only (-p) — stealthy
+			// Fallback 2: passive only (-p) — stealthy, no active probing
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
+				os.MkdirAll(outDir, 0755)
 				return []string{
 					"-d", target,
 					"-p",
@@ -404,17 +393,16 @@ var toolRegistry = []ToolSpec{
 		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest",
-		// Power command: resolve all subdomains, all record types, wildcard filter, 500 threads
+		// Fixed: removed -wildcard-filter (removed in newer dnsx versions)
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			if len(ctx.Subdomains) > 0 {
 				f := writeTempList(ctx.Subdomains)
 				if f != "" {
 					return []string{
 						"-l", f,
-						"-a", "-aaaa", "-cname", "-ns", "-mx", "-txt", "-soa", // all record types
+						"-a", "-aaaa", "-cname", "-ns", "-mx", "-txt",
 						"-resp",
 						"-resp-only",
-						"-wildcard-filter",
 						"-t", "500",
 						"-silent",
 						"-o", "/tmp/cybermind_dnsx.txt",
@@ -425,10 +413,14 @@ var toolRegistry = []ToolSpec{
 				"-d", target,
 				"-a", "-aaaa", "-cname", "-ns", "-mx", "-txt",
 				"-resp",
-				"-wildcard-filter",
 				"-t", "200",
 				"-silent",
 			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-a", "-resp", "-silent"}
+			},
 		},
 	},
 
@@ -445,18 +437,30 @@ var toolRegistry = []ToolSpec{
 		Timeout:      600,
 		CascadeGroup: "portscan",
 		InstallHint:  "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest",
-		// Power command: full port range, 1000 threads, nmap integration for service detection
+		// Fixed: -t → -c (threads flag renamed in newer naabu)
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			return []string{
 				"-host", target,
-				"-p", "-",    // all 65535 ports
-				"-t", "1000", // 1000 threads
-				"-rate", "10000",
-				"-retries", "3",
+				"-p", "80,443,8080,8443,8888,3000,5000,9000,9090,3306,5432,6379,27017,22,21,25,53,110,143,445,3389",
+				"-c", "500",
+				"-rate", "5000",
+				"-retries", "2",
 				"-silent",
-				"-nmap-cli", "nmap -sV -sC -T4 --open --script http-waf-detect,banner,ssl-cert",
 				"-o", "/tmp/cybermind_naabu.txt",
 			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{
+					"-host", target,
+					"-top-ports", "1000",
+					"-c", "100",
+					"-silent",
+				}
+			},
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-host", target, "-top-ports", "100", "-silent"}
+			},
 		},
 	},
 	{
@@ -575,39 +579,15 @@ var toolRegistry = []ToolSpec{
 			return args
 		},
 	},
-	{
-		Name:        "whatweb",
-		Phase:       4,
-		Timeout:     300,
-		DomainOnly:  true,
-		InstallHint: "sudo apt install whatweb",
-		// Power command: aggression 4, all plugins, JSON output, UA spoof
-		BuildArgs: func(target string, ctx *ReconContext) []string {
-			t := target
-			if len(ctx.LiveURLs) > 0 {
-				t = ctx.LiveURLs[0]
-			}
-			if !strings.HasPrefix(t, "http") {
-				t = "https://" + t
-			}
-			return []string{
-				"--aggression", "4",
-				"--plugins=+all",
-				"--colour=never",
-				"--log-json=/tmp/cybermind_whatweb.json",
-				"--user-agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-				"-v",
-				t,
-			}
-		},
-	},
+	// whatweb removed — httpx already does tech detection with -tech-detect flag
+	// Use: httpx -tech-detect instead
 	{
 		Name:        "tlsx",
 		Phase:       4,
 		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest",
-		// Power command: full TLS fingerprint — JA3, cipher, curve, sig, version, SANs, redirect chain
+		// Fixed: removed -resp (flag removed), -rd, -so (not in all versions)
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			var input []string
 			if len(ctx.LiveHosts) > 0 {
@@ -620,21 +600,25 @@ var toolRegistry = []ToolSpec{
 				input = []string{"-u", target}
 			}
 			return append(input,
-				"-resp",
-				"-c",    // certificate
-				"-rd",   // redirect chain
-				"-ja3",  // JA3 fingerprint
+				"-c",       // certificate
+				"-ja3",     // JA3 fingerprint
 				"-cipher",
-				"-curve",
-				"-sig",
 				"-version",
 				"-san",
 				"-cn",
-				"-so",
 				"-threads", "200",
 				"-silent",
 				"-o", "/tmp/cybermind_tlsx.json",
 			)
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if len(ctx.LiveHosts) > 0 {
+					u = ctx.LiveHosts[0]
+				}
+				return []string{"-u", u, "-san", "-cn", "-silent"}
+			},
 		},
 	},
 
@@ -647,12 +631,12 @@ var toolRegistry = []ToolSpec{
 	{
 		Name:         "ffuf",
 		Phase:        5,
-		Timeout:      900,
+		Timeout:      600,
 		DomainOnly:   true,
 		CascadeGroup: "dirfuzz",
 		NeedsFile:    "wordlist",
 		InstallHint:  "sudo apt install ffuf",
-		// Power command: 500 threads, recursive depth 5, auto-calibrate, match all useful codes
+		// Fixed: removed -recursion (causes ffuf to hang), reduced threads
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			wl, _ := resolveWordlist()
 			baseURL := target
@@ -665,23 +649,32 @@ var toolRegistry = []ToolSpec{
 			args := []string{
 				"-w", wl,
 				"-u", baseURL + "/FUZZ",
-				"-t", "300",
-				"-recursion",
-				"-recursion-depth", "4",
-				"-ac",                    // auto-calibrate
+				"-t", "100",
+				"-ac",
 				"-mc", "200,201,204,301,302,307,401,403,405,500",
 				"-fc", "404",
 				"-timeout", "10",
-				"-H", "X-Forwarded-For: 127.0.0.1",
-				"-H", "X-Real-IP: 127.0.0.1",
 				"-o", "/tmp/cybermind_ffuf.json",
 				"-of", "json",
-				"-silent",
+				"-s",
 			}
 			if ctx.WAFDetected {
 				args = append(args, "-rate", "10", "-p", "0.1")
 			}
 			return args
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				wl, _ := resolveWordlist()
+				baseURL := target
+				if len(ctx.LiveURLs) > 0 {
+					baseURL = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(baseURL, "http") {
+					baseURL = "https://" + baseURL
+				}
+				return []string{"-w", wl, "-u", baseURL + "/FUZZ", "-t", "50", "-ac", "-s"}
+			},
 		},
 	},
 	{
@@ -772,17 +765,17 @@ var toolRegistry = []ToolSpec{
 		Phase:       6,
 		Timeout:     1800,
 		DomainOnly:  true,
-		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
-		// Power command: 500 concurrency, all templates, all tags
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		// Fixed: reduced concurrency from 500 to 50 to avoid "higher than max-host-error"
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			args := []string{
 				"-silent", "-no-color", "-stats",
-				"-c", "500", "-rl", "100", "-bs", "50",
-				"-timeout", "10", "-retries", "3",
+				"-c", "50", "-rl", "50", "-bs", "25",
+				"-timeout", "10", "-retries", "2",
 				"-H", "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1)",
 			}
 			if ctx.WAFDetected {
-				args = append(args, "-etags", "fuzzing,dos", "-severity", "critical,high,medium", "-rl", "20")
+				args = append(args, "-etags", "fuzzing,dos", "-severity", "critical,high,medium", "-rl", "10")
 			} else {
 				args = append(args, "-severity", "critical,high,medium,low,info",
 					"-tags", "cve,xss,sqli,ssrf,lfi,rce,xxe,idor,misconfig,exposure,takeover")
@@ -804,14 +797,12 @@ var toolRegistry = []ToolSpec{
 			args = append(args, "-u", target)
 			return args
 		},
-		// Fallback 1: critical/high only (faster)
-		// Fallback 2: direct target scan with basic templates
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
-				return []string{"-u", target, "-severity", "critical,high", "-silent", "-no-color", "-c", "200"}
+				return []string{"-u", target, "-severity", "critical,high", "-silent", "-no-color", "-c", "25"}
 			},
 			func(target string, ctx *ReconContext) []string {
-				return []string{"-u", target, "-t", "cves/", "-silent", "-no-color"}
+				return []string{"-u", target, "-t", "cves/", "-silent", "-no-color", "-c", "10"}
 			},
 		},
 	},
@@ -846,21 +837,20 @@ var toolRegistry = []ToolSpec{
 		Timeout:     600,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/katana/cmd/katana@latest",
-		// Power command: depth 5, 300 concurrency, JS crawl, form fill, headless-ready
+		// Fixed: reduced concurrency from 300 to 50 to prevent being killed
 		BuildArgs: func(target string, ctx *ReconContext) []string {
-			// Use all live URLs if available for maximum coverage
 			if len(ctx.LiveURLs) > 1 {
 				f := writeTempList(ctx.LiveURLs)
 				if f != "" {
 					return []string{
 						"-list", f,
-						"-d", "5",
-						"-c", "300",
-						"-jc",        // parse JS files
-						"-kf", "all", // known files
-						"-aff",       // automatic form fill
+						"-d", "3",
+						"-c", "50",
+						"-jc",
+						"-kf", "all",
 						"-no-color",
 						"-silent",
+						"-timeout", "10",
 						"-o", "/tmp/cybermind_katana.txt",
 					}
 				}
@@ -874,13 +864,26 @@ var toolRegistry = []ToolSpec{
 			}
 			return []string{
 				"-u", u,
-				"-d", "5",
-				"-c", "300",
-				"-jc", "-kf", "all", "-aff",
+				"-d", "3",
+				"-c", "50",
+				"-jc", "-kf", "all",
 				"-no-color",
 				"-silent",
+				"-timeout", "10",
 				"-o", "/tmp/cybermind_katana.txt",
 			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-d", "2", "-c", "20", "-silent", "-timeout", "10"}
+			},
 		},
 	},
 }

@@ -141,7 +141,32 @@ func targetType(target string) string {
 }
 
 // lookPath can be overridden in tests.
-var lookPath = exec.LookPath
+// Also searches common install locations so manually installed tools are detected.
+var lookPath = func(name string) (string, error) {
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+	home, _ := os.UserHomeDir()
+	extraPaths := []string{
+		home + "/go/bin/" + name,
+		"/root/go/bin/" + name,
+		home + "/.local/bin/" + name,
+		"/root/.local/bin/" + name,
+		"/usr/local/bin/" + name,
+		"/opt/pipx/venvs/" + name + "/bin/" + name,
+		"/opt/" + name + "/.venv/bin/" + name,
+		"/opt/" + name + "-venv/bin/" + name,
+		home + "/.cargo/bin/" + name,
+		"/root/.cargo/bin/" + name,
+	}
+	for _, p := range extraPaths {
+		if _, err := os.Stat(p); err == nil {
+			exec.Command("sudo", "ln", "-sf", p, "/usr/local/bin/"+name).Run()
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%s: not found", name)
+}
 
 // run executes a command with timeout, returns stdout+stderr.
 func run(timeoutSec int, name string, args ...string) (string, error) {

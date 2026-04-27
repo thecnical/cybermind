@@ -265,7 +265,7 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /novel <target>") + d.Render("       → novel attack engine (cache poison, smuggling, race)"))
 	fmt.Println(g.Render("  cybermind /doctor") + d.Render("               → update CLI + check/install tools"))
 	fmt.Println(g.Render("  cybermind report") + d.Render("                → generate pentest report from history"))
-	fmt.Println(g.Render("  cybermind --local") + d.Render("               → use local Ollama AI (CYBERMIND_LOCAL=true)"))
+	fmt.Println(g.Render("  cybermind --local") + d.Render("               → [DEPRECATED] local mode removed"))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔐 New in v4.5.0:"))
 	fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
@@ -2050,6 +2050,13 @@ func findBinaryInCommonLocations(name string) bool {
 		"/root/.local/bin/" + name,
 		home + "/go/bin/" + name,
 		"/root/go/bin/" + name,
+		// Additional paths for venv-installed tools
+		"/opt/" + name + "-venv/bin/" + name,
+		"/opt/" + name + "/.venv/bin/" + name,
+		home + "/.cargo/bin/" + name,
+		"/root/.cargo/bin/" + name,
+		// pipx with custom home
+		"/opt/pipx/venvs/" + name + "/bin/" + name,
 	}
 	for _, p := range searchPaths {
 		if _, e := os.Stat(p); e == nil {
@@ -2549,18 +2556,17 @@ func main() {
 		return
 	}
 
-	// Local mode detection — must happen before API key loading
+	// --local flag removed (Ollama mode deprecated) — always use backend
 	localMode := false
 	for i, a := range args {
 		if a == "--local" {
-			localMode = true
+			// Strip the flag but don't enable local mode
 			args = append(args[:i], args[i+1:]...)
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  --local mode removed. Using backend AI."))
 			break
 		}
 	}
-	if os.Getenv("CYBERMIND_LOCAL") == "true" {
-		localMode = true
-	}
+	_ = localMode // kept for compatibility, always false
 	// Re-derive cmd after stripping --local flag
 	if len(args) > 0 {
 		cmd = strings.ToLower(args[0])
@@ -2840,7 +2846,7 @@ func main() {
 			{"whois", "recon", "apt:whois", false, false},
 			{"theHarvester", "recon", "apt:theharvester", false, false},
 			{"dig", "recon", "apt:dnsutils", false, false},
-			{"shodan", "recon", "pipx:shodan", false, false},
+			{"shodan", "recon", "special:shodan", false, false},
 			{"h8mail", "recon", "pipx:h8mail", false, false},
 			{"exiftool", "recon", "apt:libimage-exiftool-perl", false, false},
 			{"metagoofil", "recon", "apt:metagoofil", false, false},
@@ -2895,7 +2901,7 @@ func main() {
 			{"x8", "hunt", "special:x8", false, false},
 			{"smuggler", "hunt", "venv:https://github.com/defparam/smuggler:/opt/smuggler:smuggler.py", false, false},
 			{"jwt_tool", "hunt", "venv:https://github.com/ticarpi/jwt_tool:/opt/jwt_tool:jwt_tool.py", false, false},
-			{"graphw00f", "hunt", "pipx:graphw00f", false, false},
+			{"graphw00f", "hunt", "venv:https://github.com/dolevf/graphw00f:/opt/graphw00f:main.py", false, false},
 			// ── Hunt Phase 4 — XSS Hunting ─────────────────────────────────────
 			{"xsstrike", "hunt", "venv:https://github.com/s0md3v/XSStrike:/opt/XSStrike:xsstrike.py", false, false},
 			{"dalfox", "hunt", "go:github.com/hahwul/dalfox/v2@latest", true, false},
@@ -3186,6 +3192,29 @@ func main() {
 						pwCmd.Stderr = os.Stderr
 						pwCmd.Stdin = nil
 						pwCmd.Run() // non-fatal
+					}
+
+				case t.install == "special:shodan":
+					// Fix: shodan needs setuptools for pkg_resources
+					aptInstall("python3-pip", "python3-setuptools")
+					// Install in isolated venv to avoid pkg_resources issues
+					venvDir := "/opt/shodan-venv"
+					exec.Command("python3", "-m", "venv", "--clear", venvDir).Run()
+					venvPip := venvDir + "/bin/pip"
+					exec.Command(venvPip, "install", "--upgrade", "pip", "setuptools", "wheel", "-q").Run()
+					installCmd2 := exec.Command(venvPip, "install", "shodan", "-q")
+					installCmd2.Stdout = os.Stdout
+					installCmd2.Stderr = os.Stderr
+					installCmd2.Stdin = nil
+					if err := installCmd2.Run(); err != nil {
+						installErr = err
+					} else {
+						// Create wrapper
+						wrapper := fmt.Sprintf("#!/bin/bash\nexec %s/bin/shodan \"$@\"\n", venvDir)
+						teeCmd := exec.Command("sudo", "tee", "/usr/local/bin/shodan")
+						teeCmd.Stdin = strings.NewReader(wrapper)
+						teeCmd.Run()
+						exec.Command("sudo", "chmod", "+x", "/usr/local/bin/shodan").Run()
 					}
 
 				case t.install == "special:x8":
@@ -4531,19 +4560,22 @@ rm -f /tmp/evilginx2.tar.gz`)
 		runNativeScan(args[1], localMode)
 
 	case "/portscan":
-		// Port scan — works on Windows, macOS, Linux
-		if len(args) < 2 {
-			printError("Usage: cybermind /portscan <ip>")
-			printError("Example: cybermind /portscan 192.168.1.1")
-			os.Exit(1)
+		// /portscan removed — use /scan instead
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  /portscan removed. Use: cybermind /scan " + func() string {
+			if len(args) > 1 {
+				return args[1]
+			}
+			return "<target>"
+		}()))
+		if len(args) > 1 {
+			if err := storage.Load(); err != nil {
+				fmt.Println("Warning:", err)
+			}
+			if !requireAPIKey() {
+				os.Exit(1)
+			}
+			runNativeScan(args[1], false)
 		}
-		if err := storage.Load(); err != nil {
-			fmt.Println("Warning:", err)
-		}
-		if !localMode && !requireAPIKey() {
-			os.Exit(1)
-		}
-		runPortScan(args[1], localMode)
 
 	case "/osint":
 		// OSINT — DNS + Shodan InternetDB — works on all OS
@@ -4645,23 +4677,11 @@ rm -f /tmp/evilginx2.tar.gz`)
 		runRevEng(revengTarget, revengMode, revengRequested, localMode)
 
 	case "/locate":
-		// Geolocation — works on all OS (Level 1-4), Linux for Level 5
-		if len(args) < 2 {
-			printError("Usage: cybermind /locate <target>")
-			printError("  target: IP, domain, phone (+1234), image file, username")
-			printError("Examples:")
-			printError("  cybermind /locate 8.8.8.8")
-			printError("  cybermind /locate target.com")
-			printError("  cybermind /locate photo.jpg")
-			os.Exit(1)
+		// /locate removed — WiFi triangulation requires SDR hardware
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  /locate removed (requires SDR hardware). Use /osint for IP geolocation."))
+		if len(args) > 1 {
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Try: cybermind /osint " + args[1]))
 		}
-		if err := storage.Load(); err != nil {
-			fmt.Println("Warning:", err)
-		}
-		if !localMode && !requireAPIKey() {
-			os.Exit(1)
-		}
-		runLocate(args[1], false, localMode)
 
 	case "/locate-advanced":
 		// Advanced Geolocation — Linux-only, SDR/cell tower (Level 5)

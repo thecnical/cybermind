@@ -135,7 +135,35 @@ type ToolSpec struct {
 }
 
 // lookPath is the function used to check if a binary exists.
-var lookPath = exec.LookPath
+// Searches PATH + common install locations so manually installed tools are detected.
+var lookPath = func(name string) (string, error) {
+	// 1. Standard PATH lookup
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+	// 2. Common install locations (go/bin, pipx, local bin, opt)
+	home, _ := os.UserHomeDir()
+	extraPaths := []string{
+		home + "/go/bin/" + name,
+		"/root/go/bin/" + name,
+		home + "/.local/bin/" + name,
+		"/root/.local/bin/" + name,
+		"/usr/local/bin/" + name,
+		"/opt/pipx/venvs/" + name + "/bin/" + name,
+		"/opt/" + name + "/.venv/bin/" + name,
+		"/opt/" + name + "-venv/bin/" + name,
+		home + "/.cargo/bin/" + name,
+		"/root/.cargo/bin/" + name,
+	}
+	for _, p := range extraPaths {
+		if _, err := os.Stat(p); err == nil {
+			// Symlink it to /usr/local/bin so future calls find it in PATH
+			exec.Command("sudo", "ln", "-sf", p, "/usr/local/bin/"+name).Run()
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%s: not found", name)
+}
 
 // isAvailable checks if a tool is installed
 func isAvailable(tool string) bool {

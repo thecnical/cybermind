@@ -570,7 +570,8 @@ var huntRegistry = []HuntToolSpec{
 		Phase:       3,
 		Timeout:     300,
 		DomainOnly:  true,
-		InstallHint: "pip3 install graphw00f --break-system-packages",
+		// Fixed install hint — graphw00f is a git repo, not a pip package
+		InstallHint: "git clone https://github.com/dolevf/graphw00f.git /opt/graphw00f && pip3 install -r /opt/graphw00f/requirements.txt --break-system-packages && sudo ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f && sudo chmod +x /usr/local/bin/graphw00f",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			u := target
 			if len(ctx.LiveURLs) > 0 {
@@ -580,8 +581,8 @@ var huntRegistry = []HuntToolSpec{
 				u = "https://" + u
 			}
 			return []string{
-				"-d",          // detect
-				"-f",          // fingerprint
+				"-d",
+				"-f",
 				"-t", u,
 				"-o", "/tmp/cybermind_graphw00f.json",
 			}
@@ -872,17 +873,17 @@ var huntRegistry = []HuntToolSpec{
 		Timeout:     1800,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		// Fixed: reduced concurrency from 1000 to 50 to avoid "higher than max-host-error"
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			args := []string{
-				"-silent", "-no-color", "-stats", "-progress",
-				"-c", "1000", "-rl", "200", "-bs", "50",
-				"-timeout", "10", "-retries", "3",
+				"-silent", "-no-color", "-stats",
+				"-c", "50", "-rl", "50", "-bs", "25",
+				"-timeout", "10", "-retries", "2",
 				"-H", "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1)",
-				"-H", "X-Originating-IP: 127.0.0.1",
 				"-o", "/tmp/cybermind_nuclei_hunt.txt",
 			}
 			if ctx.WAFDetected {
-				args = append(args, "-etags", "fuzzing,dos", "-severity", "critical,high,medium", "-rl", "50")
+				args = append(args, "-etags", "fuzzing,dos", "-severity", "critical,high,medium", "-rl", "10")
 			} else {
 				args = append(args, "-severity", "critical,high,medium,low,info",
 					"-tags", "cve,xss,sqli,ssrf,lfi,rce,xxe,idor,misconfig,exposure,takeover,oast,ssti,redirect")
@@ -903,10 +904,10 @@ var huntRegistry = []HuntToolSpec{
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
-				return []string{"-u", target, "-severity", "critical,high", "-silent", "-no-color", "-c", "200"}
+				return []string{"-u", target, "-severity", "critical,high", "-silent", "-no-color", "-c", "25"}
 			},
 			func(target string, ctx *HuntContext) []string {
-				return []string{"-u", target, "-t", "cves/", "-silent", "-no-color"}
+				return []string{"-u", target, "-t", "cves/", "-silent", "-no-color", "-c", "10"}
 			},
 		},
 	},

@@ -68,7 +68,7 @@ func cloneRepo(url string) (string, error) {
 		return "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
 
-	cmd := exec.Command("git", "clone", "--depth=0", url, tmpDir)
+	cmd := exec.Command("git", "clone", "--depth=1", url, tmpDir)
 	var out strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &out
