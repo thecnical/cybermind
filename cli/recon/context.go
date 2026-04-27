@@ -411,3 +411,185 @@ func buildCombined(result *ReconResult) {
 		result.Results = append([]ToolResult{combined}, result.Results...)
 	}
 }
+
+// ─── Regex Extraction — API Keys, Emails, Secrets ────────────────────────────
+
+// apiKeyRe matches common API key patterns
+var apiKeyRe = regexp.MustCompile(`(?i)(api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|bearer|password|passwd|api[_-]?secret|private[_-]?key|client[_-]?secret)\s*[=:'"]\s*([a-zA-Z0-9+/\-_\.]{16,})`)
+
+// awsKeyRe matches AWS access keys
+var awsKeyRe = regexp.MustCompile(`AKIA[0-9A-Z]{16}`)
+
+// emailRe matches email addresses
+var emailRe = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
+
+// githubTokenRe matches GitHub tokens
+var githubTokenRe = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]{36,}`)
+
+// slackTokenRe matches Slack tokens
+var slackTokenRe = regexp.MustCompile(`xox[baprs]-[0-9A-Za-z\-]{10,}`)
+
+// ExtractSecrets extracts API keys, tokens, and emails from raw tool output.
+// Returns deduplicated findings as a formatted string.
+func ExtractSecrets(output string) (apiKeys []string, emails []string) {
+	seenKeys := map[string]bool{}
+	seenEmails := map[string]bool{}
+
+	// API keys
+	for _, m := range apiKeyRe.FindAllStringSubmatch(output, -1) {
+		if len(m) > 2 {
+			key := m[1] + "=" + m[2][:min(40, len(m[2]))]
+			if !seenKeys[key] {
+				seenKeys[key] = true
+				apiKeys = append(apiKeys, key)
+			}
+		}
+	}
+	// AWS keys
+	for _, m := range awsKeyRe.FindAllString(output, -1) {
+		if !seenKeys[m] {
+			seenKeys[m] = true
+			apiKeys = append(apiKeys, "AWS_KEY="+m)
+		}
+	}
+	// GitHub tokens
+	for _, m := range githubTokenRe.FindAllString(output, -1) {
+		if !seenKeys[m] {
+			seenKeys[m] = true
+			apiKeys = append(apiKeys, "GITHUB_TOKEN="+m[:min(20, len(m))]+"...")
+		}
+	}
+	// Slack tokens
+	for _, m := range slackTokenRe.FindAllString(output, -1) {
+		if !seenKeys[m] {
+			seenKeys[m] = true
+			apiKeys = append(apiKeys, "SLACK_TOKEN="+m[:min(20, len(m))]+"...")
+		}
+	}
+	// Emails
+	for _, m := range emailRe.FindAllString(output, -1) {
+		lower := strings.ToLower(m)
+		// Skip common false positives
+		if strings.Contains(lower, "example.com") || strings.Contains(lower, "test.com") ||
+			strings.Contains(lower, "noreply") || strings.Contains(lower, "no-reply") {
+			continue
+		}
+		if !seenEmails[lower] {
+			seenEmails[lower] = true
+			emails = append(emails, m)
+		}
+	}
+	return apiKeys, emails
+}
+
+// ExtractUniqueSubdomains extracts unique subdomains from raw output
+func ExtractUniqueSubdomains(output, baseDomain string) []string {
+	seen := map[string]bool{}
+	var subs []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Extract hostname from various formats
+		host := line
+		if idx := strings.IndexAny(line, " \t["); idx > 0 {
+			host = line[:idx]
+		}
+		host = strings.TrimSpace(strings.ToLower(host))
+		// Must be a subdomain of baseDomain
+		if host != "" && strings.HasSuffix(host, "."+baseDomain) && domainRe.MatchString(host) && !seen[host] {
+			seen[host] = true
+			subs = append(subs, host)
+		}
+	}
+	return subs
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// SaveReconOutput saves all recon findings to a user-specified or default directory.
+// Returns the directory path where files were saved.
+func SaveReconOutput(target string, toolOutputs map[string]string, outputDir string) string {
+	if outputDir == "" {
+		home, _ := os.UserHomeDir()
+		outputDir = filepath.Join(home, ".cybermind", "recon", strings.ReplaceAll(target, ".", "_"))
+	}
+	os.MkdirAll(outputDir, 0755)
+
+	// Save each tool's output
+	for tool, output := range toolOutputs {
+		if output == "" {
+			continue
+		}
+		filename := filepath.Join(outputDir, tool+".txt")
+		os.WriteFile(filename, []byte(output), 0644)
+	}
+
+	// Extract and save unique subdomains
+	var allSubs []string
+	seenSubs := map[string]bool{}
+	for _, output := range toolOutputs {
+		for _, sub := range ExtractUniqueSubdomains(output, target) {
+			if !seenSubs[sub] {
+				seenSubs[sub] = true
+				allSubs = append(allSubs, sub)
+			}
+		}
+	}
+	if len(allSubs) > 0 {
+		subsFile := filepath.Join(outputDir, "unique_subdomains.txt")
+		os.WriteFile(subsFile, []byte(strings.Join(allSubs, "\n")+"\n"), 0644)
+	}
+
+	// Extract and save emails + API keys
+	var allEmails, allKeys []string
+	seenE := map[string]bool{}
+	seenK := map[string]bool{}
+	for _, output := range toolOutputs {
+		keys, emails := ExtractSecrets(output)
+		for _, k := range keys {
+			if !seenK[k] {
+				seenK[k] = true
+				allKeys = append(allKeys, k)
+			}
+		}
+		for _, e := range emails {
+			if !seenE[e] {
+				seenE[e] = true
+				allEmails = append(allEmails, e)
+			}
+		}
+	}
+	if len(allEmails) > 0 {
+		os.WriteFile(filepath.Join(outputDir, "emails.txt"), []byte(strings.Join(allEmails, "\n")+"\n"), 0644)
+	}
+	if len(allKeys) > 0 {
+		os.WriteFile(filepath.Join(outputDir, "api_keys_SENSITIVE.txt"), []byte(strings.Join(allKeys, "\n")+"\n"), 0600)
+	}
+
+	return outputDir
+}
+
+// FormatReconSummary returns a human-readable summary of recon findings
+func FormatReconSummary(target, outputDir string, subdomains []string, openPorts []int, technologies []string, apiKeys, emails []string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("\n  📁 Output saved: %s\n", outputDir))
+	sb.WriteString(fmt.Sprintf("  🌐 Subdomains: %d unique\n", len(subdomains)))
+	sb.WriteString(fmt.Sprintf("  🔌 Open ports: %v\n", openPorts))
+	if len(technologies) > 0 {
+		sb.WriteString(fmt.Sprintf("  🔧 Technologies: %s\n", strings.Join(technologies, ", ")))
+	}
+	if len(apiKeys) > 0 {
+		sb.WriteString(fmt.Sprintf("  🔑 API keys/secrets found: %d (saved to api_keys_SENSITIVE.txt)\n", len(apiKeys)))
+	}
+	if len(emails) > 0 {
+		sb.WriteString(fmt.Sprintf("  📧 Emails found: %d (saved to emails.txt)\n", len(emails)))
+	}
+	return sb.String()
+}

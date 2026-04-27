@@ -348,17 +348,16 @@ var toolRegistry = []ToolSpec{
 		// In quick/deep mode, individual tools (subfinder, amass, dnsx) cover the same ground faster.
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			outDir := "/tmp/cybermind_reconftw_" + target
-			// Check execution mode — skip reconftw in quick/deep, only overnight
 			mode := os.Getenv("CYBERMIND_MODE")
-			if mode == "quick" || mode == "deep" || mode == "" {
-				// Return empty to trigger fallback skip
-				return nil
-			}
 			os.MkdirAll(outDir, 0755)
+			// quick mode: subdomain only (-s), deep/overnight: full recon (-r)
+			if mode == "quick" || mode == "" {
+				return []string{"-d", target, "-s", "--parallel", "-o", outDir}
+			}
 			return []string{
 				"-d", target,
-				"-r",          // full recon (not -a which is too slow)
-				"--parallel",  // parallel execution
+				"-r",         // full recon
+				"--parallel", // parallel execution
 				"-o", outDir,
 			}
 		},
@@ -420,6 +419,141 @@ var toolRegistry = []ToolSpec{
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				return []string{"-d", target, "-a", "-resp", "-silent"}
+			},
+		},
+	},
+
+	// ══════════════════════════════════════════════════════════════════════════
+	// PHASE 2.5 — CRAWLING + URL COLLECTION
+	// Goal: collect ALL historical URLs, crawl live subdomains, extract endpoints
+	// Tools: gau, waybackurls, waymore, hakrawler, cariddi, crt.sh
+	// ══════════════════════════════════════════════════════════════════════════
+
+	// ── crt.sh — Certificate Transparency direct API ──────────────────────────
+	{
+		Name:        "curl",
+		Phase:       2,
+		Timeout:     60,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install curl",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-s", "--max-time", "30",
+				"-H", "Accept: application/json",
+				fmt.Sprintf("https://crt.sh/?q=%%25.%s&output=json", target),
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-s", "--max-time", "20", fmt.Sprintf("https://crt.sh/?q=%%25.%s", target)}
+			},
+		},
+	},
+
+	// ── gau — Get All URLs from Wayback + OTX + CommonCrawl ──────────────────
+	{
+		Name:        "gau",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/lc/gau/v2/cmd/gau@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"--subs",
+				"--threads", "20",
+				"--blacklist", "png,jpg,gif,svg,ico,css,woff,woff2,ttf,eot,mp4,mp3",
+				"--providers", "wayback,otx,commoncrawl,urlscan",
+				"--retries", "2",
+				"--o", "/tmp/cybermind_gau_recon.txt",
+				target,
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"--subs", "--threads", "10", "--o", "/tmp/cybermind_gau_recon.txt", target}
+			},
+		},
+	},
+
+	// ── waybackurls — Wayback Machine URL collection ──────────────────────────
+	{
+		Name:        "waybackurls",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/tomnomnom/waybackurls@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{target}
+		},
+	},
+
+	// ── hakrawler — Fast Go crawler, JS-aware ────────────────────────────────
+	{
+		Name:        "hakrawler",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/hakluke/hakrawler@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-url", u, "-depth", "3", "-plain", "-subs", "-js", "-forms"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-url", u, "-depth", "2", "-plain"}
+			},
+		},
+	},
+
+	// ── cariddi — Deep crawler + secrets + endpoints extractor ───────────────
+	{
+		Name:        "cariddi",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/edoardottt/cariddi/cmd/cariddi@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-s", u, "-e", "-ef", "2", "-secrets", "-c", "30", "-d", "3"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-s", u, "-e", "-c", "10", "-d", "2"}
+			},
+		},
+	},
+
+	// ── waymore — Passive URL collection ─────────────────────────────────────
+	{
+		Name:        "waymore",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "pip3 install waymore --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-i", target, "-mode", "U",
+				"-oU", "/tmp/cybermind_waymore_recon.txt",
+				"-t", "20", "-p", "wayback,otx,commoncrawl,urlscan",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-i", target, "-mode", "U", "-oU", "/tmp/cybermind_waymore_recon.txt"}
 			},
 		},
 	},

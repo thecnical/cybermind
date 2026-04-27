@@ -1621,6 +1621,27 @@ var extraExploitRegistry = []ToolSpec{
 			},
 		},
 	},
+
+	// ── routersploit — Router/IoT exploitation framework ──────────────────
+	{
+		Name: "routersploit", Phase: 1, Timeout: 600,
+		VulnTypes:   []string{"all", "network", "iot", "rce"},
+		InstallHint: "git clone https://github.com/threat9/routersploit /opt/routersploit && pip3 install -r /opt/routersploit/requirements.txt --break-system-packages && sudo ln -sf /opt/routersploit/rsf.py /usr/local/bin/routersploit && sudo chmod +x /usr/local/bin/routersploit",
+		InstallCmd:  "git clone https://github.com/threat9/routersploit /opt/routersploit && pip3 install -r /opt/routersploit/requirements.txt --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			// Run routersploit autopwn against target
+			scriptPath := "/tmp/cybermind_rsf_" + strings.ReplaceAll(target, ".", "_") + ".rc"
+			script := fmt.Sprintf(
+				"use scanners/autopwn\nset target %s\nrun\nexit\n", target)
+			os.WriteFile(scriptPath, []byte(script), 0600)
+			return []string{"-c", scriptPath}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"--help"}
+			},
+		},
+	},
 }
 
 // init merges extraExploitRegistry into exploitRegistry at startup

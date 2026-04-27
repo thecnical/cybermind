@@ -178,8 +178,9 @@ func InstallTool(spec ToolSpec, progress func(AbhimanyuStatus)) error {
 		return fmt.Errorf("no install command for %s", spec.Name)
 	}
 
-	// C2 tools — document only, never auto-install
-	c2Tools := map[string]bool{"sliver": true, "havoc": true}
+	// C2 tools — sliver requires manual setup (needs domain + SSL for production)
+	// But we can auto-install the binary for local testing
+	c2Tools := map[string]bool{"havoc": true} // only havoc is truly manual
 	if c2Tools[spec.Name] {
 		progress(AbhimanyuStatus{
 			Tool:   spec.Name,
@@ -493,10 +494,10 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 			}
 
 			// Tools that require manual setup — skip auto-run, document instead
+			// ligolo-ng removed from manual list — it can be auto-installed via go install
 			manualOnlyTools := map[string]string{
-				"evilginx2": "Requires domain + SSL cert. Manual setup: evilginx2 -developer -p /usr/share/evilginx/phishlets/",
+				"evilginx2": "Requires domain + SSL cert. Manual: evilginx2 -developer -p /usr/share/evilginx/phishlets/",
 				"donut":     "Requires pre-built payload. Manual: donut -f payload.exe -o shellcode.bin",
-				"ligolo-ng": "Requires agent on target. Manual: ligolo-ng -selfcert -laddr 0.0.0.0:11601",
 			}
 			if reason, isManual := manualOnlyTools[spec.Name]; isManual {
 				progress(AbhimanyuStatus{

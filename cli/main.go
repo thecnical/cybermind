@@ -136,10 +136,10 @@ func printBanner() {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Abhimanyu Mode available   →  cybermind /abhimanyu <target>"))
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ DevSec Mode available         →  cybermind /devsec <target>"))
 	} else if runtime.GOOS == "darwin" {
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  macOS: AI chat + /scan /portscan /osint /payload /cve /wordlist report"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  macOS: AI chat + /scan /osint /payload /cve /wordlist report"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
 	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Windows: AI chat + /scan /portscan /osint /payload /cve /wordlist report"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Windows: AI chat + /scan /osint /payload /cve /wordlist report"))
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
 	}
 	fmt.Println()
@@ -243,7 +243,6 @@ func printHelp() {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  CROSS-PLATFORM (Windows/macOS/Linux):"))
 	fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
 	fmt.Println(g.Render("  cybermind /scan <target>") + d.Render("        → native network scan (no tools needed)"))
-	fmt.Println(g.Render("  cybermind /portscan <target>") + d.Render("    → port scan + netstat analysis"))
 	fmt.Println(g.Render("  cybermind /osint <domain>") + d.Render("       → DNS + Shodan OSINT (free, no key)"))
 	fmt.Println(g.Render("  cybermind /breach <email|domain>") + d.Render("  → breach intelligence (HIBP + LeakCheck + IntelX)"))
 	fmt.Println(g.Render("  cybermind /breach +91XXXXXXXXXX") + d.Render("    → WhatsApp OSINT (name, about, photo)"))
@@ -254,13 +253,12 @@ func printHelp() {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  OPTIONAL INTEGRATIONS:"))
 	fmt.Println(d.Render("  VIRUSTOTAL_API_KEY   → /threat — 500 req/day free (virustotal.com)"))
 	fmt.Println(d.Render("  ABUSEIPDB_API_KEY    → /threat — 1000 req/day free (abuseipdb.com)"))
-	fmt.Println(d.Render("  GOOGLE_GEOLOCATION_KEY → /locate WiFi triangulation"))
-	fmt.Println(g.Render("  cybermind /locate <ip|domain|file>") + d.Render(" → geolocation (IP/EXIF/WiFi/Social)"))
 	fmt.Println(g.Render("  cybermind /payload <os> <arch>") + d.Render("  → AI payload generator (no msfvenom)"))
 	fmt.Println(g.Render("  cybermind /cve <CVE-ID>") + d.Render("         → CVE intelligence from NVD"))
 	fmt.Println(g.Render("  cybermind /cve --latest") + d.Render("         → latest critical CVEs (7 days)"))
 	fmt.Println(g.Render("  cybermind /wordlist <target>") + d.Render("    → smart target-aware wordlist generator"))
 	fmt.Println(g.Render("  cybermind /platform --setup") + d.Render("     → save HackerOne/Bugcrowd credentials"))
+	fmt.Println(g.Render("  cybermind /notify --setup") + d.Render("       → setup Telegram bug notifications"))
 	fmt.Println(g.Render("  cybermind /brain --target <t>") + d.Render("   → view memory + learned patterns"))
 	fmt.Println(g.Render("  cybermind /novel <target>") + d.Render("       → novel attack engine (cache poison, smuggling, race)"))
 	fmt.Println(g.Render("  cybermind /doctor") + d.Render("               → update CLI + check/install tools"))
@@ -486,10 +484,23 @@ func runAutoRecon(target string, requested []string) {
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending to AI for analysis..."))
 	analysis, err := api.SendAnalysis(payload)
 	if err != nil {
-		printError("AI analysis failed: " + err.Error())
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("\n  Raw recon output:\n"))
-		fmt.Println(recon.GetCombinedOutput(result))
-		return
+		// Retry once after 5 seconds (handles rate limits and cold starts)
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  AI analysis failed, retrying in 5s... (" + err.Error() + ")"))
+		time.Sleep(5 * time.Second)
+		analysis, err = api.SendAnalysis(payload)
+		if err != nil {
+			printError("AI analysis failed after retry: " + err.Error())
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("\n  Raw recon output:\n"))
+			fmt.Println(recon.GetCombinedOutput(result))
+			// Still save raw output even if AI fails
+			home2, _ := os.UserHomeDir()
+			rawPath := filepath.Join(home2, ".cybermind", "reports",
+				fmt.Sprintf("recon_raw_%s_%s.txt", strings.ReplaceAll(target, ".", "_"), time.Now().Format("2006-01-02_15-04-05")))
+			os.MkdirAll(filepath.Dir(rawPath), 0700)
+			os.WriteFile(rawPath, []byte(recon.GetCombinedOutput(result)), 0644)
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Raw output saved: " + rawPath))
+			return
+		}
 	}
 
 	// Strip markdown before printing
@@ -497,6 +508,41 @@ func runAutoRecon(target string, requested []string) {
 	printResult("AI Analysis → "+target, clean)
 
 	_ = storage.AddEntry("/recon "+target, clean)
+
+	// ── Extract secrets, emails, unique subdomains from all tool outputs ──
+	var allApiKeys, allEmails []string
+	seenK := map[string]bool{}
+	seenE := map[string]bool{}
+	toolOutputsMap := make(map[string]string)
+	for _, tr := range result.Results {
+		if tr.Output != "" {
+			toolOutputsMap[tr.Tool] = tr.Output
+			keys, emails := recon.ExtractSecrets(tr.Output)
+			for _, k := range keys {
+				if !seenK[k] {
+					seenK[k] = true
+					allApiKeys = append(allApiKeys, k)
+				}
+			}
+			for _, e := range emails {
+				if !seenE[e] {
+					seenE[e] = true
+					allEmails = append(allEmails, e)
+				}
+			}
+		}
+	}
+	if len(allApiKeys) > 0 {
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+			fmt.Sprintf("  🔑 %d API keys/secrets found!", len(allApiKeys))))
+		for _, k := range allApiKeys[:min(5, len(allApiKeys))] {
+			fmt.Println(lipgloss.NewStyle().Foreground(red).Render("    → " + k))
+		}
+	}
+	if len(allEmails) > 0 {
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+			fmt.Sprintf("  📧 %d emails found", len(allEmails))))
+	}
 
 	// ── Parse bugs from recon output ──────────────────────────────────────
 	var reconBugs []bugdetect.Bug
@@ -508,9 +554,27 @@ func runAutoRecon(target string, requested []string) {
 	}
 	reconBugs = dedupBugsByKey(reconBugs)
 
+	// ── Ask user where to save output ─────────────────────────────────────
+	home, _ := os.UserHomeDir()
+	defaultOutputDir := filepath.Join(home, ".cybermind", "recon", strings.ReplaceAll(target, ".", "_"))
+	fmt.Println()
+	fmt.Print(lipgloss.NewStyle().Foreground(cyan).Render(
+		fmt.Sprintf("  💾 Save output to [%s] (Enter to confirm, or type path): ", defaultOutputDir)))
+	var outputDirInput string
+	fmt.Scanln(&outputDirInput)
+	outputDirInput = strings.TrimSpace(outputDirInput)
+	if outputDirInput == "" {
+		outputDirInput = defaultOutputDir
+	}
+
+	// Save all tool outputs + extracted data
+	savedDir := recon.SaveReconOutput(target, toolOutputsMap, outputDirInput)
+	fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ All outputs saved: " + savedDir))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+		recon.FormatReconSummary(target, savedDir, ctx.Subdomains, openPorts, technologies, allApiKeys, allEmails)))
+
 	// ── Save recon report ─────────────────────────────────────────────────
 	{
-		home, _ := os.UserHomeDir()
 		reportsDir := filepath.Join(home, ".cybermind", "reports")
 		os.MkdirAll(reportsDir, 0700)
 		ts := time.Now().Format("2006-01-02_15-04-05")
@@ -518,11 +582,12 @@ func runAutoRecon(target string, requested []string) {
 
 		// Save AI analysis
 		analysisPath := filepath.Join(reportsDir, fmt.Sprintf("recon_%s_%s.md", safeTarget, ts))
-		reconContent := fmt.Sprintf("# Recon Report — %s\n\n**Date:** %s\n**Tools Run:** %d\n**Subdomains:** %d\n**Open Ports:** %v\n**Technologies:** %v\n\n## AI Analysis\n\n%s\n",
+		reconContent := fmt.Sprintf("# Recon Report — %s\n\n**Date:** %s\n**Tools Run:** %d\n**Subdomains:** %d\n**Open Ports:** %v\n**Technologies:** %v\n**API Keys Found:** %d\n**Emails Found:** %d\n\n## AI Analysis\n\n%s\n",
 			target, time.Now().Format("2006-01-02 15:04:05"),
-			len(result.Tools), len(ctx.Subdomains), openPorts, technologies, analysis)
+			len(result.Tools), len(ctx.Subdomains), openPorts, technologies,
+			len(allApiKeys), len(allEmails), analysis)
 		if err2 := os.WriteFile(analysisPath, []byte(reconContent), 0644); err2 == nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Recon report saved: " + analysisPath))
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Recon report: " + analysisPath))
 		}
 
 		// Save bug report if bugs found
@@ -538,7 +603,6 @@ func runAutoRecon(target string, requested []string) {
 			if os.WriteFile(bugPath, []byte(bugContent), 0644) == nil {
 				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
 					fmt.Sprintf("  🔴 %d bugs found! Report: %s", len(reconBugs), bugPath)))
-				// Telegram notification
 				brain.NotifyBugFound(target,
 					fmt.Sprintf("%d bugs found during recon", len(reconBugs)),
 					"high", target, bugPath)
@@ -2581,20 +2645,21 @@ func main() {
 		}
 		// Cross-platform slash commands — allowed on all OS (including /doctor for self-update)
 		crossPlatformSlashCmds := map[string]bool{
-			"scan": true, "portscan": true, "osint": true,
+			"scan": true, "osint": true,
 			"payload": true, "cve": true, "wordlist": true,
 			"doctor": true, "uninstall": true,
 			"platform": true, "brain": true,
-			"locate": true,
-			"breach": true, // breach check works on all OS (API-based)
-			"threat": true, // threat intel works on all OS (API-based)
+			"breach": true, "threat": true,
+			"notify": true, "devsec": true,
+			// kept for backward compat (show deprecation message)
+			"portscan": true, "locate": true,
 		}
 		if linuxOnlyCmds[normalized] || (strings.HasPrefix(cmd, "/") && !crossPlatformSlashCmds[normalized]) {
 			printError("This command is only available on Linux/Kali.")
 			if runtime.GOOS == "darwin" {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  macOS supports AI chat, /scan, /portscan, /osint, /payload, /cve, /wordlist, /doctor, report"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  macOS supports AI chat, /scan, /osint, /payload, /cve, /wordlist, /doctor, report"))
 			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows supports AI chat, /scan, /portscan, /osint, /payload, /cve, /wordlist, /doctor, report"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows supports AI chat, /scan, /osint, /payload, /cve, /wordlist, /doctor, report"))
 			}
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Use Kali Linux for full recon/hunt/abhimanyu pipeline"))
 			os.Exit(1)
