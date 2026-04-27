@@ -1373,3 +1373,672 @@ func portStr(ports []int) string {
 	}
 	return strings.Join(s, ",")
 }
+
+// ─── TIER 1 TOOLS ─────────────────────────────────────────────────────────────
+// These are the highest-impact missing tools added in v5.0.0
+
+// ── wafw00f — WAF detection (Phase 1 passive) ─────────────────────────────────
+var tier1Tools = []ToolSpec{
+	{
+		Name:        "wafw00f",
+		Phase:       1,
+		Timeout:     60,
+		DomainOnly:  true,
+		InstallHint: "pip3 install wafw00f --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{u, "-a", "-o", "/tmp/cybermind_wafw00f.json", "--format", "json"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{u, "-a"}
+			},
+		},
+	},
+	// ── emailfinder — email discovery from target domain ──────────────────────
+	{
+		Name:        "emailfinder",
+		Phase:       1,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "pip3 install emailfinder --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{"-d", target}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"--domain", target}
+			},
+		},
+	},
+	// ── dnsrecon — DNS enumeration (zone transfer, brute, reverse) ────────────
+	{
+		Name:        "dnsrecon",
+		Phase:       1,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install -y dnsrecon",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-d", target,
+				"-t", "std,brt,axfr,rvl,snoop,tld",
+				"--xml", "/tmp/cybermind_dnsrecon.xml",
+				"-j", "/tmp/cybermind_dnsrecon.json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-t", "std,axfr"}
+			},
+		},
+	},
+	// ── spoofcheck — email spoofing check (SPF/DMARC) ─────────────────────────
+	{
+		Name:        "spoofcheck",
+		Phase:       1,
+		Timeout:     60,
+		DomainOnly:  true,
+		InstallHint: "pip3 install spoofcheck --break-system-packages || git clone https://github.com/BishopFox/spoofcheck /opt/spoofcheck && pip3 install -r /opt/spoofcheck/requirements.txt --break-system-packages && sudo ln -sf /opt/spoofcheck/spoofcheck.py /usr/local/bin/spoofcheck",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{target}
+		},
+	},
+	// ── uncover — Shodan+Fofa+Censys+Hunter aggregator ────────────────────────
+	{
+		Name:        "uncover",
+		Phase:       2,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/uncover/cmd/uncover@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-q", "hostname:" + target,
+				"-e", "shodan,censys,fofa,hunter",
+				"-silent",
+				"-o", "/tmp/cybermind_uncover.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-q", "hostname:" + target, "-e", "shodan", "-silent"}
+			},
+		},
+	},
+	// ── shuffledns — mass DNS resolver with custom resolvers ──────────────────
+	{
+		Name:        "shuffledns",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			wordlist := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+			if _, err := os.Stat(wordlist); err != nil {
+				wordlist = "/usr/share/wordlists/dirb/common.txt"
+			}
+			resolvers := "/tmp/cybermind_resolvers.txt"
+			if _, err := os.Stat(resolvers); err != nil {
+				resolvers = ""
+			}
+			args := []string{
+				"-d", target,
+				"-w", wordlist,
+				"-t", "500",
+				"-silent",
+				"-o", "/tmp/cybermind_shuffledns.txt",
+			}
+			if resolvers != "" {
+				args = append(args, "-r", resolvers)
+			}
+			return args
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				wordlist := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+				if _, err := os.Stat(wordlist); err != nil {
+					wordlist = "/usr/share/wordlists/dirb/common.txt"
+				}
+				return []string{"-d", target, "-w", wordlist, "-t", "200", "-silent"}
+			},
+		},
+	},
+	// ── cdncheck — CDN/WAF/cloud provider detection ───────────────────────────
+	{
+		Name:        "cdncheck",
+		Phase:       4,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			var input []string
+			if len(ctx.LiveHosts) > 0 {
+				f := writeTempList(ctx.LiveHosts)
+				if f != "" {
+					input = []string{"-l", f}
+				}
+			}
+			if len(input) == 0 {
+				input = []string{"-i", target}
+			}
+			return append(input, "-resp", "-silent", "-o", "/tmp/cybermind_cdncheck.txt")
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-i", target, "-silent"}
+			},
+		},
+	},
+	// ── smap — passive port scan via Shodan data (no noise) ──────────────────
+	{
+		Name:        "smap",
+		Phase:       3,
+		Timeout:     120,
+		DomainOnly:  false,
+		InstallHint: "go install github.com/s0md3v/smap/cmd/smap@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-iL", func() string {
+					if len(ctx.LiveHosts) > 0 {
+						f := writeTempList(ctx.LiveHosts)
+						if f != "" {
+							return f
+						}
+					}
+					return "/dev/stdin"
+				}(),
+				"-oJ", "/tmp/cybermind_smap.json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{target, "-oJ", "/tmp/cybermind_smap.json"}
+			},
+		},
+	},
+	// ── rustscan — ultra-fast port scanner ────────────────────────────────────
+	{
+		Name:         "rustscan",
+		Phase:        3,
+		Timeout:      300,
+		CascadeGroup: "portscan",
+		InstallHint:  "cargo install rustscan || sudo apt install -y rustscan",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-a", target,
+				"--ulimit", "5000",
+				"-b", "1500",
+				"--timeout", "3000",
+				"--", "-sV", "-sC", "--script", "vuln",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-a", target, "--ulimit", "2000", "-b", "500"}
+			},
+		},
+	},
+	// ── trufflehog — secrets in GitHub/web (recon phase) ─────────────────────
+	{
+		Name:        "trufflehog",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"github",
+				"--org=" + target,
+				"--json",
+				"--no-update",
+				"--only-verified",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"git", u, "--json", "--no-update"}
+			},
+		},
+	},
+	// ── cloud_enum — S3/Azure/GCP bucket enumeration ──────────────────────────
+	{
+		Name:        "cloud_enum",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "pip3 install cloud-enum --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Strip TLD for bucket name guessing
+			keyword := target
+			if idx := strings.LastIndex(target, "."); idx > 0 {
+				keyword = target[:idx]
+			}
+			return []string{
+				"-k", keyword,
+				"-k", target,
+				"--disable-azure", // start with S3 only for speed
+				"-l", "/tmp/cybermind_cloud_enum.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				keyword := target
+				if idx := strings.LastIndex(target, "."); idx > 0 {
+					keyword = target[:idx]
+				}
+				return []string{"-k", keyword, "-l", "/tmp/cybermind_cloud_enum.txt"}
+			},
+		},
+	},
+	// ── dnstake — subdomain takeover detection ────────────────────────────────
+	{
+		Name:        "dnstake",
+		Phase:       6,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/pwnesia/dnstake/cmd/dnstake@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			if len(ctx.Subdomains) > 0 {
+				f := writeTempList(ctx.Subdomains)
+				if f != "" {
+					return []string{"-f", f, "-c", "50", "-s"}
+				}
+			}
+			return []string{"-h", target, "-s"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-h", target}
+			},
+		},
+	},
+	// ── nuclei takeovers — subdomain takeover via nuclei templates ────────────
+	{
+		Name:        "nuclei-takeover",
+		Phase:       6,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			args := []string{
+				"-t", "takeovers/",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_nuclei_takeover.txt",
+			}
+			if len(ctx.Subdomains) > 0 {
+				f := writeTempList(ctx.Subdomains)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-t", "takeovers/", "-u", target, "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+	// ── nuclei tokens — exposed secrets/tokens via nuclei ─────────────────────
+	{
+		Name:        "nuclei-tokens",
+		Phase:       6,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			args := []string{
+				"-t", "exposures/tokens/",
+				"-t", "exposures/apis/",
+				"-t", "exposures/configs/",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_nuclei_tokens.txt",
+			}
+			if len(ctx.LiveURLs) > 0 {
+				f := writeTempList(ctx.LiveURLs)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-t", "exposures/", "-u", target, "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ─── TIER 2 TOOLS ─────────────────────────────────────────────────────────
+
+	// ── ctfr — Certificate Transparency subdomain finder ──────────────────────
+	{
+		Name:        "ctfr",
+		Phase:       2,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "pip3 install ctfr --break-system-packages || git clone https://github.com/UnaPibaGeek/ctfr /opt/ctfr && pip3 install -r /opt/ctfr/requirements.txt --break-system-packages && sudo ln -sf /opt/ctfr/ctfr.py /usr/local/bin/ctfr",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{"-d", target, "-o", "/tmp/cybermind_ctfr.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target}
+			},
+		},
+	},
+	// ── mapcidr — CIDR manipulation + expansion ───────────────────────────────
+	{
+		Name:        "mapcidr",
+		Phase:       2,
+		Timeout:     60,
+		DomainOnly:  false,
+		InstallHint: "go install github.com/projectdiscovery/mapcidr/cmd/mapcidr@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Expand ASN ranges from asnmap output
+			asnFile := "/tmp/cybermind_asnmap.json"
+			if _, err := os.Stat(asnFile); err == nil {
+				return []string{"-cl", asnFile, "-silent", "-o", "/tmp/cybermind_mapcidr_ips.txt"}
+			}
+			return []string{"-cidr", target + "/24", "-silent"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-cidr", target + "/24", "-silent"}
+			},
+		},
+	},
+	// ── ipinfo — IP geolocation + ASN + org ───────────────────────────────────
+	{
+		Name:        "ipinfo",
+		Phase:       1,
+		Timeout:     60,
+		DomainOnly:  false,
+		InstallHint: "pip3 install ipinfo --break-system-packages || go install github.com/ipinfo/cli/ipinfo@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			if len(ctx.LiveHosts) > 0 {
+				return []string{ctx.LiveHosts[0], "--json"}
+			}
+			return []string{target, "--json"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{target}
+			},
+		},
+	},
+	// ── sslscan — SSL/TLS configuration analysis ──────────────────────────────
+	{
+		Name:        "sslscan",
+		Phase:       4,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install -y sslscan",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"--no-colour",
+				"--xml=/tmp/cybermind_sslscan.xml",
+				target,
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"--no-colour", target}
+			},
+		},
+	},
+	// ── uro — URL deduplication + pattern analysis ────────────────────────────
+	{
+		Name:        "uro",
+		Phase:       2,
+		Timeout:     60,
+		DomainOnly:  true,
+		InstallHint: "pip3 install uro --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// uro reads from stdin — pipe all collected URLs through it
+			allURLFiles := []string{
+				"/tmp/cybermind_gau_recon.txt",
+				"/tmp/cybermind_waymore_recon.txt",
+			}
+			for _, f := range allURLFiles {
+				if _, err := os.Stat(f); err == nil {
+					return []string{"-i", f, "-o", "/tmp/cybermind_uro_deduped.txt"}
+				}
+			}
+			return []string{"-o", "/tmp/cybermind_uro_deduped.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-o", "/tmp/cybermind_uro_deduped.txt"}
+			},
+		},
+	},
+	// ── misconfig-mapper — third-party service misconfiguration detection ──────
+	{
+		Name:        "misconfig-mapper",
+		Phase:       6,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/intigriti/misconfig-mapper/cmd/misconfig-mapper@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-target", target,
+				"-service", "all",
+				"-output", "/tmp/cybermind_misconfig.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-target", target}
+			},
+		},
+	},
+	// ── second-order — broken link hijacking detection ────────────────────────
+	{
+		Name:        "second-order",
+		Phase:       6,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/mhmdiaa/second-order@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-base", u,
+				"-config", "/tmp/cybermind_second_order_config.json",
+				"-output", "/tmp/cybermind_second_order.json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-base", u}
+			},
+		},
+	},
+
+	// ─── TIER 3 TOOLS ─────────────────────────────────────────────────────────
+
+	// ── crosslinked — LinkedIn employee enumeration ───────────────────────────
+	{
+		Name:        "crosslinked",
+		Phase:       1,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "pip3 install crosslinked --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Extract company name from domain
+			company := target
+			if idx := strings.Index(target, "."); idx > 0 {
+				company = target[:idx]
+			}
+			return []string{
+				"-f", "{first}.{last}@" + target,
+				company,
+				"-o", "/tmp/cybermind_crosslinked.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				company := target
+				if idx := strings.Index(target, "."); idx > 0 {
+					company = target[:idx]
+				}
+				return []string{company, "-o", "/tmp/cybermind_crosslinked.txt"}
+			},
+		},
+	},
+	// ── enum4linux-ng — SMB/LDAP enumeration ──────────────────────────────────
+	{
+		Name:        "enum4linux-ng",
+		Phase:       3,
+		Timeout:     300,
+		DomainOnly:  false,
+		InstallHint: "pip3 install enum4linux-ng --break-system-packages || sudo apt install -y enum4linux",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Only run if SMB port is open
+			for _, p := range ctx.OpenPorts {
+				if p == 445 || p == 139 {
+					return []string{"-A", "-C", target, "-oJ", "/tmp/cybermind_enum4linux.json"}
+				}
+			}
+			return []string{"-A", target}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-A", target}
+			},
+		},
+	},
+	// ── snmpwalk — SNMP enumeration ───────────────────────────────────────────
+	{
+		Name:        "snmpwalk",
+		Phase:       3,
+		Timeout:     120,
+		DomainOnly:  false,
+		InstallHint: "sudo apt install -y snmp",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Only run if SNMP port is open
+			for _, p := range ctx.OpenPorts {
+				if p == 161 || p == 162 {
+					return []string{"-v2c", "-c", "public", target}
+				}
+			}
+			return []string{"-v2c", "-c", "public", target, "system"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-v1", "-c", "public", target}
+			},
+		},
+	},
+	// ── dorks_hunter — Google dorking automation ──────────────────────────────
+	{
+		Name:        "dorks_hunter",
+		Phase:       1,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "pip3 install dorks-hunter --break-system-packages || git clone https://github.com/six2dez/dorks_hunter /opt/dorks_hunter && pip3 install -r /opt/dorks_hunter/requirements.txt --break-system-packages && sudo ln -sf /opt/dorks_hunter/dorks_hunter.py /usr/local/bin/dorks_hunter",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{"-d", target, "-o", "/tmp/cybermind_dorks.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target}
+			},
+		},
+	},
+	// ── analyticsrelationships — Google Analytics subdomain discovery ──────────
+	{
+		Name:        "analyticsrelationships",
+		Phase:       2,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/Josue87/analyticsrelationships@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{"-d", target}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"--domain", target}
+			},
+		},
+	},
+	// ── gitleaks — git secret detection in repos ──────────────────────────────
+	{
+		Name:        "gitleaks",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/gitleaks/gitleaks/v8/cmd/gitleaks@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://github.com/" + target
+			}
+			return []string{
+				"detect",
+				"--source", u,
+				"--report-format", "json",
+				"--report-path", "/tmp/cybermind_gitleaks.json",
+				"--no-banner",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"detect", "--source", ".", "--no-banner"}
+			},
+		},
+	},
+	// ── testssl — comprehensive TLS testing ───────────────────────────────────
+	{
+		Name:        "testssl",
+		Phase:       4,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install -y testssl.sh || git clone https://github.com/drwetter/testssl.sh /opt/testssl && sudo ln -sf /opt/testssl/testssl.sh /usr/local/bin/testssl",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"--quiet",
+				"--color", "0",
+				"--jsonfile", "/tmp/cybermind_testssl.json",
+				u,
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"--quiet", "--color", "0", u}
+			},
+		},
+	},
+}
+
+func init() {
+	// Append all tier tools to the main registry at startup
+	toolRegistry = append(toolRegistry, tier1Tools...)
+}

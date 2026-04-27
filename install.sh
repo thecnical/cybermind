@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="4.9.0"
+VERSION="5.0.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -408,6 +408,80 @@ if [ ! -f /tmp/cybermind_resolvers.txt ] || [ $(wc -l < /tmp/cybermind_resolvers
     curl -sL "https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt" \
         -o /tmp/cybermind_resolvers.txt 2>/dev/null || true
 fi
+
+# ── v5.0.0 NEW: Tier 1 Recon Tools ───────────────────────────────────────────
+echo -e "${DIM}  Installing Tier 1 recon tools (wafw00f, dnsrecon, uncover, shuffledns, cdncheck, smap, rustscan, dnstake)...${NC}"
+# wafw00f — WAF detection
+command -v wafw00f &>/dev/null || pipx install wafw00f 2>/dev/null || pip3 install wafw00f --break-system-packages -q 2>/dev/null || true
+# emailfinder — email discovery
+command -v emailfinder &>/dev/null || pipx install emailfinder 2>/dev/null || pip3 install emailfinder --break-system-packages -q 2>/dev/null || true
+# dnsrecon — DNS enumeration
+command -v dnsrecon &>/dev/null || sudo apt-get install -y dnsrecon -qq 2>/dev/null || pip3 install dnsrecon --break-system-packages -q 2>/dev/null || true
+# spoofcheck — email spoofing check
+if ! command -v spoofcheck &>/dev/null; then
+    git clone --depth=1 https://github.com/BishopFox/spoofcheck /opt/spoofcheck 2>/dev/null && \
+    pip3 install -r /opt/spoofcheck/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/spoofcheck/spoofcheck.py "$@"\n' | sudo tee /usr/local/bin/spoofcheck > /dev/null && \
+    sudo chmod +x /usr/local/bin/spoofcheck 2>/dev/null || true
+fi
+# uncover — Shodan+Fofa+Censys+Hunter aggregator
+command -v uncover &>/dev/null || (go install github.com/projectdiscovery/uncover/cmd/uncover@latest 2>/dev/null && symlink_go_tool "uncover") || true
+# shuffledns — mass DNS resolver
+command -v shuffledns &>/dev/null || (go install github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest 2>/dev/null && symlink_go_tool "shuffledns") || true
+# cdncheck — CDN/WAF detection
+command -v cdncheck &>/dev/null || (go install github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest 2>/dev/null && symlink_go_tool "cdncheck") || true
+# smap — passive port scan via Shodan
+command -v smap &>/dev/null || (go install github.com/s0md3v/smap/cmd/smap@latest 2>/dev/null && symlink_go_tool "smap") || true
+# rustscan — ultra-fast port scanner
+if ! command -v rustscan &>/dev/null; then
+    sudo apt-get install -y rustscan -qq 2>/dev/null || \
+    (command -v cargo &>/dev/null && cargo install rustscan 2>/dev/null) || true
+fi
+# dnstake — subdomain takeover detection
+command -v dnstake &>/dev/null || (go install github.com/pwnesia/dnstake/cmd/dnstake@latest 2>/dev/null && symlink_go_tool "dnstake") || true
+
+# ── v5.0.0 NEW: Tier 2 Recon Tools ───────────────────────────────────────────
+echo -e "${DIM}  Installing Tier 2 recon tools (ctfr, mapcidr, sslscan, uro, misconfig-mapper, second-order)...${NC}"
+# ctfr — Certificate Transparency subdomain finder
+command -v ctfr &>/dev/null || pip3 install ctfr --break-system-packages -q 2>/dev/null || true
+# mapcidr — CIDR manipulation
+command -v mapcidr &>/dev/null || (go install github.com/projectdiscovery/mapcidr/cmd/mapcidr@latest 2>/dev/null && symlink_go_tool "mapcidr") || true
+# sslscan — SSL/TLS analysis
+command -v sslscan &>/dev/null || sudo apt-get install -y sslscan -qq 2>/dev/null || true
+# uro — URL deduplication
+command -v uro &>/dev/null || pip3 install uro --break-system-packages -q 2>/dev/null || true
+# misconfig-mapper — third-party misconfigs
+command -v misconfig-mapper &>/dev/null || (go install github.com/intigriti/misconfig-mapper/cmd/misconfig-mapper@latest 2>/dev/null && symlink_go_tool "misconfig-mapper") || true
+# second-order — broken link hijacking
+command -v second-order &>/dev/null || (go install github.com/mhmdiaa/second-order@latest 2>/dev/null && symlink_go_tool "second-order") || true
+# testssl — comprehensive TLS testing
+if ! command -v testssl &>/dev/null && ! command -v testssl.sh &>/dev/null; then
+    sudo apt-get install -y testssl.sh -qq 2>/dev/null || \
+    (git clone --depth=1 https://github.com/drwetter/testssl.sh /opt/testssl 2>/dev/null && \
+    sudo ln -sf /opt/testssl/testssl.sh /usr/local/bin/testssl 2>/dev/null) || true
+fi
+
+# ── v5.0.0 NEW: Tier 3 Recon Tools ───────────────────────────────────────────
+echo -e "${DIM}  Installing Tier 3 recon tools (crosslinked, enum4linux-ng, dorks_hunter, analyticsrelationships, gitleaks)...${NC}"
+# crosslinked — LinkedIn employee enum
+command -v crosslinked &>/dev/null || pip3 install crosslinked --break-system-packages -q 2>/dev/null || true
+# enum4linux-ng — SMB/LDAP enumeration
+command -v enum4linux-ng &>/dev/null || pip3 install enum4linux-ng --break-system-packages -q 2>/dev/null || sudo apt-get install -y enum4linux -qq 2>/dev/null || true
+# snmpwalk — SNMP enumeration
+command -v snmpwalk &>/dev/null || sudo apt-get install -y snmp -qq 2>/dev/null || true
+# dorks_hunter — Google dorking
+if ! command -v dorks_hunter &>/dev/null; then
+    pip3 install dorks-hunter --break-system-packages -q 2>/dev/null || \
+    (git clone --depth=1 https://github.com/six2dez/dorks_hunter /opt/dorks_hunter 2>/dev/null && \
+    pip3 install -r /opt/dorks_hunter/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/dorks_hunter/dorks_hunter.py "$@"\n' | sudo tee /usr/local/bin/dorks_hunter > /dev/null && \
+    sudo chmod +x /usr/local/bin/dorks_hunter 2>/dev/null) || true
+fi
+# analyticsrelationships — Google Analytics subdomain discovery
+command -v analyticsrelationships &>/dev/null || (go install github.com/Josue87/analyticsrelationships@latest 2>/dev/null && symlink_go_tool "analyticsrelationships") || true
+# gitleaks — git secret detection
+command -v gitleaks &>/dev/null || (go install github.com/gitleaks/gitleaks/v8/cmd/gitleaks@latest 2>/dev/null && symlink_go_tool "gitleaks") || true
+
 # ── reconftw — Full reconFTW power (Mega Mode) ───────────────────────────────
 # reconftw is the backbone of CyberMind's recon mode — 50+ tools in one
 # Modes: -s (subdomain, 15min), -r (full recon, 2-4h), -a --deep (all, 6-12h)
@@ -464,17 +538,14 @@ echo -e "  ${CYAN}Novel Attacks:${NC}   sudo cybermind /novel example.com"
 echo -e "  ${CYAN}Python Tools:${NC}    sudo cybermind /install-python-tools"
 echo -e "  ${CYAN}Vibe Coder:${NC}      cybermind /vibe"
 echo ""
-echo -e "  ${BOLD}${YELLOW}NEW in v4.9.0:${NC}"
-echo -e "  ${DIM}  • JS Deep Analysis: SecretFinder, LinkFinder, jsluice, sourcemapper, retire.js, CMSeeK${NC}"
-echo -e "  ${DIM}  • --incremental mode: only scan new assets since last run${NC}"
-echo -e "  ${DIM}  • --monitor mode: continuous monitoring with configurable interval${NC}"
-echo -e "  ${DIM}  • Diff tracking: highlights new findings vs previous scan${NC}"
-echo -e "  ${DIM}  • HTML report generation: self-contained report with all findings${NC}"
-echo -e "  ${DIM}  • Hotlist builder: risk-scored top assets for immediate attention${NC}"
-echo -e "  ${DIM}  • Asset store: JSONL output for downstream automation${NC}"
-echo -e "  ${DIM}  • Snapshot system: persistent scan state for comparison${NC}"
-echo -e "  ${DIM}  • 7 new recon tools: github-subdomains, asnmap, webanalyze, favirecon, jsluice, sourcemapper, alterx${NC}"
-echo -e "  ${DIM}  • reconFTW fully integrated — mode-aware: quick(-s) / deep(-r) / overnight(-a --deep)${NC}"
+echo -e "  ${BOLD}${YELLOW}NEW in v5.0.0:${NC}"
+echo -e "  ${DIM}  • Tier 1: wafw00f, dnsrecon, uncover, shuffledns, cdncheck, smap, rustscan, dnstake${NC}"
+echo -e "  ${DIM}  • Tier 2: ctfr, mapcidr, sslscan, uro, misconfig-mapper, second-order, testssl${NC}"
+echo -e "  ${DIM}  • Tier 3: crosslinked, enum4linux-ng, dorks_hunter, analyticsrelationships, gitleaks${NC}"
+echo -e "  ${DIM}  • nuclei takeover + token templates in recon phase${NC}"
+echo -e "  ${DIM}  • Recon Brain: attack surface analysis, priority scoring, hunt focus generation${NC}"
+echo -e "  ${DIM}  • OMEGA: full recon intelligence fed into agentic loop${NC}"
+echo -e "  ${DIM}  • 50+ total recon tools across 6 phases${NC}"
 echo ""
 echo -e "  ${DIM}Full tool install: sudo cybermind /doctor${NC}"
 echo -e "  ${DIM}OOB verification:  interactsh-client auto-installed above${NC}"
