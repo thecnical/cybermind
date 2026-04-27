@@ -3,6 +3,7 @@ package hunt
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -22,23 +23,26 @@ var huntRegistry = []HuntToolSpec{
 	{
 		Name:        "waymore",
 		Phase:       1,
-		Timeout:     900,
+		Timeout:     600,
 		DomainOnly:  true,
-		InstallHint: "go install github.com/xnl-h4ck3r/waymore@latest",
-		// Power: AlienVault OTX + CommonCrawl + Wayback + URLScan — best coverage
+		InstallHint: "pip3 install waymore --break-system-packages",
+		// Fixed: -p flag is --providers in newer waymore, use correct flags
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			return []string{
 				"-i", target,
-				"-mode", "U",          // URLs only
+				"-mode", "U",
 				"-oU", "/tmp/cybermind_waymore.txt",
-				"-t", "50",            // 50 threads
-				"-p", "wayback,otx,commoncrawl,urlscan",
-				"-xrel",               // exclude relative URLs
+				"--providers", "wayback,otx,commoncrawl,urlscan",
 			}
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
+				// Minimal fallback — just wayback
 				return []string{"-i", target, "-mode", "U", "-oU", "/tmp/cybermind_waymore.txt"}
+			},
+			func(target string, ctx *HuntContext) []string {
+				// Last resort: no providers flag at all
+				return []string{"-i", target, "-mode", "U"}
 			},
 		},
 	},
@@ -76,36 +80,32 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
-	// ── NEW 2025: hakrawler — fast Go crawler, JS-aware, finds hidden endpoints ──
+	// ── hakrawler — fast Go crawler (reads URLs from stdin) ─────────────────
 	{
 		Name:        "hakrawler",
 		Phase:       1,
-		Timeout:     600,
+		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/hakluke/hakrawler@latest",
+		// Fixed: hakrawler reads URLs from stdin — use echo pipe approach
+		// We store the URL in a special env var and the engine handles stdin
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			u := target
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
+			// Store URL for stdin injection
+			os.Setenv("CYBERMIND_HAKRAWLER_URL", u)
 			return []string{
-				"-url", u,
-				"-depth", "5",
-				"-plain",
+				"-d", "3",
 				"-subs",
-				"-js",
-				"-forms",
-				"-linkfinder",
-				"-outdir", "/tmp/cybermind_hakrawler/",
+				"-u",
+				"-t", "8",
 			}
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
-				u := target
-				if !strings.HasPrefix(u, "http") {
-					u = "https://" + u
-				}
-				return []string{"-url", u, "-depth", "3", "-plain"}
+				return []string{"-d", "2", "-subs", "-u"}
 			},
 		},
 	},
@@ -330,24 +330,42 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
-	// ── NEW 2025: trufflehog — find secrets/API keys in JS and source ──
+	// ── trufflehog — find secrets/API keys in JS and source ──
 	{
 		Name:        "trufflehog",
 		Phase:       2,
-		Timeout:     900,
+		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Fixed: create the JS files dir first, then scan it
+			jsDir := "/tmp/cybermind_js_files"
+			os.MkdirAll(jsDir, 0755)
+			// Download JS files from live URLs first
+			for i, u := range ctx.LiveURLs {
+				if i >= 10 {
+					break
+				}
+				if strings.HasSuffix(strings.ToLower(u), ".js") {
+					fname := fmt.Sprintf("%s/file_%d.js", jsDir, i)
+					exec.Command("curl", "-sL", "--max-time", "10", "-o", fname, u).Run()
+				}
+			}
+			// Check if dir has any files
+			entries, _ := os.ReadDir(jsDir)
+			if len(entries) > 0 {
+				return []string{
+					"filesystem", jsDir,
+					"--json",
+					"--no-update",
+				}
+			}
+			// Fallback: scan git repo if target looks like github
 			u := target
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			return []string{
-				"filesystem", "/tmp/cybermind_js_files/",
-				"--json",
-				"--no-update",
-				"--only-verified",
-			}
+			return []string{"git", u, "--json", "--no-update"}
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
@@ -360,30 +378,26 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
-	// ── NEW 2025: mantra — find API keys and secrets in JS files ──
+	// ── mantra — find API keys and secrets in JS files ──
 	{
 		Name:        "mantra",
 		Phase:       2,
-		Timeout:     600,
+		Timeout:     300,
 		DomainOnly:  true,
 		InstallHint: "go install github.com/MrEmpy/mantra@latest",
+		// Fixed: mantra reads URLs from stdin, not -u flag
 		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// mantra reads from stdin — store URL for stdin injection
 			u := target
-			if len(ctx.LiveURLs) > 0 {
-				u = ctx.LiveURLs[0]
-			}
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			return []string{"-u", u, "-s", "-o", "/tmp/cybermind_mantra.txt"}
+			os.Setenv("CYBERMIND_MANTRA_URL", u)
+			return []string{"-s"} // silent mode
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
-				u := target
-				if !strings.HasPrefix(u, "http") {
-					u = "https://" + u
-				}
-				return []string{"-u", u}
+				return []string{}
 			},
 		},
 	},
@@ -397,11 +411,17 @@ var huntRegistry = []HuntToolSpec{
 	{
 		Name:        "paramspider",
 		Phase:       3,
-		Timeout:     1800,
+		Timeout:     600,
 		DomainOnly:  true,
-		InstallHint: "git clone https://github.com/devanshbatham/ParamSpider /opt/paramspider && cd /opt/paramspider && pip3 install -r requirements.txt && sudo ln -sf /opt/paramspider/paramspider.py /usr/local/bin/paramspider && sudo chmod +x /usr/local/bin/paramspider",
-		// Power: mines JS, HTML, robots.txt for params — no active probing
+		InstallHint: "pip3 install paramspider --break-system-packages || git clone https://github.com/devanshbatham/ParamSpider /opt/paramspider && cd /opt/paramspider && pip3 install . --break-system-packages",
+		// Fixed: paramspider package metadata issue — use python3 directly
 		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Try direct python3 execution if paramspider binary broken
+			paramspiderPy := "/opt/paramspider/paramspider.py"
+			if _, err := os.Stat(paramspiderPy); err == nil {
+				// Use python3 directly
+				os.Setenv("CYBERMIND_PARAMSPIDER_PY", paramspiderPy)
+			}
 			return []string{
 				"--domain", target,
 				"--level", "high",
@@ -412,6 +432,9 @@ var huntRegistry = []HuntToolSpec{
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
 				return []string{"--domain", target, "--quiet"}
+			},
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-d", target}
 			},
 		},
 	},
@@ -460,6 +483,7 @@ var huntRegistry = []HuntToolSpec{
 		Timeout:     3600,
 		DomainOnly:  true,
 		InstallHint: "Download binary from https://github.com/Sh1Yo/x8/releases/latest — sudo cp x8 /usr/local/bin/ && sudo chmod +x /usr/local/bin/x8",
+		// Fixed: x8 uses subcommand syntax: x8 run -u <url>
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			u := target
 			if len(ctx.LiveURLs) > 0 {
@@ -469,10 +493,11 @@ var huntRegistry = []HuntToolSpec{
 				u = "https://" + u
 			}
 			args := []string{
+				"run",
 				"-u", u,
-				"--level", "high",
-				"--threads", "100",
-				"--output", "/tmp/cybermind_x8.txt",
+				"--level", "3",
+				"--workers", "8",
+				"-o", "/tmp/cybermind_x8.txt",
 				"-q",
 			}
 			if ctx.WAFDetected {
@@ -489,7 +514,7 @@ var huntRegistry = []HuntToolSpec{
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}
-				return []string{"-u", u, "--level", "medium", "--threads", "50", "-q"}
+				return []string{"run", "-u", u, "--level", "2", "-q"}
 			},
 		},
 	},
@@ -512,8 +537,8 @@ var huntRegistry = []HuntToolSpec{
 			return []string{
 				"-u", u,
 				"-t", "CL.TE,TE.CL,TE.TE",
-				"--log-level", "info",
 				"-m", "POST",
+				"-q",
 			}
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
@@ -672,7 +697,6 @@ var huntRegistry = []HuntToolSpec{
 						"file", f,
 						"--silence", "--no-color",
 						"--follow-redirects",
-						"--waf-bypass",
 						"--trigger", "alert(1)",
 						"--output", "/tmp/cybermind_dalfox.txt",
 					}
@@ -694,7 +718,7 @@ var huntRegistry = []HuntToolSpec{
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			return []string{"url", u, "--silence", "--no-color", "--waf-bypass", "--follow-redirects"}
+			return []string{"url", u, "--silence", "--no-color", "--follow-redirects"}
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
@@ -756,11 +780,11 @@ var huntRegistry = []HuntToolSpec{
 				u = "https://" + u
 			}
 			return []string{
-				"-appendMode",
+				"-a",          // append mode (was -appendMode)
 				"-payload", "'\"<script src=https://xss.report/c/cybermind></script>",
-				"-parameters",
+				"-t",          // test parameters
 				"-url", u,
-				"-concurrency", "30",
+				"-c", "30",
 			}
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
@@ -772,7 +796,7 @@ var huntRegistry = []HuntToolSpec{
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}
-				return []string{"-appendMode", "-parameters", "-url", u}
+				return []string{"-a", "-t", "-url", u}
 			},
 		},
 	},
@@ -1437,8 +1461,7 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
-	// ── 2025 NEW: puredns — fast DNS brute-force with wildcard filtering ──
-	// 10x faster than dnsx for brute-force, handles wildcards correctly
+	// ── puredns — fast DNS brute-force with wildcard filtering ──
 	{
 		Name:        "puredns",
 		Phase:       2,
@@ -1450,15 +1473,23 @@ var huntRegistry = []HuntToolSpec{
 			if _, err := os.Stat(wordlist); err != nil {
 				wordlist = "/usr/share/wordlists/dirb/common.txt"
 			}
-			return []string{
+			// Auto-download resolvers if missing
+			resolvers := "/tmp/cybermind_resolvers.txt"
+			if _, err := os.Stat(resolvers); err != nil {
+				exec.Command("curl", "-sL",
+					"https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt",
+					"-o", resolvers).Run()
+			}
+			args := []string{
 				"bruteforce", wordlist, target,
-				"--resolvers", "/tmp/cybermind_resolvers.txt",
-				"--rate-limit", "10000",
-				"--wildcard-tests", "5",
-				"--wildcard-batch", "1000000",
-				"-q",
+				"--threads", "100",
+				"--rate-limit", "1000",
 				"--write", "/tmp/cybermind_puredns.txt",
 			}
+			if _, err := os.Stat(resolvers); err == nil {
+				args = append(args, "--resolvers", resolvers)
+			}
+			return args
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
@@ -1466,24 +1497,21 @@ var huntRegistry = []HuntToolSpec{
 				if _, err := os.Stat(wordlist); err != nil {
 					wordlist = "/usr/share/wordlists/dirb/common.txt"
 				}
-				return []string{"bruteforce", wordlist, target, "--rate-limit", "1000", "-q"}
+				return []string{"bruteforce", wordlist, target, "--threads", "50"}
 			},
 		},
 	},
 
-	// ── 2025 NEW: interactsh-client — OOB/blind vulnerability detection ──
-	// Detects: blind SSRF, blind XSS, blind SQLi, blind RCE, blind XXE
-	// Uses projectdiscovery's interactsh server for callback detection
+	// ── interactsh-client — OOB/blind vulnerability detection ──
 	{
 		Name:        "interactsh-client",
 		Phase:       5,
-		Timeout:     300,
+		Timeout:     60, // reduced from 300 — just register and get URL
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			return []string{
-				"-server", "oast.pro",
-				"-n", "5",
+				"-n", "1",           // 1 interaction URL
 				"-poll-interval", "5",
 				"-json",
 				"-o", "/tmp/cybermind_interactsh.json",
@@ -1491,18 +1519,19 @@ var huntRegistry = []HuntToolSpec{
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
-				return []string{"-n", "3", "-poll-interval", "10"}
+				return []string{"-n", "1", "-json"}
 			},
 		},
 	},
 
-	// ── 2025 NEW: ffuf (param fuzzing mode) — hidden parameter discovery ──
-	// Different from recon ffuf — this one fuzzes parameters, not paths
+	// ── ffuf (param fuzzing mode) — hidden parameter discovery ──
+	// Uses ffuf binary but with parameter fuzzing mode
 	{
-		Name:        "ffuf-param",
+		Name:        "ffuf",  // uses ffuf binary — always available if ffuf installed
 		Phase:       3,
-		Timeout:     3600,
+		Timeout:     600,
 		DomainOnly:  true,
+		CascadeGroup: "paramfuzz",
 		InstallHint: "sudo apt install ffuf",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			u := target
@@ -1512,7 +1541,6 @@ var huntRegistry = []HuntToolSpec{
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			// Fuzz GET parameters
 			paramWordlist := "/usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt"
 			if _, err := os.Stat(paramWordlist); err != nil {
 				paramWordlist = "/usr/share/wordlists/dirb/common.txt"
@@ -1520,13 +1548,13 @@ var huntRegistry = []HuntToolSpec{
 			return []string{
 				"-w", paramWordlist,
 				"-u", u + "?FUZZ=cybermind_test",
-				"-t", "200",
+				"-t", "100",
 				"-ac",
 				"-mc", "200,201,204,301,302,307,401,403",
 				"-fc", "404",
 				"-o", "/tmp/cybermind_ffuf_params.json",
 				"-of", "json",
-				"-silent",
+				"-s",
 			}
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
@@ -1541,7 +1569,7 @@ var huntRegistry = []HuntToolSpec{
 				return []string{
 					"-w", "/usr/share/wordlists/dirb/common.txt",
 					"-u", u + "?FUZZ=test",
-					"-t", "100", "-ac", "-silent",
+					"-t", "50", "-ac", "-s",
 				}
 			},
 		},

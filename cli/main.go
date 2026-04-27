@@ -270,13 +270,15 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /novel <target>") + d.Render("       → novel attack engine (cache poison, smuggling, race)"))
 	fmt.Println(g.Render("  cybermind /doctor") + d.Render("               → update CLI + check/install tools"))
 	fmt.Println(g.Render("  cybermind report") + d.Render("                → generate pentest report from history"))
-	fmt.Println(g.Render("  cybermind --local") + d.Render("               → [DEPRECATED] local mode removed"))
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔐 New in v4.5.0:"))
-	fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
-	fmt.Println(g.Render("  cybermind /vibe-hack <target>") + d.Render("        → Autonomous AI hacking session [Pro+]"))
-	fmt.Println(g.Render("  cybermind /chain <target>") + d.Render("            → Vulnerability chaining engine [Pro+]"))
-	fmt.Println(g.Render("  cybermind /red-team <company>") + d.Render("        → Multi-day red team campaign [Elite]"))
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🆕 New in v5.0.0:"))
+	fmt.Println(g.Render("  cybermind /recon <target> --incremental") + d.Render("  → only scan new assets"))
+	fmt.Println(g.Render("  cybermind /recon <target> --monitor") + d.Render("      → continuous monitoring"))
+	fmt.Println(d.Render("  ↳ 60+ recon tools: Tier1(wafw00f/uncover/shuffledns/cdncheck/smap/rustscan/dnsrecon/dnstake)"))
+	fmt.Println(d.Render("  ↳ Tier2(ctfr/sslscan/testssl/misconfig-mapper/second-order/analyticsrelationships)"))
+	fmt.Println(d.Render("  ↳ Tier3(crosslinked/dorks_hunter/gitleaks/enum4linux-ng)"))
+	fmt.Println(d.Render("  ↳ HTML report + hotlist + asset store + diff tracking after every scan"))
+	fmt.Println(d.Render("  ↳ Recon Brain: attack surface analysis + auto hunt focus"))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  HISTORY:"))
 	fmt.Println(g.Render("  cybermind history") + d.Render("               → view chat history"))
@@ -3385,6 +3387,18 @@ func main() {
 
 				var installErr error
 
+				// ── Python tools: skip auto-install, suggest manual command ──
+				// Python tools (pipx/venv) often fail due to system Python conflicts.
+				// Doctor skips them and shows the install command at the end.
+				isPythonTool := strings.HasPrefix(t.install, "pipx:") ||
+					strings.HasPrefix(t.install, "venv:")
+				if isPythonTool {
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+						fmt.Sprintf("  ⏭  %-20s skipped (Python tool — run: cybermind /install-python-tools)", t.name)))
+					// Don't count as failure — just skip
+					continue
+				}
+
 				switch {
 				case strings.HasPrefix(t.install, "apt:"):
 					pkg := strings.TrimPrefix(t.install, "apt:")
@@ -3732,7 +3746,34 @@ rm -f /tmp/evilginx2.tar.gz`)
 			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(
 				fmt.Sprintf("  Doctor complete: %d installed, %d failed", instOK, instFail)))
 			fmt.Println()
-		}
+
+			// ── Python tools suggestion ────────────────────────────────────
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
+				"  🐍 Python-based tools require manual install:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Run this ONE command to install ALL Python tools:"))
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(
+				"  sudo cybermind /install-python-tools"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Or install individually:"))
+			pythonTools := []string{
+				"pip3 install waymore --break-system-packages",
+				"pip3 install arjun --break-system-packages",
+				"pip3 install ghauri --break-system-packages",
+				"pip3 install wafw00f --break-system-packages",
+				"pip3 install uro --break-system-packages",
+				"pip3 install emailfinder --break-system-packages",
+				"pip3 install spoofcheck --break-system-packages",
+				"pip3 install crosslinked --break-system-packages",
+				"pip3 install ctfr --break-system-packages",
+			}
+			for _, cmd := range pythonTools {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    " + cmd))
+			}
+			fmt.Println()
+
+		} // end if len(missing) > 0
 
 	case "/install-python-tools":
 		// Install ALL Python-based security tools in isolated venv — one command, no manual steps

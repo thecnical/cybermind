@@ -221,7 +221,43 @@ func run(timeoutSec int, name string, args ...string) (string, error) {
 	}
 }
 
-// writeTempList writes items to a temp file, returns path or "".
+// runWithStdin executes a command with stdin input and timeout.
+func runWithStdin(timeoutSec int, stdinData string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	cmd.Stdin = strings.NewReader(stdinData)
+
+	setSysProcAttr(cmd)
+
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		combined := out.String()
+		if combined == "" {
+			combined = errOut.String()
+		}
+		if err != nil && combined == "" {
+			return "", err
+		}
+		return combined, nil
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
+		killProcess(cmd)
+		partial := out.String()
+		if partial != "" {
+			return partial + "\n[timeout — partial results]", nil
+		}
+		return "", fmt.Errorf("timeout after %ds", timeoutSec)
+	}
+}
 // Uses 0600 permissions — temp files may contain sensitive target data.
 func writeTempList(items []string) string {
 	if len(items) == 0 {
@@ -255,9 +291,70 @@ func dedup(items []string) []string {
 
 // runHuntToolExhaustive runs a hunt tool with primary args, then fallbacks if empty.
 // Ensures 100% tool usage — exhaust every command variant before giving up.
+// Handles stdin-based tools (hakrawler, httprobe, kxss) automatically.
 func runHuntToolExhaustive(spec HuntToolSpec, target string, ctx *HuntContext, progress func(HuntStatus)) (string, error) {
 	args := spec.BuildArgs(target, ctx)
-	output, err := run(spec.Timeout, spec.Name, args...)
+
+	// ── Stdin-based tools: inject URL/list via stdin ──────────────────────
+	var output string
+	var err error
+
+	switch spec.Name {
+	case "mantra":
+		// mantra reads URLs from stdin
+		u := os.Getenv("CYBERMIND_MANTRA_URL")
+		if u == "" {
+			u = target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+		}
+		stdinData := u + "\n"
+		if len(ctx.LiveURLs) > 0 {
+			stdinData = strings.Join(ctx.LiveURLs[:min(10, len(ctx.LiveURLs))], "\n") + "\n"
+		}
+		output, err = runWithStdin(spec.Timeout, stdinData, spec.Name, args...)
+
+	case "hakrawler":
+		// hakrawler reads URLs from stdin
+		u := os.Getenv("CYBERMIND_HAKRAWLER_URL")
+		if u == "" {
+			u = target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+		}
+		stdinData := u + "\n"
+		if len(ctx.LiveURLs) > 0 {
+			stdinData = strings.Join(ctx.LiveURLs[:min(20, len(ctx.LiveURLs))], "\n") + "\n"
+		}
+		output, err = runWithStdin(spec.Timeout, stdinData, spec.Name, args...)
+
+	case "httprobe":
+		// httprobe reads domains from stdin
+		stdinData := target + "\n"
+		if len(ctx.Subdomains) > 0 {
+			stdinData = strings.Join(ctx.Subdomains[:min(100, len(ctx.Subdomains))], "\n") + "\n"
+		}
+		output, err = runWithStdin(spec.Timeout, stdinData, spec.Name, args...)
+
+	case "kxss":
+		// kxss reads URLs from stdin
+		paramURLs := []string{}
+		for _, u := range ctx.AllURLs {
+			if strings.Contains(u, "=") {
+				paramURLs = append(paramURLs, u)
+			}
+		}
+		if len(paramURLs) == 0 {
+			return "", fmt.Errorf("no parameterized URLs for kxss")
+		}
+		stdinData := strings.Join(paramURLs[:min(50, len(paramURLs))], "\n") + "\n"
+		output, err = runWithStdin(spec.Timeout, stdinData, spec.Name, args...)
+
+	default:
+		output, err = run(spec.Timeout, spec.Name, args...)
+	}
 
 	if strings.TrimSpace(output) != "" {
 		return output, err
@@ -270,7 +367,22 @@ func runHuntToolExhaustive(spec HuntToolSpec, target string, ctx *HuntContext, p
 			Reason: fmt.Sprintf("primary returned empty, trying fallback %d/%d", i+1, len(spec.FallbackArgs)),
 		})
 		fbArgs := fallbackFn(target, ctx)
-		fbOutput, fbErr := run(spec.Timeout, spec.Name, fbArgs...)
+
+		var fbOutput string
+		var fbErr error
+		switch spec.Name {
+		case "hakrawler":
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			fbOutput, fbErr = runWithStdin(spec.Timeout, u+"\n", spec.Name, fbArgs...)
+		case "httprobe":
+			fbOutput, fbErr = runWithStdin(spec.Timeout, target+"\n", spec.Name, fbArgs...)
+		default:
+			fbOutput, fbErr = run(spec.Timeout, spec.Name, fbArgs...)
+		}
+
 		if strings.TrimSpace(fbOutput) != "" {
 			return fmt.Sprintf("[fallback-%d used]\n%s", i+1, fbOutput), fbErr
 		}
