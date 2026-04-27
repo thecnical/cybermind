@@ -130,6 +130,13 @@ return []OmegaToolEntry{
 {"github-subdomains", "recon", "go install github.com/gwen001/github-subdomains@latest", true, false, false, false, "", "", ""},
 {"webanalyze", "recon", "go install github.com/rverton/webanalyze/cmd/webanalyze@latest", true, false, false, false, "", "", ""},
 {"favirecon", "recon", "go install github.com/edoardottt/favirecon/cmd/favirecon@latest", true, false, false, false, "", "", ""},
+// ── JS Deep Analysis ────────────────────────────────────────────────────────
+{"jsluice", "recon", "go install github.com/BishopFox/jsluice/cmd/jsluice@latest", true, false, false, false, "", "", ""},
+{"sourcemapper", "recon", "go install github.com/denandz/sourcemapper@latest", true, false, false, false, "", "", ""},
+{"secretfinder", "hunt", "git clone https://github.com/m4ll0k/SecretFinder /opt/secretfinder && pip3 install -r /opt/secretfinder/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/m4ll0k/SecretFinder", "/opt/secretfinder", "SecretFinder.py"},
+{"linkfinder", "hunt", "git clone https://github.com/GerbenJavado/LinkFinder /opt/linkfinder && pip3 install -r /opt/linkfinder/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/GerbenJavado/LinkFinder", "/opt/linkfinder", "linkfinder.py"},
+{"cmseek", "hunt", "git clone https://github.com/Tuhinshubhra/CMSeeK /opt/cmseek && pip3 install -r /opt/cmseek/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/Tuhinshubhra/CMSeeK", "/opt/cmseek", "cmseek.py"},
+{"retire", "hunt", "npm install -g retire", false, false, false, false, "", "", ""},
 {"cloud_enum", "recon", "pip3 install cloud-enum --break-system-packages", false, false, true, false, "", "", ""},
 // ── Recon Phase 3 — Port Scanning ───────────────────────────────────
 {"nmap", "recon", "sudo apt install -y nmap", false, false, false, false, "", "", ""},

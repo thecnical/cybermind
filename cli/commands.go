@@ -2047,6 +2047,9 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			agentAct("Running RECON phase...")
 			omegaLog("\n═══ AGENT: RECON ═══\nTarget: " + target)
 
+			// Set mode env so reconftw uses correct flags (quick/-s, deep/-r, overnight/-a --deep)
+			os.Setenv("CYBERMIND_MODE", mode)
+
 			reconResult = runAutoReconSilent(target, nil)
 			state.ReconDone = true
 			state.Phase = "recon_done"
@@ -2060,6 +2063,28 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				state.WAFVendor = rc.WAFVendor
 				state.Technologies = rc.Technologies
 				state.Subdomains = len(rc.Subdomains)
+
+				// ── NEW: Feed JS analysis findings into agent state ────────
+				if rc.ReconFTWDone {
+					if len(rc.ReconFTWSecrets) > 0 {
+						allFindings["recon_js_secrets"] = strings.Join(rc.ReconFTWSecrets[:min(10, len(rc.ReconFTWSecrets))], "\n")
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+							fmt.Sprintf("  🔑 reconFTW found %d secrets/API keys!", len(rc.ReconFTWSecrets))))
+					}
+					if len(rc.ReconFTWTakeover) > 0 {
+						allFindings["recon_takeovers"] = strings.Join(rc.ReconFTWTakeover, "\n")
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+							fmt.Sprintf("  ⚠️  %d subdomain takeover candidates!", len(rc.ReconFTWTakeover))))
+					}
+					if len(rc.ReconFTWBuckets) > 0 {
+						allFindings["recon_buckets"] = strings.Join(rc.ReconFTWBuckets, "\n")
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow2).Render(
+							fmt.Sprintf("  ☁️  %d exposed cloud buckets found!", len(rc.ReconFTWBuckets))))
+					}
+					if len(rc.ReconFTWVulns) > 0 {
+						allFindings["recon_vulns"] = strings.Join(rc.ReconFTWVulns[:min(20, len(rc.ReconFTWVulns))], "\n")
+					}
+				}
 			}
 			state.ToolsRan = append(state.ToolsRan, reconResult.Tools...)
 			for _, f := range reconResult.Results {
@@ -2077,6 +2102,36 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			}
 			state.BugsFound = len(allBugs)
 			state.BugTypes = extractBugTypes(allBugs)
+
+			// ── Save snapshot after recon ──────────────────────────────────
+			go func() {
+				runID := brain.GenerateRunID()
+				var snapVulns []brain.SnapshotVuln
+				for _, v := range reconResult.Results {
+					for _, line := range strings.Split(v.Output, "\n") {
+						if strings.Contains(strings.ToLower(line), "[critical]") || strings.Contains(strings.ToLower(line), "[high]") {
+							sev := "high"
+							if strings.Contains(strings.ToLower(line), "[critical]") {
+								sev = "critical"
+							}
+							snapVulns = append(snapVulns, brain.SnapshotVuln{Type: "nuclei", URL: target, Severity: sev, Tool: v.Tool})
+						}
+					}
+				}
+				var rc2 recon.ReconContext
+				if reconResult.Context != nil {
+					rc2 = *reconResult.Context
+				}
+				snap := brain.ScanSnapshot{
+					Target: target, Timestamp: time.Now(), RunID: runID, Mode: "omega_recon",
+					Subdomains: rc2.Subdomains, LiveURLs: rc2.LiveURLs, OpenPorts: rc2.OpenPorts,
+					Technologies: rc2.Technologies, Vulns: snapVulns,
+					JSSecrets: rc2.ReconFTWSecrets, CloudBuckets: rc2.ReconFTWBuckets,
+					TakeoverCandidates: rc2.ReconFTWTakeover,
+					SubdomainCount: len(rc2.Subdomains), VulnCount: len(snapVulns),
+				}
+				brain.SaveSnapshot(snap)
+			}()
 
 			// ── AGENT AUTO-TRIGGER: CVE Feed during recon ─────────────────
 			// As soon as we know the tech stack, check for known CVEs
@@ -3136,6 +3191,80 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 	}
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan2).Render(strings.Repeat("═", 64)))
 	fmt.Println()
+
+	// ── Generate HTML report for OMEGA run ────────────────────────────────
+	go func() {
+		runID := brain.GenerateRunID()
+		var rc recon.ReconContext
+		if reconResult.Context != nil {
+			rc = *reconResult.Context
+		}
+		var snapVulns []brain.SnapshotVuln
+		for _, b := range allBugs {
+			snapVulns = append(snapVulns, brain.SnapshotVuln{
+				Type: b.Title, URL: b.URL, Severity: string(b.Severity),
+				Tool: b.Tool, Evidence: b.Evidence,
+			})
+		}
+		snap := brain.ScanSnapshot{
+			Target: target, Timestamp: time.Now(), RunID: runID, Mode: "omega",
+			Subdomains: rc.Subdomains, LiveURLs: rc.LiveURLs, OpenPorts: rc.OpenPorts,
+			Technologies: rc.Technologies, Vulns: snapVulns,
+			JSSecrets: rc.ReconFTWSecrets, CloudBuckets: rc.ReconFTWBuckets,
+			TakeoverCandidates: rc.ReconFTWTakeover,
+			SubdomainCount: len(rc.Subdomains), VulnCount: len(snapVulns),
+		}
+		brain.SaveSnapshot(snap)
+
+		// Diff vs previous
+		var diff *brain.ScanDiff
+		if prevSnap, err := brain.LoadLatestSnapshot(target); err == nil && prevSnap.RunID != runID {
+			d := brain.DiffSnapshots(prevSnap, &snap)
+			diff = &d
+		}
+
+		// Build hotlist
+		hotlist := brain.BuildHotlist(&snap, diff, 20)
+
+		// Generate HTML report
+		reportData := brain.ReportData{
+			Target: target, ScanMode: "omega/" + mode,
+			StartTime: time.Now().Add(-time.Duration(state.Iteration*10) * time.Minute),
+			EndTime: time.Now(), RunID: runID,
+			Subdomains: rc.Subdomains, LiveURLs: rc.LiveURLs,
+			OpenPorts: rc.OpenPorts, Technologies: rc.Technologies,
+			WAFDetected: rc.WAFDetected, WAFVendor: rc.WAFVendor,
+			Vulns: snapVulns, JSSecrets: rc.ReconFTWSecrets,
+			CloudBuckets: rc.ReconFTWBuckets, Takeovers: rc.ReconFTWTakeover,
+			Diff: diff, Hotlist: hotlist,
+			ToolsRun: state.ToolsRan,
+		}
+		if htmlPath, err := brain.GenerateHTMLReport(reportData); err == nil {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render(
+				"  ✓ OMEGA HTML report: " + htmlPath))
+		}
+		if len(hotlist) > 0 {
+			hotlistPath := brain.SaveHotlist(target, hotlist)
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  🎯 Hotlist (%d items): %s", len(hotlist), hotlistPath)))
+		}
+		// Append to asset store
+		var assetRecords []brain.AssetRecord
+		for _, s := range rc.Subdomains {
+			assetRecords = append(assetRecords, brain.AssetRecord{
+				Target: target, Type: "subdomain", Value: s,
+				Tool: "omega", Timestamp: time.Now(), RunID: runID,
+			})
+		}
+		for _, b := range allBugs {
+			assetRecords = append(assetRecords, brain.AssetRecord{
+				Target: target, Type: "vuln", Value: b.URL,
+				Severity: string(b.Severity), Tool: b.Tool,
+				Timestamp: time.Now(), RunID: runID,
+			})
+		}
+		brain.AppendAssetStore(target, assetRecords)
+	}()
 
 	// Track attack session completion in web dashboard (non-blocking)
 	findingChance := 30
