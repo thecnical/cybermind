@@ -1,16 +1,18 @@
 // Serves install.sh — EMBEDDED directly (no GitHub proxy = no cache issues)
-// Version: 4.4.0
-// Last updated: 2026-04-26
+// Version: 4.5.0
+// Last updated: 2026-04-27
+// IMPORTANT: This file IS the install script served at cybermindcli1.vercel.app/install.sh
+// Update this file whenever install.sh changes in the root repo.
 
 module.exports = (req, res) => {
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
-  res.setHeader("X-CyberMind-Version", "4.4.0");
+  res.setHeader("X-CyberMind-Version", "4.5.0");
 
   const script = `#!/bin/bash
-# CyberMind CLI Installer v4.4.0 — Kali Linux / Ubuntu / Debian
+# CyberMind CLI Installer v4.5.0 — Kali Linux / Ubuntu / Debian
 # Usage: curl -sL https://cybermindcli1.vercel.app/install.sh | bash
 # Usage: CYBERMIND_KEY=cp_live_xxx curl -sL https://cybermindcli1.vercel.app/install.sh | bash
 
@@ -28,7 +30,7 @@ NC='\\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="4.4.0"
+VERSION="4.5.0"
 
 echo -e "\${CYAN}"
 cat << 'BANNER'
@@ -127,14 +129,14 @@ for profile in ~/.bashrc ~/.zshrc ~/.profile /root/.bashrc /root/.zshrc; do
         echo 'export PATH=\$PATH:\$HOME/go/bin:/usr/local/go/bin' >> "\$profile" || true
 done
 
-# ── Step 5: Essential tools ───────────────────────────────────────────────────
+# ── Step 5: System dependencies ──────────────────────────────────────────────
 echo ""
-echo -e "\${BOLD}\${YELLOW}[*] Installing essential tools...\${NC}"
+echo -e "\${BOLD}\${YELLOW}[*] Installing tools (v4.5.0)...\${NC}"
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq 2>/dev/null || true
-sudo apt-get install -y nmap ffuf feroxbuster gobuster nikto sqlmap commix wpscan \\
+sudo apt-get install -y nmap masscan zmap ffuf feroxbuster gobuster nikto sqlmap commix wpscan \\
     libpcap-dev python3-pip python3-venv pipx git curl wget whois dnsutils \\
-    build-essential -qq 2>/dev/null || true
+    build-essential amass apktool -qq 2>/dev/null || true
 
 symlink_go_tool() {
     local bin="\$1"
@@ -143,36 +145,53 @@ symlink_go_tool() {
     done
 }
 
-# ── Go tools ──────────────────────────────────────────────────────────────────
-for entry in \\
-    "subfinder:github.com/projectdiscovery/subfinder/v2/cmd/subfinder" \\
-    "httpx:github.com/projectdiscovery/httpx/cmd/httpx" \\
-    "nuclei:github.com/projectdiscovery/nuclei/v3/cmd/nuclei" \\
-    "naabu:github.com/projectdiscovery/naabu/v2/cmd/naabu" \\
-    "katana:github.com/projectdiscovery/katana/cmd/katana" \\
-    "dnsx:github.com/projectdiscovery/dnsx/cmd/dnsx" \\
-    "tlsx:github.com/projectdiscovery/tlsx/cmd/tlsx" \\
-    "gau:github.com/lc/gau/v2/cmd/gau" \\
-    "waybackurls:github.com/tomnomnom/waybackurls" \\
-    "dalfox:github.com/hahwul/dalfox/v2" \\
-    "gf:github.com/tomnomnom/gf" \\
-    "interactsh-client:github.com/projectdiscovery/interactsh/cmd/interactsh-client" \\
-    "hakrawler:github.com/hakluke/hakrawler" \\
-    "gospider:github.com/jaeles-project/gospider" \\
-    "kxss:github.com/Emoe/kxss" \\
-    "httprobe:github.com/tomnomnom/httprobe"; do
+# ── Go tools (v4.5.0 — 30 tools) ─────────────────────────────────────────────
+echo -e "\${DIM}  Installing Go tools...\${NC}"
+GO_TOOLS=(
+    "subfinder:github.com/projectdiscovery/subfinder/v2/cmd/subfinder"
+    "httpx:github.com/projectdiscovery/httpx/cmd/httpx"
+    "nuclei:github.com/projectdiscovery/nuclei/v3/cmd/nuclei"
+    "dnsx:github.com/projectdiscovery/dnsx/cmd/dnsx"
+    "naabu:github.com/projectdiscovery/naabu/v2/cmd/naabu"
+    "katana:github.com/projectdiscovery/katana/cmd/katana"
+    "tlsx:github.com/projectdiscovery/tlsx/cmd/tlsx"
+    "urlfinder:github.com/projectdiscovery/urlfinder/cmd/urlfinder"
+    "gau:github.com/lc/gau/v2/cmd/gau"
+    "waybackurls:github.com/tomnomnom/waybackurls"
+    "hakrawler:github.com/hakluke/hakrawler"
+    "dalfox:github.com/hahwul/dalfox/v2"
+    "kxss:github.com/Emoe/kxss"
+    "gospider:github.com/jaeles-project/gospider"
+    "subjs:github.com/lc/subjs"
+    "httprobe:github.com/tomnomnom/httprobe"
+    "gf:github.com/tomnomnom/gf"
+    "chisel:github.com/jpillora/chisel"
+    "interactsh-client:github.com/projectdiscovery/interactsh/cmd/interactsh-client"
+    "puredns:github.com/d3mondev/puredns/v2"
+    "cariddi:github.com/edoardottt/cariddi/cmd/cariddi"
+    "bxss:github.com/ethicalhackingplayground/bxss"
+    "mantra:github.com/MrEmpy/mantra"
+    "mapcidr:github.com/projectdiscovery/mapcidr/cmd/mapcidr"
+    "cdncheck:github.com/projectdiscovery/cdncheck/cmd/cdncheck"
+    "asnmap:github.com/projectdiscovery/asnmap/cmd/asnmap"
+    "uncover:github.com/projectdiscovery/uncover/cmd/uncover"
+    "notify:github.com/projectdiscovery/notify/cmd/notify"
+    "alterx:github.com/projectdiscovery/alterx/cmd/alterx"
+    "shuffledns:github.com/projectdiscovery/shuffledns/cmd/shuffledns"
+    "ligolo-ng:github.com/nicocha30/ligolo-ng/cmd/proxy"
+)
+for entry in "\${GO_TOOLS[@]}"; do
     bin="\${entry%%:*}"; module="\${entry##*:}"
     command -v "\$bin" &>/dev/null || (go install "\${module}@latest" 2>/dev/null && symlink_go_tool "\$bin") || true
 done
 
-# ── Python tools via pipx (isolated, no system pollution) ────────────────────
+# ── Python tools via pipx (isolated) ─────────────────────────────────────────
 echo -e "\${DIM}  Installing Python tools via pipx...\${NC}"
 export PIPX_BIN_DIR=/usr/local/bin
 export PIPX_HOME=/opt/pipx
-for tool in shodan h8mail arjun wafw00f graphw00f waymore semgrep; do
+for tool in shodan h8mail arjun wafw00f graphw00f waymore ghauri semgrep pip-audit; do
     command -v "\$tool" &>/dev/null || pipx install "\$tool" 2>/dev/null || \\
-        pip3 install "\$tool" --break-system-packages -q 2>/dev/null || \\
-        pip3 install "\$tool" -q 2>/dev/null || true
+        pip3 install "\$tool" --break-system-packages -q 2>/dev/null || true
 done
 
 # ── install_python_git_tool: isolated venv per tool ──────────────────────────
@@ -197,6 +216,8 @@ install_python_git_tool "tplmap"      "https://github.com/epinna/tplmap"        
 install_python_git_tool "corsy"       "https://github.com/s0md3v/Corsy"               "/opt/corsy"       "corsy.py"       2>/dev/null || true
 install_python_git_tool "smuggler"    "https://github.com/defparam/smuggler"           "/opt/smuggler"    "smuggler.py"    2>/dev/null || true
 install_python_git_tool "jwt_tool"    "https://github.com/ticarpi/jwt_tool"            "/opt/jwt_tool"    "jwt_tool.py"    2>/dev/null || true
+install_python_git_tool "liffy"       "https://github.com/mzfr/liffy"                  "/opt/liffy"       "liffy.py"       2>/dev/null || true
+install_python_git_tool "gopherus"    "https://github.com/tarunkant/Gopherus"          "/opt/gopherus"    "gopherus.py"    2>/dev/null || true
 
 # ── TruffleHog ────────────────────────────────────────────────────────────────
 command -v trufflehog &>/dev/null || \\
@@ -210,35 +231,54 @@ command -v gf &>/dev/null && [ ! -d "\$HOME/.gf" ] && \\
 # ── Nuclei templates ──────────────────────────────────────────────────────────
 command -v nuclei &>/dev/null && nuclei -update-templates 2>/dev/null || true
 
+# ── puredns resolvers ─────────────────────────────────────────────────────────
+command -v puredns &>/dev/null && [ ! -f /tmp/cybermind_resolvers.txt ] && \\
+    curl -sL "https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt" \\
+    -o /tmp/cybermind_resolvers.txt 2>/dev/null || true
+
+# ── Playwright (headless browser for SPA scanning) ───────────────────────────
+if command -v node &>/dev/null && ! node -e "require('playwright')" 2>/dev/null; then
+    echo -e "\${DIM}  Installing Playwright (headless SPA scanning)...\${NC}"
+    sudo npm install -g playwright 2>/dev/null || true
+    sudo npx playwright install chromium --with-deps 2>/dev/null || true
+fi
+
+# ── Reconftw (Mega Mode) ──────────────────────────────────────────────────────
+if ! command -v reconftw &>/dev/null && [ ! -f /opt/reconftw/reconftw.sh ]; then
+    echo -e "\${DIM}  Installing reconftw (Mega Mode — 5-10 min)...\${NC}"
+    git clone --depth=1 https://github.com/six2dez/reconftw.git /opt/reconftw 2>/dev/null && \\
+    chmod +x /opt/reconftw/reconftw.sh /opt/reconftw/install.sh && \\
+    (cd /opt/reconftw && bash install.sh 2>/dev/null || true) && \\
+    printf '#!/bin/bash\\nexec bash /opt/reconftw/reconftw.sh "\$@"\\n' | sudo tee /usr/local/bin/reconftw > /dev/null && \\
+    sudo chmod +x /usr/local/bin/reconftw 2>/dev/null || true
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "\${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\${NC}"
 echo -e "\${BOLD}\${GREEN}⚡ CyberMind CLI v\${VERSION} installed!\${NC}"
 echo ""
-echo -e "  \${CYAN}Verify:\${NC}          cybermind --version"
-echo -e "  \${CYAN}Doctor:\${NC}          sudo cybermind /doctor"
-echo -e "  \${CYAN}OMEGA Plan:\${NC}      sudo cybermind /plan example.com"
-echo -e "  \${CYAN}Overnight:\${NC}       sudo cybermind /plan --auto-target --mode overnight --continuous"
-echo -e "  \${CYAN}Recon:\${NC}           sudo cybermind /recon example.com"
-echo -e "  \${CYAN}Hunt:\${NC}            sudo cybermind /hunt example.com"
-echo -e "  \${CYAN}Abhimanyu:\${NC}       sudo cybermind /abhimanyu example.com"
-echo -e "  \${CYAN}DevSec:\${NC}          cybermind /devsec <github-url|path>"
-echo -e "  \${CYAN}Vibe-Hack:\${NC}       sudo cybermind /vibe-hack example.com"
-echo -e "  \${CYAN}Chain:\${NC}           sudo cybermind /chain example.com"
-echo -e "  \${CYAN}Red Team:\${NC}        sudo cybermind /red-team company.com"
-echo -e "  \${CYAN}Python Tools:\${NC}    sudo cybermind /install-python-tools"
-echo -e "  \${CYAN}BizLogic:\${NC}        sudo cybermind /bizlogic example.com"
-echo -e "  \${CYAN}Manual Guide:\${NC}    sudo cybermind /guide example.com"
-echo -e "  \${CYAN}Vibe Coder:\${NC}      cybermind /vibe"
+echo -e "  \${CYAN}Verify:${NC}          cybermind --version"
+echo -e "  \${CYAN}Doctor:${NC}          sudo cybermind /doctor"
+echo -e "  \${CYAN}OMEGA Plan:${NC}      sudo cybermind /plan example.com"
+echo -e "  \${CYAN}Auto-Target:${NC}     sudo cybermind /plan --auto-target --skill intermediate"
+echo -e "  \${CYAN}Mega Mode:${NC}       sudo cybermind /plan --auto-target --mode overnight --continuous"
+echo -e "  \${CYAN}Recon:${NC}           sudo cybermind /recon example.com"
+echo -e "  \${CYAN}Hunt:${NC}            sudo cybermind /hunt example.com"
+echo -e "  \${CYAN}Abhimanyu:${NC}       sudo cybermind /abhimanyu example.com"
+echo -e "  \${CYAN}DevSec:${NC}          cybermind /devsec <github-url|path>"
+echo -e "  \${CYAN}Vibe-Hack:${NC}       sudo cybermind /vibe-hack example.com"
+echo -e "  \${CYAN}Chain:${NC}           sudo cybermind /chain example.com"
+echo -e "  \${CYAN}Red Team:${NC}        sudo cybermind /red-team company.com"
+echo -e "  \${CYAN}Python Tools:${NC}    sudo cybermind /install-python-tools"
 echo ""
-echo -e "  \${BOLD}\${YELLOW}NEW in v4.4.0:\${NC}"
-echo -e "  \${DIM}  • DevSec scanner — secrets, SAST, dependency audit\${NC}"
-echo -e "  \${DIM}  • Vibe-Hack — autonomous AI hacking session [Pro+]\${NC}"
-echo -e "  \${DIM}  • Chain engine — vulnerability chaining [Pro+]\${NC}"
-echo -e "  \${DIM}  • Red team campaign — multi-day autonomous [Elite]\${NC}"
-echo -e "  \${DIM}  • Python tools now use isolated venvs (no system pollution)\${NC}"
-echo -e "  \${DIM}  • Chat AI no longer greets on every message\${NC}"
-echo -e "  \${DIM}  • Doctor command auto-updates to latest binary\${NC}"
+echo -e "  \${BOLD}\${YELLOW}NEW in v4.5.0:\${NC}"
+echo -e "  \${DIM}  • 13 new tools: puredns, alterx, shuffledns, uncover, cdncheck, asnmap, ghauri\${NC}"
+echo -e "  \${DIM}  • Nuclei AI template generator (target-specific YAML templates)\${NC}"
+echo -e "  \${DIM}  • Headless browser SPA scanning (katana headless + Playwright)\${NC}"
+echo -e "  \${DIM}  • SPA framework detection (React/Next.js/Vue/Angular)\${NC}"
+echo -e "  \${DIM}  • Chat AI strict no-greeting (edge-level enforcement)\${NC}"
+echo -e "  \${DIM}  • OMEGA brain upgraded with 2025/2026 attack patterns\${NC}"
 echo ""
 if [ -n "\$CYBERMIND_KEY" ]; then
     echo -e "  \${GREEN}✓ API key saved — run: cybermind whoami\${NC}"
