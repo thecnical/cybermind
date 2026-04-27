@@ -973,6 +973,266 @@ var huntRegistry = []HuntToolSpec{
 		},
 	},
 
+	// ══════════════════════════════════════════════════════════════════════════
+	// PHASE 2.5 — JS DEEP ANALYSIS
+	// Goal: extract endpoints, secrets, API keys, vulnerable libs from JS files
+	// Pipeline: secretfinder → jsluice → linkfinder → retire.js → sourcemapper
+	// ══════════════════════════════════════════════════════════════════════════
+
+	// ── SecretFinder — extract secrets/API keys from JS files ────────────────
+	// Regex patterns: AWS keys, Slack tokens, GitHub tokens, Google API, etc.
+	// Better than mantra for comprehensive secret extraction
+	{
+		Name:        "secretfinder",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/m4ll0k/SecretFinder /opt/secretfinder && pip3 install -r /opt/secretfinder/requirements.txt --break-system-packages && sudo tee /usr/local/bin/secretfinder > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/secretfinder/SecretFinder.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/secretfinder",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-i", u,
+				"-e",          // extract from all JS files on page
+				"-o", "cli",   // output to terminal
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-i", u, "-o", "cli"}
+			},
+		},
+	},
+
+	// ── jsluice — extract URLs, endpoints, params from minified/obfuscated JS ─
+	// Handles webpack bundles, minified code — finds hidden API endpoints
+	{
+		Name:        "jsluice",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/BishopFox/jsluice/cmd/jsluice@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// jsluice reads JS files — pipe JS file URLs to it
+			jsFiles := []string{}
+			for _, u := range ctx.AllURLs {
+				if strings.HasSuffix(strings.ToLower(u), ".js") ||
+					strings.Contains(strings.ToLower(u), ".js?") {
+					jsFiles = append(jsFiles, u)
+				}
+			}
+			if len(jsFiles) > 0 {
+				f := writeTempList(jsFiles)
+				if f != "" {
+					return []string{"urls", "-R", f}
+				}
+			}
+			// Fallback: crawl target for JS files
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"urls", u}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"secrets", u}
+			},
+		},
+	},
+
+	// ── LinkFinder — extract endpoints from JS source code ───────────────────
+	// Specifically designed for endpoint discovery in JS files
+	// Better than generic URL extraction — finds relative paths, API routes
+	{
+		Name:        "linkfinder",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/GerbenJavado/LinkFinder /opt/linkfinder && pip3 install -r /opt/linkfinder/requirements.txt --break-system-packages && sudo tee /usr/local/bin/linkfinder > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/linkfinder/linkfinder.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/linkfinder",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-i", u,
+				"-d",          // domain crawl mode
+				"-o", "cli",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-i", u, "-o", "cli"}
+			},
+		},
+	},
+
+	// ── retire.js — detect vulnerable JavaScript libraries ───────────────────
+	// Finds outdated jQuery, Bootstrap, Angular, React with known CVEs
+	// Critical for finding client-side vulnerabilities
+	{
+		Name:        "retire",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "npm install -g retire",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"--js",
+				"--jsrepo", "https://raw.githubusercontent.com/RetireJS/retire.js/master/repository/jsrepository.json",
+				"--outputformat", "json",
+				"--outputpath", "/tmp/cybermind_retire.json",
+				"--url", u,
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"--js", "--url", u}
+			},
+		},
+	},
+
+	// ── sourcemapper — extract source maps from JS files ─────────────────────
+	// Recovers original source code from .js.map files
+	// Finds: hidden API endpoints, internal paths, developer comments, secrets
+	{
+		Name:        "sourcemapper",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/denandz/sourcemapper@latest",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			// Try common source map locations
+			return []string{
+				"-url", u + "/static/js/main.chunk.js.map",
+				"-output", "/tmp/cybermind_sourcemap/",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-url", u + "/app.js.map", "-output", "/tmp/cybermind_sourcemap/"}
+			},
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-url", u + "/bundle.js.map", "-output", "/tmp/cybermind_sourcemap/"}
+			},
+		},
+	},
+
+	// ── CMSeeK — CMS detection and vulnerability scanning ────────────────────
+	// Detects: WordPress, Drupal, Joomla, Magento, OpenCart, 180+ CMSes
+	// Then runs CMS-specific vulnerability checks
+	{
+		Name:        "cmseek",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "git clone https://github.com/Tuhinshubhra/CMSeeK /opt/cmseek && pip3 install -r /opt/cmseek/requirements.txt --break-system-packages && sudo tee /usr/local/bin/cmseek > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/cmseek/cmseek.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/cmseek",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"--follow-redirect",
+				"--batch",     // non-interactive
+				"-r",          // random user agent
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "--batch"}
+			},
+		},
+	},
+
+	// ── JSA (JS Analyzer) — deep JS analysis for endpoints and secrets ────────
+	// Analyzes JS files for: API endpoints, hardcoded credentials, tokens
+	// Better than subjs for structured analysis
+	{
+		Name:        "jsa",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "pip3 install jsanalyzer --break-system-packages || git clone https://github.com/w9w/JSA /opt/jsa && pip3 install -r /opt/jsa/requirements.txt --break-system-packages && sudo tee /usr/local/bin/jsa > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/jsa/jsa.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/jsa",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"-o", "/tmp/cybermind_jsa/",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u}
+			},
+		},
+	},
+
 	// ── NEW 2025: tplmap — SSTI detection and exploitation ──
 	{
 		Name:        "tplmap",

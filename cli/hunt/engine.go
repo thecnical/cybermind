@@ -84,6 +84,12 @@ type HuntContext struct {
 	XSSFound       []string // xsstrike + dalfox confirmed XSS
 	VulnsFound     []string // nuclei confirmed vulns
 	GFPatterns     map[string][]string // gf pattern matches: xss, sqli, ssrf, lfi, rce
+	// JS analysis findings
+	JSSecrets      []string // secretfinder + jsluice + mantra secrets
+	JSEndpoints    []string // linkfinder + jsluice endpoints
+	VulnLibs       []string // retire.js vulnerable libraries
+	CMSDetected    string   // cmseek CMS type
+	SourceMaps     []string // sourcemapper recovered source files
 }
 
 // HuntToolSpec defines a hunt tool.
@@ -610,6 +616,14 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 	newCrawled := extractCrawledURLs(result)
 	ctx.CrawledURLs = dedup(append(ctx.CrawledURLs, newCrawled...))
 
+	// ── JS Analysis: extract secrets, endpoints, vuln libs, CMS ─────────────
+	ctx.JSSecrets = extractJSSecrets(result)
+	ctx.JSEndpoints = extractJSEndpoints(result)
+	ctx.VulnLibs = extractVulnLibs(result)
+	if cms := extractCMSType(result); cms != "" {
+		ctx.CMSDetected = cms
+	}
+
 	// ── Adaptive: merge all URLs into AllURLs for downstream phases ──────────
 	ctx.AllURLs = mergeAllURLs(ctx)
 
@@ -719,4 +733,92 @@ func appendUniqueStr(slice []string, val string) []string {
 		}
 	}
 	return append(slice, val)
+}
+
+// extractJSSecrets parses secretfinder/jsluice/mantra output for secrets.
+func extractJSSecrets(result HuntResult) []string {
+	var secrets []string
+	seen := map[string]bool{}
+	secretRe := regexp.MustCompile(`(?i)(api[_-]?key|secret|token|password|aws_|github_|slack_|stripe_|twilio_)[^\s"']{8,}`)
+	for _, tr := range result.Results {
+		if tr.Tool != "secretfinder" && tr.Tool != "jsluice" && tr.Tool != "mantra" && tr.Tool != "jsa" {
+			continue
+		}
+		for _, line := range strings.Split(tr.Output, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if m := secretRe.FindString(line); m != "" && !seen[m] {
+				seen[m] = true
+				secrets = append(secrets, line)
+			}
+		}
+	}
+	return secrets
+}
+
+// extractJSEndpoints parses linkfinder/jsluice output for API endpoints.
+func extractJSEndpoints(result HuntResult) []string {
+	var endpoints []string
+	seen := map[string]bool{}
+	for _, tr := range result.Results {
+		if tr.Tool != "linkfinder" && tr.Tool != "jsluice" {
+			continue
+		}
+		for _, line := range strings.Split(tr.Output, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			// Filter for API-like paths
+			if strings.HasPrefix(line, "/") || strings.HasPrefix(line, "http") {
+				if !seen[line] {
+					seen[line] = true
+					endpoints = append(endpoints, line)
+				}
+			}
+		}
+	}
+	return endpoints
+}
+
+// extractVulnLibs parses retire.js output for vulnerable libraries.
+func extractVulnLibs(result HuntResult) []string {
+	var libs []string
+	seen := map[string]bool{}
+	for _, tr := range result.Results {
+		if tr.Tool != "retire" {
+			continue
+		}
+		for _, line := range strings.Split(tr.Output, "\n") {
+			line = strings.TrimSpace(line)
+			lower := strings.ToLower(line)
+			if strings.Contains(lower, "vulnerability") || strings.Contains(lower, "cve-") ||
+				strings.Contains(lower, "retire") {
+				if !seen[line] && line != "" {
+					seen[line] = true
+					libs = append(libs, line)
+				}
+			}
+		}
+	}
+	return libs
+}
+
+// extractCMSType parses cmseek output for detected CMS.
+func extractCMSType(result HuntResult) string {
+	for _, tr := range result.Results {
+		if tr.Tool != "cmseek" {
+			continue
+		}
+		lower := strings.ToLower(tr.Output)
+		for _, cms := range []string{"wordpress", "drupal", "joomla", "magento", "opencart",
+			"prestashop", "typo3", "concrete5", "ghost", "shopify"} {
+			if strings.Contains(lower, cms) {
+				return strings.Title(cms)
+			}
+		}
+	}
+	return ""
 }

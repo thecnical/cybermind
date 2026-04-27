@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="4.8.0"
+VERSION="4.9.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -356,6 +356,12 @@ command -v webanalyze &>/dev/null || \
 # ── 2026 NEW: favirecon — favicon hash tech detection ────────────────────────
 command -v favirecon &>/dev/null || \
     (go install github.com/edoardottt/favirecon/cmd/favirecon@latest 2>/dev/null && symlink_go_tool "favirecon") || true
+# ── 2026 NEW: jsluice — extract endpoints from minified JS ───────────────────
+command -v jsluice &>/dev/null || \
+    (go install github.com/BishopFox/jsluice/cmd/jsluice@latest 2>/dev/null && symlink_go_tool "jsluice") || true
+# ── 2026 NEW: sourcemapper — extract source maps from JS ─────────────────────
+command -v sourcemapper &>/dev/null || \
+    (go install github.com/denandz/sourcemapper@latest 2>/dev/null && symlink_go_tool "sourcemapper") || true
 # ── 2025 NEW: semgrep — SAST code analysis ───────────────────────────────────
 command -v semgrep &>/dev/null || pipx install semgrep 2>/dev/null || \
     pip3 install semgrep --break-system-packages -q 2>/dev/null || true
@@ -366,6 +372,37 @@ install_python_git_tool "gopherus" "https://github.com/tarunkant/Gopherus" "/opt
 # ── 2026 NEW: cloud-enum — S3/Azure/GCP bucket enumeration ───────────────────
 command -v cloud_enum &>/dev/null || pipx install cloud-enum 2>/dev/null || \
     pip3 install cloud-enum --break-system-packages -q 2>/dev/null || true
+
+# ── 2026 NEW: JS Deep Analysis Tools ─────────────────────────────────────────
+# SecretFinder — extract API keys/secrets from JS files
+if ! command -v secretfinder &>/dev/null; then
+    echo -e "${DIM}  Installing SecretFinder...${NC}"
+    git clone --depth=1 https://github.com/m4ll0k/SecretFinder /opt/secretfinder 2>/dev/null && \
+    pip3 install -r /opt/secretfinder/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/secretfinder/SecretFinder.py "$@"\n' | sudo tee /usr/local/bin/secretfinder > /dev/null && \
+    sudo chmod +x /usr/local/bin/secretfinder 2>/dev/null || true
+fi
+# LinkFinder — extract endpoints from JS source code
+if ! command -v linkfinder &>/dev/null; then
+    echo -e "${DIM}  Installing LinkFinder...${NC}"
+    git clone --depth=1 https://github.com/GerbenJavado/LinkFinder /opt/linkfinder 2>/dev/null && \
+    pip3 install -r /opt/linkfinder/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/linkfinder/linkfinder.py "$@"\n' | sudo tee /usr/local/bin/linkfinder > /dev/null && \
+    sudo chmod +x /usr/local/bin/linkfinder 2>/dev/null || true
+fi
+# CMSeeK — CMS detection (WordPress, Drupal, Joomla, 180+ CMSes)
+if ! command -v cmseek &>/dev/null; then
+    echo -e "${DIM}  Installing CMSeeK...${NC}"
+    git clone --depth=1 https://github.com/Tuhinshubhra/CMSeeK /opt/cmseek 2>/dev/null && \
+    pip3 install -r /opt/cmseek/requirements.txt --break-system-packages -q 2>/dev/null && \
+    printf '#!/bin/bash\npython3 /opt/cmseek/cmseek.py "$@"\n' | sudo tee /usr/local/bin/cmseek > /dev/null && \
+    sudo chmod +x /usr/local/bin/cmseek 2>/dev/null || true
+fi
+# retire.js — detect vulnerable JavaScript libraries
+if ! command -v retire &>/dev/null; then
+    echo -e "${DIM}  Installing retire.js...${NC}"
+    npm install -g retire 2>/dev/null || true
+fi
 # ── puredns resolvers list (also used by reconftw internally) ────────────────
 if [ ! -f /tmp/cybermind_resolvers.txt ] || [ $(wc -l < /tmp/cybermind_resolvers.txt 2>/dev/null || echo 0) -lt 100 ]; then
     curl -sL "https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt" \
@@ -427,23 +464,17 @@ echo -e "  ${CYAN}Novel Attacks:${NC}   sudo cybermind /novel example.com"
 echo -e "  ${CYAN}Python Tools:${NC}    sudo cybermind /install-python-tools"
 echo -e "  ${CYAN}Vibe Coder:${NC}      cybermind /vibe"
 echo ""
-echo -e "  ${BOLD}${YELLOW}NEW in v4.8.0:${NC}"
-echo -e "  ${DIM}  • 7 new recon tools: github-subdomains, asnmap, webanalyze, favirecon, cloud_enum, puredns, alterx${NC}"
-echo -e "  ${DIM}  • Active DNS recon: puredns brute-force + alterx permutations${NC}"
-echo -e "  ${DIM}  • ASN/IP range discovery: asnmap + bgpview + mapcidr${NC}"
-echo -e "  ${DIM}  • Cloud bucket enumeration: cloud_enum (S3/Azure/GCP)${NC}"
-echo -e "  ${DIM}  • GitHub/code recon: github-subdomains + trufflehog${NC}"
-echo -e "  ${DIM}  • Tech fingerprinting: webanalyze + favirecon (favicon hash)${NC}"
+echo -e "  ${BOLD}${YELLOW}NEW in v4.9.0:${NC}"
+echo -e "  ${DIM}  • JS Deep Analysis: SecretFinder, LinkFinder, jsluice, sourcemapper, retire.js, CMSeeK${NC}"
+echo -e "  ${DIM}  • --incremental mode: only scan new assets since last run${NC}"
+echo -e "  ${DIM}  • --monitor mode: continuous monitoring with configurable interval${NC}"
+echo -e "  ${DIM}  • Diff tracking: highlights new findings vs previous scan${NC}"
+echo -e "  ${DIM}  • HTML report generation: self-contained report with all findings${NC}"
+echo -e "  ${DIM}  • Hotlist builder: risk-scored top assets for immediate attention${NC}"
+echo -e "  ${DIM}  • Asset store: JSONL output for downstream automation${NC}"
+echo -e "  ${DIM}  • Snapshot system: persistent scan state for comparison${NC}"
+echo -e "  ${DIM}  • 7 new recon tools: github-subdomains, asnmap, webanalyze, favirecon, jsluice, sourcemapper, alterx${NC}"
 echo -e "  ${DIM}  • reconFTW fully integrated — mode-aware: quick(-s) / deep(-r) / overnight(-a --deep)${NC}"
-echo -e "  ${DIM}  • reconFTW output parsing: subdomains, URLs, vulns, secrets, emails, takeover, buckets${NC}"
-echo -e "  ${DIM}  • reconFTW tech stack + WAF detection fed into agentic brain${NC}"
-echo -e "  ${DIM}  • Brain memory records reconFTW findings for smarter future scans${NC}"
-echo -e "  ${DIM}  • reconFTW auto-updates on re-install (git pull)${NC}"
-echo -e "  ${DIM}  • 14 subdomain file types parsed (passive, brute, permut, crt, noerror, vhosts)${NC}"
-echo -e "  ${DIM}  • 18 vuln file types parsed (XSS, SQLi, SSRF, LFI, SSTI, CRLF, smuggling, cache)${NC}"
-echo -e "  ${DIM}  • Cloud bucket exposure detection (S3Scanner + cloud_enum)${NC}"
-echo -e "  ${DIM}  • JS file secrets extraction (mantra, JSA, subjs)${NC}"
-echo -e "  ${DIM}  • Subdomain takeover candidates auto-flagged${NC}"
 echo ""
 echo -e "  ${DIM}Full tool install: sudo cybermind /doctor${NC}"
 echo -e "  ${DIM}OOB verification:  interactsh-client auto-installed above${NC}"

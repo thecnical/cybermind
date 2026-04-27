@@ -41,7 +41,7 @@ import (
 )
 
 var (
-	Version = "4.8.0"
+	Version = "4.9.0"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -172,8 +172,11 @@ func printHelp() {
 		fmt.Println(g.Render("  cybermind /plan --continuous --mode overnight") + d.Render(" → Continuous multi-target hunting loop"))
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔍 Recon + Hunt:"))
-		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("                   → Full auto recon (20 tools, 6 phases)"))
+		fmt.Println(g.Render("  cybermind /recon <target>") + d.Render("                   → Full auto recon (30+ tools, 6 phases)"))
 		fmt.Println(g.Render("  cybermind /recon <target> --tools nmap,httpx") + d.Render("  → Run specific tools only"))
+		fmt.Println(g.Render("  cybermind /recon <target> --incremental") + d.Render("       → Only scan new assets since last run"))
+		fmt.Println(g.Render("  cybermind /recon <target> --monitor") + d.Render("           → Continuous monitoring (default: 1h interval)"))
+		fmt.Println(g.Render("  cybermind /recon <target> --monitor --monitor-interval 30m") + d.Render(" → Custom interval"))
 		fmt.Println(g.Render("  cybermind /hunt <target>") + d.Render("                    → Vulnerability hunt (XSS, SQLi, SSRF, params)"))
 		fmt.Println(g.Render("  cybermind /hunt <target> --tools dalfox,nuclei") + d.Render(" → Specific hunt tools"))
 		fmt.Println()
@@ -589,6 +592,114 @@ func runAutoRecon(target string, requested []string) {
 		if err2 := os.WriteFile(analysisPath, []byte(reconContent), 0644); err2 == nil {
 			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Recon report: " + analysisPath))
 		}
+
+		// ── Save snapshot for diff tracking ───────────────────────────────
+		runID := brain.GenerateRunID()
+		vulns := []brain.SnapshotVuln{}
+		for _, tr := range result.Results {
+			if tr.Output != "" {
+				for _, line := range strings.Split(tr.Output, "\n") {
+					line = strings.TrimSpace(line)
+					if strings.Contains(strings.ToLower(line), "[critical]") ||
+						strings.Contains(strings.ToLower(line), "[high]") ||
+						strings.Contains(strings.ToLower(line), "[medium]") {
+						sev := "medium"
+						if strings.Contains(strings.ToLower(line), "[critical]") {
+							sev = "critical"
+						} else if strings.Contains(strings.ToLower(line), "[high]") {
+							sev = "high"
+						}
+						vulns = append(vulns, brain.SnapshotVuln{
+							Type: "nuclei", URL: target, Severity: sev,
+							Tool: tr.Tool, Evidence: line,
+						})
+					}
+				}
+			}
+		}
+		snap := brain.ScanSnapshot{
+			Target:      target,
+			Timestamp:   time.Now(),
+			RunID:       runID,
+			Mode:        "recon",
+			Subdomains:  ctx.Subdomains,
+			LiveURLs:    liveURLs,
+			OpenPorts:   openPorts,
+			Technologies: technologies,
+			Vulns:       vulns,
+			JSSecrets:   allApiKeys,
+			CloudBuckets: ctx.ReconFTWBuckets,
+			TakeoverCandidates: ctx.ReconFTWTakeover,
+			SubdomainCount: len(ctx.Subdomains),
+			VulnCount:   len(vulns),
+		}
+		brain.SaveSnapshot(snap)
+
+		// ── Diff vs previous snapshot ──────────────────────────────────────
+		if prevSnap, err3 := brain.LoadLatestSnapshot(target); err3 == nil && prevSnap.RunID != runID {
+			diff := brain.DiffSnapshots(prevSnap, &snap)
+			if diff.TotalNew > 0 || diff.TotalRemoved > 0 {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
+					brain.FormatDiff(diff)))
+				// Notify on critical new findings
+				if diff.HasCritical {
+					brain.NotifyBugFound(target,
+						fmt.Sprintf("🚨 %d critical new findings since last scan!", len(diff.NewVulns)+len(diff.NewTakeovers)),
+						"critical", target, "")
+				}
+			}
+		}
+
+		// ── Generate HTML report ───────────────────────────────────────────
+		hotlist := brain.BuildHotlist(&snap, nil, 20)
+		reportData := brain.ReportData{
+			Target:       target,
+			ScanMode:     "recon",
+			StartTime:    time.Now().Add(-30 * time.Minute),
+			EndTime:      time.Now(),
+			RunID:        runID,
+			Subdomains:   ctx.Subdomains,
+			LiveURLs:     liveURLs,
+			OpenPorts:    openPorts,
+			Technologies: technologies,
+			WAFDetected:  ctx.WAFDetected,
+			WAFVendor:    ctx.WAFVendor,
+			Vulns:        vulns,
+			JSSecrets:    allApiKeys,
+			CloudBuckets: ctx.ReconFTWBuckets,
+			Takeovers:    ctx.ReconFTWTakeover,
+			Emails:       allEmails,
+			Hotlist:      hotlist,
+			ToolsRun:     result.Tools,
+			ToolsFailed:  failedNames,
+		}
+		if htmlPath, err4 := brain.GenerateHTMLReport(reportData); err4 == nil {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render(
+				"  ✓ HTML report: " + htmlPath))
+		}
+
+		// ── Save hotlist ───────────────────────────────────────────────────
+		if len(hotlist) > 0 {
+			hotlistPath := brain.SaveHotlist(target, hotlist)
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+				fmt.Sprintf("  🎯 Hotlist (%d items): %s", len(hotlist), hotlistPath)))
+		}
+
+		// ── Append to asset store ──────────────────────────────────────────
+		var assetRecords []brain.AssetRecord
+		for _, s := range ctx.Subdomains {
+			assetRecords = append(assetRecords, brain.AssetRecord{
+				Target: target, Type: "subdomain", Value: s,
+				Tool: "recon", Timestamp: time.Now(), RunID: runID,
+			})
+		}
+		for _, u := range liveURLs {
+			assetRecords = append(assetRecords, brain.AssetRecord{
+				Target: target, Type: "url", Value: u,
+				Tool: "httpx", Timestamp: time.Now(), RunID: runID,
+			})
+		}
+		brain.AppendAssetStore(target, assetRecords)
 
 		// Save bug report if bugs found
 		if len(reconBugs) > 0 {
@@ -2734,12 +2845,41 @@ func main() {
 			os.Exit(1)
 		}
 		if len(args) < 2 {
-			printError("Usage: cybermind /recon <target> [--tools tool1,tool2]")
-			printError("Example: cybermind /recon 192.168.1.1")
-			printError("Example: cybermind /recon example.com --tools nmap,httpx,nuclei")
+			printError("Usage: cybermind /recon <target> [--tools tool1,tool2] [--incremental] [--monitor] [--monitor-interval 60m] [--report]")
+			printError("Example: cybermind /recon example.com")
+			printError("Example: cybermind /recon example.com --incremental   (only scan new assets)")
+			printError("Example: cybermind /recon example.com --monitor        (continuous monitoring)")
 			os.Exit(1)
 		}
-		target, requested, parseErr := parseToolsFlag(args[1:])
+		// Parse flags: --incremental, --monitor, --monitor-interval, --report
+		reconArgs := args[1:]
+		incrementalMode := false
+		monitorMode := false
+		monitorInterval := 60 * time.Minute
+		generateReport := false
+		var filteredReconArgs []string
+		for i := 0; i < len(reconArgs); i++ {
+			switch reconArgs[i] {
+			case "--incremental":
+				incrementalMode = true
+			case "--monitor":
+				monitorMode = true
+			case "--monitor-interval":
+				if i+1 < len(reconArgs) {
+					i++
+					if d, err := time.ParseDuration(reconArgs[i]); err == nil {
+						monitorInterval = d
+					}
+				}
+			case "--report":
+				generateReport = true
+			default:
+				filteredReconArgs = append(filteredReconArgs, reconArgs[i])
+			}
+		}
+		_ = generateReport // always generate report now
+
+		target, requested, parseErr := parseToolsFlag(filteredReconArgs)
 		if parseErr != nil {
 			printError(parseErr.Error())
 			os.Exit(1)
@@ -2759,6 +2899,70 @@ func main() {
 		if !requirePlan("starter") {
 			os.Exit(1)
 		}
+
+		if incrementalMode {
+			filter := brain.NewIncrementalFilter(target)
+			if filter.HasPrevious {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
+					"  📊 INCREMENTAL MODE — only scanning new assets since last run"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+					fmt.Sprintf("  Known: %d subdomains, %d URLs, %d ports",
+						len(filter.KnownSubdomains), len(filter.KnownURLs), len(filter.KnownPorts))))
+				os.Setenv("CYBERMIND_INCREMENTAL", "true")
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+					"  ℹ  No previous snapshot found — running full scan"))
+			}
+		}
+
+		if monitorMode {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render(
+				fmt.Sprintf("  📡 MONITOR MODE — scanning every %s", monitorInterval)))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Press Ctrl+C to stop monitoring"))
+			fmt.Println()
+
+			monCfg := brain.MonitorConfig{
+				Target:           target,
+				Interval:         monitorInterval,
+				Mode:             "recon",
+				NotifyOnNew:      true,
+				NotifyOnCritical: true,
+			}
+			session := brain.NewMonitorSession(monCfg)
+
+			for session.ShouldContinue() {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+					fmt.Sprintf("  ⟳ Monitor cycle %d — %s", session.Cycles+1, time.Now().Format("15:04:05"))))
+
+				// Load previous snapshot before scan
+				prevSnap, _ := brain.LoadLatestSnapshot(target)
+
+				// Run scan
+				updateAllTools()
+				runAutoRecon(target, requested)
+
+				// Load new snapshot and compute diff
+				if newSnap, err := brain.LoadLatestSnapshot(target); err == nil && prevSnap != nil {
+					diff := brain.DiffSnapshots(prevSnap, newSnap)
+					session.RecordDiff(diff)
+					if diff.TotalNew > 0 {
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF88")).Render(
+							fmt.Sprintf("  📊 Cycle %d: %d new findings", session.Cycles, diff.TotalNew)))
+					}
+				}
+
+				if !session.ShouldContinue() {
+					break
+				}
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+					fmt.Sprintf("  ⏳ Next scan in %s...", monitorInterval)))
+				time.Sleep(monitorInterval)
+			}
+			fmt.Println(session.MonitorSummary())
+			break
+		}
+
 		// Auto-update all tools before running recon — ensures latest versions
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ⟳ Updating tools before recon..."))
 		updateAllTools()
