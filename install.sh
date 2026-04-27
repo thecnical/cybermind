@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="4.7.0"
+VERSION="4.8.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -344,6 +344,18 @@ command -v ligolo-ng &>/dev/null || \
 if [ -f "$HOME/go/bin/proxy" ] && ! command -v ligolo-ng &>/dev/null; then
     sudo ln -sf "$HOME/go/bin/proxy" /usr/local/bin/ligolo-ng 2>/dev/null || true
 fi
+# ── 2026 NEW: github-subdomains — find subdomains in GitHub code ──────────────
+command -v github-subdomains &>/dev/null || \
+    (go install github.com/gwen001/github-subdomains@latest 2>/dev/null && symlink_go_tool "github-subdomains") || true
+# ── 2026 NEW: asnmap — ASN to IP range mapping ───────────────────────────────
+command -v asnmap &>/dev/null || \
+    (go install github.com/projectdiscovery/asnmap/cmd/asnmap@latest 2>/dev/null && symlink_go_tool "asnmap") || true
+# ── 2026 NEW: webanalyze — Go-based Wappalyzer ───────────────────────────────
+command -v webanalyze &>/dev/null || \
+    (go install github.com/rverton/webanalyze/cmd/webanalyze@latest 2>/dev/null && symlink_go_tool "webanalyze") || true
+# ── 2026 NEW: favirecon — favicon hash tech detection ────────────────────────
+command -v favirecon &>/dev/null || \
+    (go install github.com/edoardottt/favirecon/cmd/favirecon@latest 2>/dev/null && symlink_go_tool "favirecon") || true
 # ── 2025 NEW: semgrep — SAST code analysis ───────────────────────────────────
 command -v semgrep &>/dev/null || pipx install semgrep 2>/dev/null || \
     pip3 install semgrep --break-system-packages -q 2>/dev/null || true
@@ -351,6 +363,9 @@ command -v semgrep &>/dev/null || pipx install semgrep 2>/dev/null || \
 install_python_git_tool "liffy" "https://github.com/mzfr/liffy" "/opt/liffy" "liffy.py" 2>/dev/null || true
 # ── 2025 NEW: gopherus — SSRF payload generator ──────────────────────────────
 install_python_git_tool "gopherus" "https://github.com/tarunkant/Gopherus" "/opt/gopherus" "gopherus.py" 2>/dev/null || true
+# ── 2026 NEW: cloud-enum — S3/Azure/GCP bucket enumeration ───────────────────
+command -v cloud_enum &>/dev/null || pipx install cloud-enum 2>/dev/null || \
+    pip3 install cloud-enum --break-system-packages -q 2>/dev/null || true
 # ── puredns resolvers list (also used by reconftw internally) ────────────────
 if [ ! -f /tmp/cybermind_resolvers.txt ] || [ $(wc -l < /tmp/cybermind_resolvers.txt 2>/dev/null || echo 0) -lt 100 ]; then
     curl -sL "https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt" \
@@ -412,7 +427,13 @@ echo -e "  ${CYAN}Novel Attacks:${NC}   sudo cybermind /novel example.com"
 echo -e "  ${CYAN}Python Tools:${NC}    sudo cybermind /install-python-tools"
 echo -e "  ${CYAN}Vibe Coder:${NC}      cybermind /vibe"
 echo ""
-echo -e "  ${BOLD}${YELLOW}NEW in v4.7.0:${NC}"
+echo -e "  ${BOLD}${YELLOW}NEW in v4.8.0:${NC}"
+echo -e "  ${DIM}  • 7 new recon tools: github-subdomains, asnmap, webanalyze, favirecon, cloud_enum, puredns, alterx${NC}"
+echo -e "  ${DIM}  • Active DNS recon: puredns brute-force + alterx permutations${NC}"
+echo -e "  ${DIM}  • ASN/IP range discovery: asnmap + bgpview + mapcidr${NC}"
+echo -e "  ${DIM}  • Cloud bucket enumeration: cloud_enum (S3/Azure/GCP)${NC}"
+echo -e "  ${DIM}  • GitHub/code recon: github-subdomains + trufflehog${NC}"
+echo -e "  ${DIM}  • Tech fingerprinting: webanalyze + favirecon (favicon hash)${NC}"
 echo -e "  ${DIM}  • reconFTW fully integrated — mode-aware: quick(-s) / deep(-r) / overnight(-a --deep)${NC}"
 echo -e "  ${DIM}  • reconFTW output parsing: subdomains, URLs, vulns, secrets, emails, takeover, buckets${NC}"
 echo -e "  ${DIM}  • reconFTW tech stack + WAF detection fed into agentic brain${NC}"

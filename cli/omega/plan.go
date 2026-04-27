@@ -124,6 +124,13 @@ return []OmegaToolEntry{
 {"amass", "recon", "sudo apt install -y amass", false, false, false, false, "", "", ""},
 {"dnsx", "recon", "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest", true, false, false, false, "", "", ""},
 {"reconftw", "recon", "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh", false, false, false, true, "https://github.com/six2dez/reconftw.git", "/opt/reconftw", "reconftw.sh"},
+{"puredns", "recon", "go install github.com/d3mondev/puredns/v2@latest", true, false, false, false, "", "", ""},
+{"alterx", "recon", "go install github.com/projectdiscovery/alterx/cmd/alterx@latest", true, false, false, false, "", "", ""},
+{"asnmap", "recon", "go install github.com/projectdiscovery/asnmap/cmd/asnmap@latest", true, false, false, false, "", "", ""},
+{"github-subdomains", "recon", "go install github.com/gwen001/github-subdomains@latest", true, false, false, false, "", "", ""},
+{"webanalyze", "recon", "go install github.com/rverton/webanalyze/cmd/webanalyze@latest", true, false, false, false, "", "", ""},
+{"favirecon", "recon", "go install github.com/edoardottt/favirecon/cmd/favirecon@latest", true, false, false, false, "", "", ""},
+{"cloud_enum", "recon", "pip3 install cloud-enum --break-system-packages", false, false, true, false, "", "", ""},
 // ── Recon Phase 3 — Port Scanning ───────────────────────────────────
 {"nmap", "recon", "sudo apt install -y nmap", false, false, false, false, "", "", ""},
 {"masscan", "recon", "sudo apt install -y masscan", false, false, false, false, "", "", ""},

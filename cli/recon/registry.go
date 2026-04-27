@@ -508,6 +508,76 @@ OUTDIR="%s"
 		},
 	},
 
+	// ── puredns — fast DNS brute-force with wildcard filtering ───────────────
+	{
+		Name:        "puredns",
+		Phase:       2,
+		Timeout:     1800,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/d3mondev/puredns/v2@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			wordlist := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+			if _, err := os.Stat(wordlist); err != nil {
+				wordlist = "/usr/share/wordlists/dirb/common.txt"
+			}
+			resolvers := "/tmp/cybermind_resolvers.txt"
+			if _, err := os.Stat(resolvers); err != nil {
+				resolvers = ""
+			}
+			args := []string{
+				"bruteforce", wordlist, target,
+				"--threads", "100",
+				"--rate-limit", "1000",
+				"--write", "/tmp/cybermind_puredns.txt",
+			}
+			if resolvers != "" {
+				args = append(args, "--resolvers", resolvers)
+			}
+			return args
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				wordlist := "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+				if _, err := os.Stat(wordlist); err != nil {
+					wordlist = "/usr/share/wordlists/dirb/common.txt"
+				}
+				return []string{"bruteforce", wordlist, target, "--threads", "50"}
+			},
+		},
+	},
+	// ── alterx — AI-based subdomain permutation engine ───────────────────────
+	{
+		Name:        "alterx",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/alterx/cmd/alterx@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			if len(ctx.Subdomains) > 0 {
+				f := writeTempList(ctx.Subdomains)
+				if f != "" {
+					return []string{
+						"-l", f,
+						"-enrich",
+						"-silent",
+						"-o", "/tmp/cybermind_alterx.txt",
+					}
+				}
+			}
+			return []string{
+				"-d", target,
+				"-enrich",
+				"-silent",
+				"-o", "/tmp/cybermind_alterx.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-silent"}
+			},
+		},
+	},
+
 	// ══════════════════════════════════════════════════════════════════════════
 	// PHASE 2.5 — CRAWLING + URL COLLECTION
 	// Goal: collect ALL historical URLs, crawl live subdomains, extract endpoints
@@ -531,6 +601,53 @@ OUTDIR="%s"
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				return []string{"-s", "--max-time", "20", fmt.Sprintf("https://crt.sh/?q=%%25.%s", target)}
+			},
+		},
+	},
+
+	// ── asnmap — ASN to IP range discovery ───────────────────────────────────
+	{
+		Name:        "asnmap",
+		Phase:       2,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/asnmap/cmd/asnmap@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{
+				"-d", target,
+				"-json",
+				"-silent",
+				"-o", "/tmp/cybermind_asnmap.json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-silent"}
+			},
+		},
+	},
+	// ── github-subdomains — find subdomains in GitHub code ───────────────────
+	{
+		Name:        "github-subdomains",
+		Phase:       2,
+		Timeout:     300,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/gwen001/github-subdomains@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			token := os.Getenv("GITHUB_TOKEN")
+			if token == "" {
+				return []string{"-d", target, "-silent", "-o", "/tmp/cybermind_github_subs.txt"}
+			}
+			return []string{
+				"-d", target,
+				"-t", token,
+				"-silent",
+				"-o", "/tmp/cybermind_github_subs.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-silent"}
 			},
 		},
 	},
@@ -901,6 +1018,55 @@ OUTDIR="%s"
 					"-ac",
 					"-s",
 				}
+			},
+		},
+	},
+
+	// ── webanalyze — Go-based Wappalyzer (1500+ tech signatures) ─────────────
+	{
+		Name:        "webanalyze",
+		Phase:       4,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/rverton/webanalyze/cmd/webanalyze@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-host", u, "-crawl", "2", "-output", "/tmp/cybermind_webanalyze.json"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-host", u}
+			},
+		},
+	},
+	// ── favirecon — favicon hash → technology detection ───────────────────────
+	{
+		Name:        "favirecon",
+		Phase:       4,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/edoardottt/favirecon/cmd/favirecon@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-u", u, "-t", "50", "-silent"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-silent"}
 			},
 		},
 	},
