@@ -2064,7 +2064,64 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				state.Technologies = rc.Technologies
 				state.Subdomains = len(rc.Subdomains)
 
-				// ── NEW: Feed JS analysis findings into agent state ────────
+				// ── NEW v5.0.0: Run Recon Brain Intelligence Analysis ──────
+				// Build phase results from recon output
+				phaseResult := brain.ReconPhaseResult{
+					Phase:       1,
+					ToolsRun:    reconResult.Tools,
+					Subdomains:  rc.Subdomains,
+					LiveURLs:    rc.LiveURLs,
+					OpenPorts:   rc.OpenPorts,
+					Technologies: rc.Technologies,
+					WAFDetected: rc.WAFDetected,
+					WAFVendor:   rc.WAFVendor,
+					Secrets:     rc.ReconFTWSecrets,
+					Emails:      rc.ReconFTWEmails,
+					Buckets:     rc.ReconFTWBuckets,
+					Takeovers:   rc.ReconFTWTakeover,
+					CMSType:     "", // populated from hunt phase
+				}
+
+				// Analyze intelligence
+				reconIntel := brain.AnalyzeReconIntelligence(
+					target,
+					[]brain.ReconPhaseResult{phaseResult},
+					rc.Technologies,
+					rc.LiveURLs,
+				)
+
+				// Display intelligence report
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+					brain.FormatReconIntelligence(reconIntel)))
+
+				// Apply intelligence to agent state
+				if reconIntel.Priority == "critical" || reconIntel.Priority == "high" {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red2).Render(
+						fmt.Sprintf("  🎯 HIGH-VALUE TARGET: %s priority (%.0f%% confidence)",
+							strings.ToUpper(reconIntel.Priority), reconIntel.Confidence*100)))
+				}
+
+				// Override focus bugs with intelligence-driven recommendations
+				if len(reconIntel.RecommendedFocus) > 0 && focusBugs == "" {
+					focusBugs = strings.Join(reconIntel.RecommendedFocus[:min(5, len(reconIntel.RecommendedFocus))], ",")
+					os.Setenv("CYBERMIND_FOCUS_BUGS", focusBugs)
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+						"  🧠 Brain focus: " + focusBugs))
+				}
+
+				// Immediate wins — flag for priority handling
+				if len(reconIntel.TakeoverTargets) > 0 {
+					allFindings["immediate_takeovers"] = strings.Join(reconIntel.TakeoverTargets, "\n")
+					state.BugsFound += len(reconIntel.TakeoverTargets)
+				}
+				if len(reconIntel.ExposedSecrets) > 0 {
+					allFindings["immediate_secrets"] = strings.Join(reconIntel.ExposedSecrets[:min(10, len(reconIntel.ExposedSecrets))], "\n")
+				}
+				if len(reconIntel.CloudBuckets) > 0 {
+					allFindings["immediate_buckets"] = strings.Join(reconIntel.CloudBuckets, "\n")
+				}
+
+				// ── Feed JS analysis findings into agent state ────────────
 				if rc.ReconFTWDone {
 					if len(rc.ReconFTWSecrets) > 0 {
 						allFindings["recon_js_secrets"] = strings.Join(rc.ReconFTWSecrets[:min(10, len(rc.ReconFTWSecrets))], "\n")
