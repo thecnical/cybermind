@@ -188,7 +188,116 @@ sb.WriteString("\n")
 return sb.String()
 }
 
-// RecordSuccessfulPoC records a successful PoC to improve future prompts
+// RecordReconFTWFindings records reconftw-specific findings into brain memory.
+// This teaches the brain which reconftw modules are most effective per target.
+func RecordReconFTWFindings(target string, subdomainCount, urlCount, vulnCount int,
+	secrets, emails, takeover, buckets []string, techStack []string, wafVendor string) {
+	mem := LoadTarget(target)
+	mem.mu.Lock()
+	defer mem.mu.Unlock()
+
+	// Record tech stack from reconftw
+	techSeen := map[string]bool{}
+	for _, t := range mem.TechStack {
+		techSeen[t] = true
+	}
+	for _, t := range techStack {
+		if !techSeen[t] {
+			techSeen[t] = true
+			mem.TechStack = append(mem.TechStack, t)
+		}
+	}
+
+	// Record WAF
+	if wafVendor != "" {
+		mem.WAFDetected = true
+		mem.WAFVendor = wafVendor
+	}
+
+	// Record takeover candidates as high-value findings
+	for _, tc := range takeover {
+		note := fmt.Sprintf("reconftw takeover candidate: %s", tc)
+		if !strings.Contains(mem.Notes, tc) {
+			if mem.Notes != "" {
+				mem.Notes += "\n"
+			}
+			mem.Notes += note
+		}
+	}
+
+	// Record exposed buckets
+	for _, b := range buckets {
+		note := fmt.Sprintf("reconftw cloud bucket: %s", b)
+		if !strings.Contains(mem.Notes, b) {
+			if mem.Notes != "" {
+				mem.Notes += "\n"
+			}
+			mem.Notes += note
+		}
+	}
+
+	// Record secrets as critical findings
+	for _, s := range secrets {
+		// Truncate for storage
+		if len(s) > 80 {
+			s = s[:80] + "..."
+		}
+		note := fmt.Sprintf("reconftw secret: %s", s)
+		if !strings.Contains(mem.Notes, "reconftw secret") {
+			if mem.Notes != "" {
+				mem.Notes += "\n"
+			}
+			mem.Notes += note
+		}
+	}
+
+	// Record reconftw effectiveness as a pattern
+	if vulnCount > 0 {
+		RecordPattern(target, "reconftw_vuln_scan",
+			fmt.Sprintf("reconftw found %d vulns, %d subdomains, %d URLs", vulnCount, subdomainCount, urlCount),
+			"", "")
+	}
+
+	mem.LastTested = time.Now()
+	mem.RunCount++
+	SaveTarget(mem)
+
+	// Update global stats
+	g := LoadGlobal()
+	if g.TargetStats == nil {
+		g.TargetStats = map[string]int{}
+	}
+	g.TargetStats[target] += vulnCount
+	g.LastUpdated = time.Now()
+	SaveGlobal(g)
+}
+
+// GetReconFTWRecommendation returns the recommended reconftw mode for a target
+// based on past scan history and similar targets.
+func GetReconFTWRecommendation(target string) (mode, reason string) {
+	mem := LoadTarget(target)
+
+	// If we've scanned before and found bugs, use deep mode
+	if mem.RunCount > 0 && len(mem.BugsFound) > 0 {
+		return "deep", fmt.Sprintf("previous scan found %d bugs — using deep mode for thorough coverage", len(mem.BugsFound))
+	}
+
+	// If we've scanned before and found nothing, try overnight for exhaustive coverage
+	if mem.RunCount > 2 && len(mem.BugsFound) == 0 {
+		return "overnight", "multiple scans found nothing — trying exhaustive overnight mode"
+	}
+
+	// Check similar targets
+	similar := FindSimilarTargets(target, 3)
+	for _, s := range similar {
+		if s.Similarity > 0.7 && len(s.BugTypes) > 0 {
+			return "deep", fmt.Sprintf("similar target %s had bugs — using deep mode", s.Domain)
+		}
+	}
+
+	// Default: deep mode for first scan
+	return "deep", "first scan — using deep mode for comprehensive coverage"
+}
 func RecordSuccessfulPoC(target, bugType, payload, endpoint, poc string) {
 n := len(poc)
 if n > 100 {

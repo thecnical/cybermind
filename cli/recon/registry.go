@@ -317,14 +317,24 @@ var toolRegistry = []ToolSpec{
 			},
 		},
 	},
-	// reconftw — PHASE 2 PRIMARY TOOL — runs BEFORE subfinder/amass
-	// reconftw is a meta-tool that internally runs 50+ tools across all phases:
-	// passive enum, cert transparency, brute force, permutations, web probing,
-	// vuln scanning, OSINT, JS analysis, parameter discovery, and more.
+	// reconftw — PHASE 2 MEGA TOOL — full reconFTW power unleashed
+	// reconftw is a meta-tool that internally runs 50+ tools across ALL phases:
+	// OSINT, passive enum, cert transparency, brute force, permutations, web probing,
+	// vuln scanning, JS analysis, parameter discovery, cloud buckets, takeover checks,
+	// GitHub dorking, WAF detection, screenshot capture, and much more.
 	//
-	// CyberMind uses reconftw in FULL RECON mode (-r) with --deep for maximum coverage.
-	// reconftw output is parsed to extract subdomains, live hosts, URLs, and vulns
-	// which then feed into CyberMind's own Phase 3-6 tools for additional coverage.
+	// Mode-aware execution:
+	//   quick     → -s (subdomain only, ~15 min, passive sources)
+	//   deep      → -r --parallel (full recon, ~2-4 hours, all active tools)
+	//   overnight → -a --deep --parallel (ALL modules exhaustive, ~6-12 hours)
+	//
+	// reconftw output structure (all parsed by CyberMind):
+	//   subdomains/  → passive, brute, permutations, crt, takeover candidates
+	//   webs/        → live URLs, katana crawl, waymore passive, JS files
+	//   vulns/       → nuclei findings, XSS, SQLi, SSRF, LFI, SSTI, CRLF
+	//   osint/       → emails, API keys, GitHub secrets, cloud buckets
+	//   hosts/       → open ports, services, WAF detection, CDN info
+	//   screenshots/ → visual recon of all live web targets
 	//
 	// Install: git clone https://github.com/six2dez/reconftw.git /opt/reconftw
 	//          cd /opt/reconftw && ./install.sh
@@ -336,39 +346,75 @@ var toolRegistry = []ToolSpec{
 	{
 		Name:        "reconftw",
 		Phase:       2,
-		Timeout:     21600, // 6 hours max — full exhaustive mode, no shortcuts
+		Timeout:     43200, // 12 hours max — overnight exhaustive mode
 		DomainOnly:  true,
 		InstallHint: "git clone https://github.com/six2dez/reconftw.git /opt/reconftw && cd /opt/reconftw && ./install.sh && sudo tee /usr/local/bin/reconftw > /dev/null << 'EOF'\n#!/bin/bash\ncd /opt/reconftw && bash reconftw.sh \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/reconftw",
-		// PRIMARY: ALL mode — reconftw's actual supported flags
-		// -a  = all modules
-		// --deep = maximum depth
-		// --parallel = parallel execution
-		// These are the REAL reconftw flags (verified against reconftw.sh source)
-		// NOTE: reconftw takes 4-6 hours in -a mode. Only run in overnight mode.
-		// In quick/deep mode, individual tools (subfinder, amass, dnsx) cover the same ground faster.
+		// PRIMARY: mode-aware — reads CYBERMIND_MODE env to select the right flags
+		// quick     → -s (subdomain passive only, fastest)
+		// deep      → -r --parallel (full recon, all active tools)
+		// overnight → -a --deep --parallel (ALL modules, maximum depth)
+		// default   → -r --parallel (full recon, safe default)
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			outDir := "/tmp/cybermind_reconftw_" + target
 			mode := os.Getenv("CYBERMIND_MODE")
 			os.MkdirAll(outDir, 0755)
-			// quick mode: subdomain only (-s), deep/overnight: full recon (-r)
-			if mode == "quick" || mode == "" {
+
+			// Write a reconftw config override to maximize output parsing
+			reconCfg := "/tmp/cybermind_reconftw_cfg_" + target + ".cfg"
+			cfgContent := fmt.Sprintf(`# CyberMind reconftw config override
+NOTIFY=false
+DEEP=true
+PERMUTATIONS=true
+PERMUTATIONS_OPTION="gotator"
+FUZZING=true
+NUCLEI_SEVERITY="critical,high,medium,low"
+NUCLEI_TEMPLATES_PATH="$HOME/nuclei-templates"
+NUCLEI_FLAGS="-stats -no-color"
+SCREENSHOT=true
+OSINT=true
+GITHUB_DORKING=true
+CLOUD_ENUM=true
+SUBDOMAIN_TAKEOVER=true
+WORDLIST="/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+RESOLVERS_FILE="/tmp/cybermind_resolvers.txt"
+AXIOM=false
+DIFF=false
+INSCOPE=false
+OUTDIR="%s"
+`, outDir)
+			os.WriteFile(reconCfg, []byte(cfgContent), 0600)
+
+			switch mode {
+			case "quick":
+				// Subdomain passive only — fast, no active probing
 				return []string{"-d", target, "-s", "--parallel", "-o", outDir}
-			}
-			return []string{
-				"-d", target,
-				"-r",         // full recon
-				"--parallel", // parallel execution
-				"-o", outDir,
+			case "overnight", "12h":
+				// ALL modules — maximum depth, exhaustive
+				return []string{
+					"-d", target,
+					"-a",         // ALL modules
+					"--deep",     // maximum depth
+					"--parallel", // parallel execution
+					"-o", outDir,
+				}
+			default: // deep or unset
+				// Full recon — all active tools, parallel
+				return []string{
+					"-d", target,
+					"-r",         // full recon (subdomains + web + vulns)
+					"--parallel", // parallel execution
+					"-o", outDir,
+				}
 			}
 		},
-		// Fallback 1: subdomain + web only (-s) — faster
+		// Fallback 1: subdomain + web only (-s) — faster, still gets live URLs
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
 				outDir := "/tmp/cybermind_reconftw_" + target
 				os.MkdirAll(outDir, 0755)
 				return []string{
 					"-d", target,
-					"-s",
+					"-s",         // subdomain + web
 					"--parallel",
 					"-o", outDir,
 				}
@@ -379,7 +425,17 @@ var toolRegistry = []ToolSpec{
 				os.MkdirAll(outDir, 0755)
 				return []string{
 					"-d", target,
-					"-p",
+					"-p",         // passive only
+					"-o", outDir,
+				}
+			},
+			// Fallback 3: OSINT only (-o flag conflicts with outdir, use --osint)
+			func(target string, ctx *ReconContext) []string {
+				outDir := "/tmp/cybermind_reconftw_" + target
+				os.MkdirAll(outDir, 0755)
+				return []string{
+					"-d", target,
+					"--osint",    // OSINT modules only
 					"-o", outDir,
 				}
 			},

@@ -51,19 +51,19 @@ func GetModeSettings(mode ExecutionMode) ModeSettings {
 	switch mode {
 	case ModeQuick:
 		return ModeSettings{
-			ReconftWFlags:    []string{"-s"},                    // passive only
+			ReconftWFlags:    []string{"-s", "--parallel"},      // subdomain passive only, fast
 			NucleiThreads:    100,
 			SubfinderThreads: 100,
 			FFUFThreads:      100,
 			NmapFlags:        []string{"-T4", "--top-ports", "1000"},
-			MaxToolTimeout:   300,  // 5 min per tool
-			RunReconftw:      false, // too slow for quick mode
+			MaxToolTimeout:   300,   // 5 min per tool
+			RunReconftw:      false, // too slow for quick mode — individual tools faster
 			RunFullNuclei:    false,
 			RunBurp:          false,
 		}
 	case ModeDeep:
 		return ModeSettings{
-			ReconftWFlags:    []string{"-r", "--parallel"},      // full recon
+			ReconftWFlags:    []string{"-r", "--parallel"},      // full recon — all active tools
 			NucleiThreads:    300,
 			SubfinderThreads: 300,
 			FFUFThreads:      200,
@@ -75,12 +75,12 @@ func GetModeSettings(mode ExecutionMode) ModeSettings {
 		}
 	case ModeOvernight:
 		return ModeSettings{
-			ReconftWFlags:    []string{"-a", "--deep", "--parallel"}, // ALL modules
+			ReconftWFlags:    []string{"-a", "--deep", "--parallel"}, // ALL modules, maximum depth
 			NucleiThreads:    500,
 			SubfinderThreads: 500,
 			FFUFThreads:      300,
 			NmapFlags:        []string{"-sS", "-sV", "-sC", "-T4", "-p-", "--min-rate", "10000", "--script", "vuln,auth,http-vuln*"},
-			MaxToolTimeout:   21600, // 6 hours per tool
+			MaxToolTimeout:   43200, // 12 hours per tool (reconftw -a can take this long)
 			RunReconftw:      true,
 			RunFullNuclei:    true,
 			RunBurp:          true,

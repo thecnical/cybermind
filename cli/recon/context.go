@@ -38,48 +38,352 @@ func addSubdomain(line string, seen map[string]bool, subs *[]string) {
 	}
 }
 
-// readReconFTWSubdomains reads all subdomain files from reconftw's structured output directory.
-// reconftw writes results to: <outdir>/subdomains/subdomains.txt and related files.
-// This gives us the FULL reconftw subdomain coverage — passive + brute + permutations + cert transparency.
-func readReconFTWSubdomains(target string, seen map[string]bool, subs *[]string) {
-	// reconftw output directory pattern
-	outDirs := []string{
+// reconFTWOutDirs returns all possible reconftw output directories for a target.
+func reconFTWOutDirs(target string) []string {
+	return []string{
 		"/tmp/cybermind_reconftw_" + target,
 		"/tmp/cybermind_reconftw/" + target,
 		"/opt/reconftw/Recon/" + target,
 	}
+}
 
+// readReconFTWFile reads a single file from reconftw output, returns lines.
+func readReconFTWFile(dir, relPath string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, relPath))
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, l := range strings.Split(string(data), "\n") {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// readReconFTWSubdomains reads all subdomain files from reconftw's structured output directory.
+// reconftw writes results to: <outdir>/subdomains/subdomains.txt and related files.
+// This gives us the FULL reconftw subdomain coverage — passive + brute + permutations + cert transparency.
+func readReconFTWSubdomains(target string, seen map[string]bool, subs *[]string) {
 	// All subdomain files reconftw produces
 	subFiles := []string{
-		"subdomains/subdomains.txt",           // all unique subdomains
-		"subdomains/subdomains_alive.txt",     // live subdomains only
-		"subdomains/subdomains_resolved.txt",  // DNS-resolved subdomains
-		"subdomains/all_subdomains.txt",       // combined all sources
-		"subdomains/subdomains_http.txt",      // HTTP-alive subdomains
-		"subdomains/subdomains_https.txt",     // HTTPS-alive subdomains
-		"subdomains/subdomains_ips.txt",       // subdomains with IPs
-		"subdomains/subdomains_takeover.txt",  // takeover candidates
-		"subdomains/subdomains_brute.txt",     // brute-forced subdomains
-		"subdomains/subdomains_permut.txt",    // permutation-discovered
-		"subdomains/subdomains_crt.txt",       // cert transparency
-		"subdomains/subdomains_passive.txt",   // passive sources
+		"subdomains/subdomains.txt",          // all unique subdomains
+		"subdomains/subdomains_alive.txt",    // live subdomains only
+		"subdomains/subdomains_resolved.txt", // DNS-resolved subdomains
+		"subdomains/all_subdomains.txt",      // combined all sources
+		"subdomains/subdomains_http.txt",     // HTTP-alive subdomains
+		"subdomains/subdomains_https.txt",    // HTTPS-alive subdomains
+		"subdomains/subdomains_ips.txt",      // subdomains with IPs
+		"subdomains/subdomains_takeover.txt", // takeover candidates
+		"subdomains/subdomains_brute.txt",    // brute-forced subdomains
+		"subdomains/subdomains_permut.txt",   // permutation-discovered
+		"subdomains/subdomains_crt.txt",      // cert transparency
+		"subdomains/subdomains_passive.txt",  // passive sources
+		"subdomains/subdomains_noerror.txt",  // NOERROR DNS responses
+		"subdomains/subdomains_vhosts.txt",   // virtual hosts
 	}
 
-	for _, dir := range outDirs {
+	for _, dir := range reconFTWOutDirs(target) {
 		if _, err := os.Stat(dir); err != nil {
-			continue // directory doesn't exist
+			continue
 		}
 		for _, sf := range subFiles {
-			path := filepath.Join(dir, sf)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			for _, line := range strings.Split(string(data), "\n") {
+			for _, line := range readReconFTWFile(dir, sf) {
 				addSubdomain(line, seen, subs)
 			}
 		}
 	}
+}
+
+// ReadReconFTWTechStack reads technology detection results from reconftw output.
+// Returns deduplicated list of detected technologies.
+func ReadReconFTWTechStack(target string) []string {
+	var techs []string
+	seen := map[string]bool{}
+
+	techFiles := []string{
+		"webs/webs_technologies.txt",
+		"webs/tech.txt",
+		"webs/httpx.txt",
+	}
+
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, tf := range techFiles {
+			for _, line := range readReconFTWFile(dir, tf) {
+				// httpx tech-detect output: "https://sub.example.com [200] [Title] [tech1,tech2]"
+				// Extract tech from brackets at end
+				if idx := strings.LastIndex(line, "["); idx >= 0 {
+					techPart := strings.Trim(line[idx:], "[]")
+					for _, t := range strings.Split(techPart, ",") {
+						t = strings.TrimSpace(t)
+						if t != "" && !seen[t] && len(t) > 1 {
+							seen[t] = true
+							techs = append(techs, t)
+						}
+					}
+				}
+			}
+		}
+	}
+	return techs
+}
+
+// ReadReconFTWWAF reads WAF detection results from reconftw output.
+func ReadReconFTWWAF(target string) (detected bool, vendor string) {
+	wafFiles := []string{
+		"webs/waf.txt",
+		"webs/wafw00f.txt",
+	}
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, wf := range wafFiles {
+			for _, line := range readReconFTWFile(dir, wf) {
+				lower := strings.ToLower(line)
+				if strings.Contains(lower, "is behind") || strings.Contains(lower, "detected") ||
+					strings.Contains(lower, "waf") {
+					detected = true
+					// Extract vendor name
+					for _, v := range []string{"cloudflare", "akamai", "imperva", "f5", "barracuda",
+						"sucuri", "incapsula", "modsecurity", "aws", "azure", "fastly", "wordfence"} {
+						if strings.Contains(lower, v) {
+							vendor = capitalize(v)
+							return
+						}
+					}
+				}
+			}
+		}
+	}
+	return
+}
+
+// ReadReconFTWSecrets reads exposed secrets and API keys from reconftw output.
+func ReadReconFTWSecrets(target string) []string {
+	var secrets []string
+	seen := map[string]bool{}
+
+	secretFiles := []string{
+		"osint/secrets.txt",
+		"osint/github_secrets.txt",
+		"osint/trufflehog.txt",
+		"osint/gitleaks.txt",
+		"webs/js_secrets.txt",
+		"webs/mantra.txt",
+		"vulns/secrets.txt",
+	}
+
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, sf := range secretFiles {
+			for _, line := range readReconFTWFile(dir, sf) {
+				if !seen[line] {
+					seen[line] = true
+					secrets = append(secrets, line)
+				}
+			}
+		}
+	}
+	return secrets
+}
+
+// ReadReconFTWCloudBuckets reads cloud storage findings from reconftw output.
+func ReadReconFTWCloudBuckets(target string) []string {
+	var buckets []string
+	seen := map[string]bool{}
+
+	bucketFiles := []string{
+		"subdomains/cloud_enum_buckets_trufflehog.txt",
+		"osint/cloud_buckets.txt",
+		"osint/s3scanner.txt",
+		"osint/cloud_enum.txt",
+	}
+
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, bf := range bucketFiles {
+			for _, line := range readReconFTWFile(dir, bf) {
+				if !seen[line] {
+					seen[line] = true
+					buckets = append(buckets, line)
+				}
+			}
+		}
+	}
+	return buckets
+}
+
+// ReadReconFTWEmails reads email addresses found by reconftw OSINT modules.
+func ReadReconFTWEmails(target string) []string {
+	var emails []string
+	seen := map[string]bool{}
+
+	emailFiles := []string{
+		"osint/emails.txt",
+		"osint/emailfinder.txt",
+		"osint/theharvester_emails.txt",
+	}
+
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, ef := range emailFiles {
+			for _, line := range readReconFTWFile(dir, ef) {
+				lower := strings.ToLower(line)
+				if strings.Contains(lower, "@") && !seen[lower] {
+					seen[lower] = true
+					emails = append(emails, line)
+				}
+			}
+		}
+	}
+	return emails
+}
+
+// ReadReconFTWTakeoverCandidates reads subdomain takeover candidates.
+func ReadReconFTWTakeoverCandidates(target string) []string {
+	var candidates []string
+	seen := map[string]bool{}
+
+	takeoverFiles := []string{
+		"subdomains/subdomains_takeover.txt",
+		"vulns/takeover.txt",
+		"vulns/nuclei_takeover.txt",
+	}
+
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, tf := range takeoverFiles {
+			for _, line := range readReconFTWFile(dir, tf) {
+				if !seen[line] {
+					seen[line] = true
+					candidates = append(candidates, line)
+				}
+			}
+		}
+	}
+	return candidates
+}
+
+// ReadReconFTWOpenPorts reads port scan results from reconftw output.
+func ReadReconFTWOpenPorts(target string) []string {
+	var ports []string
+	seen := map[string]bool{}
+
+	portFiles := []string{
+		"hosts/portscan.txt",
+		"hosts/nmap.txt",
+		"hosts/naabu.txt",
+	}
+
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, pf := range portFiles {
+			for _, line := range readReconFTWFile(dir, pf) {
+				if !seen[line] {
+					seen[line] = true
+					ports = append(ports, line)
+				}
+			}
+		}
+	}
+	return ports
+}
+
+// ReadReconFTWJSFiles reads JavaScript file URLs found by reconftw.
+func ReadReconFTWJSFiles(target string) []string {
+	var jsFiles []string
+	seen := map[string]bool{}
+
+	jsFilePaths := []string{
+		"webs/js_files.txt",
+		"webs/subjs.txt",
+		"webs/jsa.txt",
+	}
+
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, jf := range jsFilePaths {
+			for _, line := range readReconFTWFile(dir, jf) {
+				if strings.HasPrefix(line, "http") && !seen[line] {
+					seen[line] = true
+					jsFiles = append(jsFiles, line)
+				}
+			}
+		}
+	}
+	return jsFiles
+}
+
+// ReadReconFTWSummary returns a human-readable summary of all reconftw findings.
+func ReadReconFTWSummary(target string) string {
+	var sb strings.Builder
+
+	for _, dir := range reconFTWOutDirs(target) {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+
+		// Count subdomains
+		subSeen := map[string]bool{}
+		var subs []string
+		readReconFTWSubdomains(target, subSeen, &subs)
+
+		// Count live URLs
+		liveURLs := readReconFTWLiveURLs(target)
+
+		// Count vulns
+		vulns := readReconFTWVulns(target)
+
+		// Secrets
+		secrets := ReadReconFTWSecrets(target)
+
+		// Emails
+		emails := ReadReconFTWEmails(target)
+
+		// Takeover candidates
+		takeover := ReadReconFTWTakeoverCandidates(target)
+
+		// Cloud buckets
+		buckets := ReadReconFTWCloudBuckets(target)
+
+		sb.WriteString(fmt.Sprintf("\n  📊 reconFTW Results for %s:\n", target))
+		sb.WriteString(fmt.Sprintf("     🌐 Subdomains:          %d unique\n", len(subs)))
+		sb.WriteString(fmt.Sprintf("     🔗 Live URLs:           %d\n", len(liveURLs)))
+		sb.WriteString(fmt.Sprintf("     🐛 Vulnerabilities:     %d\n", len(vulns)))
+		if len(secrets) > 0 {
+			sb.WriteString(fmt.Sprintf("     🔑 Secrets/API keys:   %d\n", len(secrets)))
+		}
+		if len(emails) > 0 {
+			sb.WriteString(fmt.Sprintf("     📧 Emails:             %d\n", len(emails)))
+		}
+		if len(takeover) > 0 {
+			sb.WriteString(fmt.Sprintf("     ⚠️  Takeover candidates: %d\n", len(takeover)))
+		}
+		if len(buckets) > 0 {
+			sb.WriteString(fmt.Sprintf("     ☁️  Cloud buckets:       %d\n", len(buckets)))
+		}
+		sb.WriteString(fmt.Sprintf("     📁 Output dir:         %s\n", dir))
+		break
+	}
+	return sb.String()
 }
 
 // readReconFTWLiveURLs reads live URL files from reconftw's output directory.
@@ -87,35 +391,27 @@ func readReconFTWLiveURLs(target string) []string {
 	var urls []string
 	seen := map[string]bool{}
 
-	outDirs := []string{
-		"/tmp/cybermind_reconftw_" + target,
-		"/tmp/cybermind_reconftw/" + target,
-		"/opt/reconftw/Recon/" + target,
-	}
-
 	urlFiles := []string{
-		"webs/webs.txt",           // all live web targets
-		"webs/webs_all.txt",       // all web targets including uncommon ports
-		"webs/webs_alive.txt",     // confirmed alive
-		"webs/webs_urls.txt",      // collected URLs
-		"webs/urls.txt",           // URL list
-		"webs/katana.txt",         // katana crawled URLs
-		"webs/waymore.txt",        // waymore passive URLs
+		"webs/webs.txt",        // all live web targets
+		"webs/webs_all.txt",    // all web targets including uncommon ports
+		"webs/webs_alive.txt",  // confirmed alive
+		"webs/webs_urls.txt",   // collected URLs
+		"webs/urls.txt",        // URL list
+		"webs/katana.txt",      // katana crawled URLs
+		"webs/waymore.txt",     // waymore passive URLs
+		"webs/gau.txt",         // gau historical URLs
+		"webs/urlfinder.txt",   // urlfinder URLs
+		"webs/gospider.txt",    // gospider crawled URLs
+		"webs/hakrawler.txt",   // hakrawler crawled URLs
 	}
 
-	for _, dir := range outDirs {
+	for _, dir := range reconFTWOutDirs(target) {
 		if _, err := os.Stat(dir); err != nil {
 			continue
 		}
 		for _, uf := range urlFiles {
-			path := filepath.Join(dir, uf)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" && strings.HasPrefix(line, "http") && !seen[line] {
+			for _, line := range readReconFTWFile(dir, uf) {
+				if strings.HasPrefix(line, "http") && !seen[line] {
 					seen[line] = true
 					urls = append(urls, line)
 				}
@@ -130,15 +426,10 @@ func readReconFTWVulns(target string) []string {
 	var vulns []string
 	seen := map[string]bool{}
 
-	outDirs := []string{
-		"/tmp/cybermind_reconftw_" + target,
-		"/tmp/cybermind_reconftw/" + target,
-		"/opt/reconftw/Recon/" + target,
-	}
-
 	vulnFiles := []string{
 		"vulns/vulns.txt",
 		"vulns/nuclei.txt",
+		"vulns/nuclei_dast.txt",
 		"vulns/xss.txt",
 		"vulns/sqli.txt",
 		"vulns/ssrf.txt",
@@ -147,21 +438,22 @@ func readReconFTWVulns(target string) []string {
 		"vulns/crlf.txt",
 		"vulns/open_redirect.txt",
 		"vulns/cors.txt",
+		"vulns/smuggling.txt",
+		"vulns/cache_poisoning.txt",
+		"vulns/takeover.txt",
+		"vulns/4xx_bypass.txt",
+		"vulns/idor.txt",
+		"vulns/xxe.txt",
+		"vulns/rce.txt",
 	}
 
-	for _, dir := range outDirs {
+	for _, dir := range reconFTWOutDirs(target) {
 		if _, err := os.Stat(dir); err != nil {
 			continue
 		}
 		for _, vf := range vulnFiles {
-			path := filepath.Join(dir, vf)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" && !seen[line] {
+			for _, line := range readReconFTWFile(dir, vf) {
+				if !seen[line] {
 					seen[line] = true
 					vulns = append(vulns, line)
 				}
@@ -172,7 +464,7 @@ func readReconFTWVulns(target string) []string {
 }
 
 // extractSubdomains parses subfinder/amass/reconftw output for subdomain names.
-// For reconftw: reads both stdout AND structured output files for maximum coverage.
+// For reconftw: reads both stdout AND all structured output files for maximum coverage.
 func extractSubdomains(result ReconResult) []string {
 	var subs []string
 	seen := map[string]bool{}
@@ -188,15 +480,20 @@ func extractSubdomains(result ReconResult) []string {
 			for _, line := range strings.Split(tr.Output, "\n") {
 				addSubdomain(line, seen, &subs)
 			}
-			// CRITICAL: Also read reconftw's structured output files
-			// reconftw writes 10+ subdomain files with different sources
-			// This gives us passive + brute + permutations + cert transparency
-			// Extract target from output (reconftw prints the target domain)
+			// CRITICAL: Also read ALL reconftw structured output files
+			// reconftw writes 14+ subdomain files with different sources:
+			// passive, brute, permutations, cert transparency, NOERROR, vhosts
+			// We read the target from the result context
+			if result.Target != "" {
+				readReconFTWSubdomains(result.Target, seen, &subs)
+			}
+			// Also try to extract target from stdout lines
 			for _, line := range strings.Split(tr.Output, "\n") {
-				if strings.Contains(line, "Target:") || strings.Contains(line, "domain:") {
+				if strings.Contains(line, "Target:") || strings.Contains(line, "domain:") ||
+					strings.Contains(line, "Recon on:") {
 					parts := strings.Fields(line)
 					for _, p := range parts {
-						if domainRe.MatchString(p) {
+						if domainRe.MatchString(p) && strings.Contains(p, ".") {
 							readReconFTWSubdomains(p, seen, &subs)
 						}
 					}
@@ -324,12 +621,22 @@ func extractLiveURLs(result ReconResult) []string {
 				}
 			}
 		case "reconftw":
-			// Also read reconftw's web output files for live URLs
+			// Read reconftw's web output files for live URLs — use target directly
+			if result.Target != "" {
+				for _, u := range readReconFTWLiveURLs(result.Target) {
+					if !seen[u] {
+						seen[u] = true
+						urls = append(urls, u)
+					}
+				}
+			}
+			// Also try to extract target from stdout
 			for _, line := range strings.Split(tr.Output, "\n") {
-				if strings.Contains(line, "Target:") || strings.Contains(line, "domain:") {
+				if strings.Contains(line, "Target:") || strings.Contains(line, "domain:") ||
+					strings.Contains(line, "Recon on:") {
 					parts := strings.Fields(line)
 					for _, p := range parts {
-						if domainRe.MatchString(p) {
+						if domainRe.MatchString(p) && strings.Contains(p, ".") {
 							for _, u := range readReconFTWLiveURLs(p) {
 								if !seen[u] {
 									seen[u] = true

@@ -103,18 +103,26 @@ type ToolStatus struct {
 
 // ReconContext accumulates structured findings across phases
 type ReconContext struct {
-	Target          string
-	TargetType      string
-	Subdomains      []string
-	LiveHosts       []string
-	OpenPorts       []int
-	Services        map[int]string
-	WAFDetected     bool
-	WAFVendor       string
-	LiveURLs        []string
-	Technologies    []string
-	DiscoveredPaths []string
-	CrawledURLs     []string
+	Target              string
+	TargetType          string
+	Subdomains          []string
+	LiveHosts           []string
+	OpenPorts           []int
+	Services            map[int]string
+	WAFDetected         bool
+	WAFVendor           string
+	LiveURLs            []string
+	Technologies        []string
+	DiscoveredPaths     []string
+	CrawledURLs         []string
+	// reconftw-enriched fields
+	ReconFTWDone        bool     // true if reconftw ran successfully
+	ReconFTWSecrets     []string // API keys, tokens found by reconftw
+	ReconFTWEmails      []string // emails found by reconftw OSINT
+	ReconFTWTakeover    []string // subdomain takeover candidates
+	ReconFTWBuckets     []string // exposed cloud storage buckets
+	ReconFTWJSFiles     []string // JavaScript file URLs
+	ReconFTWVulns       []string // vulnerability findings from reconftw
 }
 
 // ToolSpec defines a tool's metadata and how to build its arguments
@@ -560,6 +568,38 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 	runPhase(2)
 	ctx.Subdomains = extractSubdomains(result)
 	ctx.LiveHosts = extractLiveHosts(result)
+
+	// ── Enrich context from reconftw structured output ─────────────────────
+	// After phase 2, reconftw may have written rich output files.
+	// Parse them all to populate the full context before phase 3+.
+	if _, err := lookPath("reconftw"); err == nil {
+		// Tech stack from reconftw httpx output
+		if techs := ReadReconFTWTechStack(target); len(techs) > 0 {
+			seen := map[string]bool{}
+			for _, t := range ctx.Technologies {
+				seen[t] = true
+			}
+			for _, t := range techs {
+				if !seen[t] {
+					seen[t] = true
+					ctx.Technologies = append(ctx.Technologies, t)
+				}
+			}
+		}
+		// WAF from reconftw wafw00f output
+		if wafDetected, wafVendor := ReadReconFTWWAF(target); wafDetected && !ctx.WAFDetected {
+			ctx.WAFDetected = true
+			ctx.WAFVendor = wafVendor
+		}
+		// Secrets, emails, takeover, buckets, JS files
+		ctx.ReconFTWSecrets = ReadReconFTWSecrets(target)
+		ctx.ReconFTWEmails = ReadReconFTWEmails(target)
+		ctx.ReconFTWTakeover = ReadReconFTWTakeoverCandidates(target)
+		ctx.ReconFTWBuckets = ReadReconFTWCloudBuckets(target)
+		ctx.ReconFTWJSFiles = ReadReconFTWJSFiles(target)
+		ctx.ReconFTWVulns = readReconFTWVulns(target)
+		ctx.ReconFTWDone = true
+	}
 
 	// Phase 3 — Port Scan → populate ctx.OpenPorts, ctx.WAFDetected
 	runPhase(3)
