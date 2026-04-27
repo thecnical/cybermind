@@ -563,18 +563,26 @@ func runAutoRecon(target string, requested []string) {
 	}
 	reconBugs = dedupBugsByKey(reconBugs)
 
-	// ── Ask user where to save output ─────────────────────────────────────
+	// ── Auto-save output — no prompt, save to Desktop/Downloads with target name ──
 	home, _ := os.UserHomeDir()
-	defaultOutputDir := filepath.Join(home, ".cybermind", "recon", strings.ReplaceAll(target, ".", "_"))
-	fmt.Println()
-	fmt.Print(lipgloss.NewStyle().Foreground(cyan).Render(
-		fmt.Sprintf("  💾 Save output to [%s] (Enter to confirm, or type path): ", defaultOutputDir)))
-	var outputDirInput string
-	fmt.Scanln(&outputDirInput)
-	outputDirInput = strings.TrimSpace(outputDirInput)
-	if outputDirInput == "" {
-		outputDirInput = defaultOutputDir
+	// Try Desktop first, then Downloads, then ~/.cybermind/recon
+	safeTargetName := strings.ReplaceAll(strings.ReplaceAll(target, ".", "_"), "/", "_")
+	defaultOutputDir := ""
+	for _, candidate := range []string{
+		filepath.Join(home, "Desktop", "cybermind_"+safeTargetName),
+		filepath.Join(home, "Downloads", "cybermind_"+safeTargetName),
+		filepath.Join(home, ".cybermind", "recon", safeTargetName),
+	} {
+		parent := filepath.Dir(candidate)
+		if _, err := os.Stat(parent); err == nil {
+			defaultOutputDir = candidate
+			break
+		}
 	}
+	if defaultOutputDir == "" {
+		defaultOutputDir = filepath.Join(home, ".cybermind", "recon", safeTargetName)
+	}
+	outputDirInput := defaultOutputDir
 
 	// Save all tool outputs + extracted data
 	savedDir := recon.SaveReconOutput(target, toolOutputsMap, outputDirInput)
@@ -1855,10 +1863,38 @@ func runSelfUpdate() {
 	red2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444"))
 	yellow2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
 
-	// Primary: Vercel CDN (always latest, no cold start)
-	// Fallback: GitHub raw (may lag behind by a commit)
+	// ── Check latest version from Vercel before downloading ──────────────
 	const vercelCDN = "https://cybermindcli1.vercel.app/"
 	const ghRaw = "https://raw.githubusercontent.com/thecnical/cybermind/main/cli/"
+
+	// Fetch latest version from VERSION file
+	latestVersion := ""
+	client := &http.Client{Timeout: 8 * time.Second}
+	if resp, err := client.Get(vercelCDN + "VERSION"); err == nil {
+		defer resp.Body.Close()
+		if body, err := io.ReadAll(io.LimitReader(resp.Body, 32)); err == nil {
+			latestVersion = strings.TrimSpace(string(body))
+		}
+	}
+	if latestVersion == "" {
+		// Fallback: try GitHub
+		if resp, err := client.Get("https://raw.githubusercontent.com/thecnical/cybermind/main/VERSION"); err == nil {
+			defer resp.Body.Close()
+			if body, err := io.ReadAll(io.LimitReader(resp.Body, 32)); err == nil {
+				latestVersion = strings.TrimSpace(string(body))
+			}
+		}
+	}
+
+	if latestVersion != "" && latestVersion == Version {
+		fmt.Println(green2.Render(fmt.Sprintf("  ✓ Already on latest version v%s — no update needed", Version)))
+		return
+	}
+	if latestVersion != "" {
+		fmt.Println(yellow2.Render(fmt.Sprintf("  ⬆  Update available: v%s → v%s", Version, latestVersion)))
+	} else {
+		fmt.Println(dim2.Render("  ⟳ Checking for updates..."))
+	}
 
 	// Determine download URL based on OS/arch
 	var binaryName string
@@ -3288,6 +3324,8 @@ func main() {
 			if _, err := exec.LookPath(t.name); err == nil {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 				reconOK++
+			} else if strings.HasPrefix(t.install, "pipx:") || strings.HasPrefix(t.install, "venv:") {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(fmt.Sprintf("  ⏭  %-20s Python tool (run: /install-python-tools)", t.name)))
 			} else {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s MISSING", t.name)))
 				missing = append(missing, t)
@@ -3303,6 +3341,8 @@ func main() {
 			if _, err := exec.LookPath(t.name); err == nil {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 				huntOK++
+			} else if strings.HasPrefix(t.install, "pipx:") || strings.HasPrefix(t.install, "venv:") {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(fmt.Sprintf("  ⏭  %-20s Python tool (run: /install-python-tools)", t.name)))
 			} else {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s MISSING", t.name)))
 				missing = append(missing, t)
@@ -3318,6 +3358,8 @@ func main() {
 			if _, err := exec.LookPath(t.name); err == nil {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed", t.name)))
 				exploitOK++
+			} else if strings.HasPrefix(t.install, "pipx:") || strings.HasPrefix(t.install, "venv:") {
+				fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(fmt.Sprintf("  ⏭  %-20s Python tool (run: /install-python-tools)", t.name)))
 			} else {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(fmt.Sprintf("  ✗ %-20s MISSING", t.name)))
 				missing = append(missing, t)

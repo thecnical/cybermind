@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"cybermind-cli/brain"
@@ -504,61 +505,81 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 		progress(ToolStatus{Tool: s.Tool, Kind: StatusSkipped, Reason: s.Reason})
 	}
 
-	// runPhase executes all tools for a phase — each tool runs exhaustively
+	// runPhase executes all tools for a phase — PARALLEL within phase for speed
 	runPhase := func(phase int) {
-		// Track which cascade groups produced output (primary succeeded)
 		cascadeGroupSuccess := map[string]bool{}
+		var mu sync.Mutex
 
+		// Collect tools for this phase
+		var phaseTools []ToolSpec
 		for _, spec := range available {
-			if spec.Phase != phase {
-				continue
+			if spec.Phase == phase {
+				phaseTools = append(phaseTools, spec)
 			}
-			// Skip cascade backup if primary already produced output
-			if spec.CascadeBackup {
-				if cascadeGroupSuccess[spec.CascadeGroup] {
-					result.Skipped = append(result.Skipped, SkippedTool{Tool: spec.Name, Reason: "cascade: primary succeeded"})
-					progress(ToolStatus{Tool: spec.Name, Kind: StatusSkipped, Reason: "cascade: primary succeeded"})
-					continue
-				}
+		}
+
+		// Max parallel workers per phase (tuned for safety + speed)
+		maxWorkers := map[int]int{1: 4, 2: 5, 3: 2, 4: 5, 5: 2, 6: 2}
+		workers := maxWorkers[phase]
+		if workers == 0 {
+			workers = 2
+		}
+
+		sem := make(chan struct{}, workers)
+		var wg sync.WaitGroup
+
+		for _, spec := range phaseTools {
+			spec := spec
+
+			mu.Lock()
+			if spec.CascadeBackup && cascadeGroupSuccess[spec.CascadeGroup] {
+				result.Skipped = append(result.Skipped, SkippedTool{Tool: spec.Name, Reason: "cascade: primary succeeded"})
+				progress(ToolStatus{Tool: spec.Name, Kind: StatusSkipped, Reason: "cascade: primary succeeded"})
+				mu.Unlock()
+				continue
 			}
 			if spec.DomainOnly && ctx.TargetType == "ip" {
 				result.Skipped = append(result.Skipped, SkippedTool{Tool: spec.Name, Reason: "domain-only tool"})
 				progress(ToolStatus{Tool: spec.Name, Kind: StatusSkipped, Reason: "domain-only tool"})
+				mu.Unlock()
 				continue
 			}
+			mu.Unlock()
 
-			progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
-			start := time.Now()
+			wg.Add(1)
+			sem <- struct{}{}
 
-			// ── EXHAUSTIVE RUN: primary → fallbacks → give up ──────────────
-			output, runErr := runToolExhaustive(spec, target, ctx, progress)
-			took := time.Since(start)
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
 
-			addResult(&result, spec, output, runErr, took)
+				progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
+				start := time.Now()
+				output, runErr := runToolExhaustive(spec, target, ctx, progress)
+				took := time.Since(start)
 
-			last := result.Results[len(result.Results)-1]
-			var kind StatusKind
-			switch {
-			case last.Partial:
-				kind = StatusPartial
-			case last.Error != "" && last.Output == "":
-				kind = StatusFailed
-			default:
-				kind = StatusDone
-			}
-			progress(ToolStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
-
-			// ── Brain self-learning: record every tool run ─────────────────
-			// This feeds the adaptive intelligence system — confidence scores
-			// update in real-time so future scans prioritize effective tools.
-			toolSuccess := last.Output != "" && last.Error == ""
-			brain.RecordToolRun(target, spec.Name, took, toolSuccess, 0, nil, last.Error)
-
-			// Mark cascade group as succeeded if this tool produced output
-			if spec.CascadeGroup != "" && last.Output != "" {
-				cascadeGroupSuccess[spec.CascadeGroup] = true
-			}
+				mu.Lock()
+				addResult(&result, spec, output, runErr, took)
+				last := result.Results[len(result.Results)-1]
+				var kind StatusKind
+				switch {
+				case last.Partial:
+					kind = StatusPartial
+				case last.Error != "" && last.Output == "":
+					kind = StatusFailed
+				default:
+					kind = StatusDone
+				}
+				progress(ToolStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
+				toolSuccess := last.Output != "" && last.Error == ""
+				brain.RecordToolRun(target, spec.Name, took, toolSuccess, 0, nil, last.Error)
+				if spec.CascadeGroup != "" && last.Output != "" {
+					cascadeGroupSuccess[spec.CascadeGroup] = true
+				}
+				mu.Unlock()
+			}()
 		}
+		wg.Wait()
 	}
 
 	// Phase 1 — Passive OSINT
