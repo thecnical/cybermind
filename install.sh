@@ -367,6 +367,11 @@ command -v getjswords &>/dev/null || \
     (go install github.com/m4ll0k/getjswords@latest 2>/dev/null && symlink_go_tool "getjswords") || true
 # ── 2026 NEW: swaggerspy — Swagger/OpenAPI endpoint discovery ────────────────
 command -v swaggerspy &>/dev/null || pip3 install swaggerspy --break-system-packages -q 2>/dev/null || true
+# ── v5.4.0 NEW: gowitness — screenshot capture for visual recon ──────────────
+command -v gowitness &>/dev/null || \
+    (go install github.com/sensepost/gowitness@latest 2>/dev/null && symlink_go_tool "gowitness") || true
+# ── v5.4.0 NEW: nuclei takeover templates (ensure latest) ────────────────────
+command -v nuclei &>/dev/null && nuclei -update-templates 2>/dev/null || true
 # ── 2025 NEW: semgrep — SAST code analysis ───────────────────────────────────
 command -v semgrep &>/dev/null || pipx install semgrep 2>/dev/null || \
     pip3 install semgrep --break-system-packages -q 2>/dev/null || true

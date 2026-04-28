@@ -181,6 +181,8 @@ return []OmegaToolEntry{
 {"nuclei", "recon", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false, false, false, "", "", ""},
 {"nikto", "recon", "sudo apt install -y nikto", false, false, false, false, "", "", ""},
 {"katana", "recon", "go install github.com/projectdiscovery/katana/cmd/katana@latest", true, false, false, false, "", "", ""},
+// ── v5.4.0 NEW: Screenshot + Visual Recon ───────────────────────────────────
+{"gowitness", "recon", "go install github.com/sensepost/gowitness@latest", true, false, false, false, "", "", ""},
 // ── Hunt Phase 1 — URL Collection ───────────────────────────────────
 {"gau", "hunt", "go install github.com/lc/gau/v2/cmd/gau@latest", true, false, false, false, "", "", ""},
 {"waybackurls", "hunt", "go install github.com/tomnomnom/waybackurls@latest", true, false, false, false, "", "", ""},
