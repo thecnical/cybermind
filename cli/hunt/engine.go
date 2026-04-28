@@ -731,6 +731,28 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 				if spec.CascadeGroup != "" && last.Output != "" {
 					cascadeGroupSuccess[spec.CascadeGroup] = true
 				}
+
+				// ── Real-time feedback: analyze output mid-execution ──────
+				// Detects: shell obtained, critical findings, WAF, rate limit, creds
+				if last.Output != "" {
+					fb := brain.RealtimeFeedback{
+						Target:      target,
+						Phase:       fmt.Sprintf("hunt_phase_%d", phase),
+						Tool:        spec.Name,
+						OutputSoFar: last.Output,
+					}
+					correction := brain.AnalyzeRealtimeOutput(fb)
+					if correction.ShouldStop {
+						// Critical finding — mark for early exit
+						os.Setenv("CYBERMIND_EARLY_EXIT", correction.Reason)
+					}
+					if correction.NewFocus != "" {
+						os.Setenv("CYBERMIND_HUNT_FOCUS", correction.NewFocus)
+					}
+					if len(correction.ShouldAdd) > 0 {
+						os.Setenv("CYBERMIND_ADD_TOOLS", strings.Join(correction.ShouldAdd, ","))
+					}
+				}
 				mu.Unlock()
 			}()
 		}

@@ -1971,12 +1971,36 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				}
 			}
 
-			// Parse bugs from hunt
+			// Parse bugs from hunt — use ALL specialized parsers
 			for _, tr := range huntResult.Results {
-				if tr.Output != "" {
-					bugs := bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
-					allBugs = append(allBugs, bugs...)
+				if tr.Output == "" {
+					continue
 				}
+				var bugs []bugdetect.Bug
+				switch tr.Tool {
+				case "idor-scan", "nuclei":
+					bugs = bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+					// Also run IDOR-specific parser for better detection
+					idorBugs := bugdetect.ParseIDOROutput(tr.Output, target)
+					bugs = append(bugs, idorBugs...)
+				case "race-check", "ffuf":
+					bugs = bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+					raceBugs := bugdetect.ParseRaceConditionOutput(tr.Output, target)
+					bugs = append(bugs, raceBugs...)
+				case "sqlmap-hunt", "sqlmap", "ghauri":
+					bugs = bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+					// Also check for second-order SQLi
+					soBugs := bugdetect.ParseSecondOrderOutput(tr.Output, target)
+					bugs = append(bugs, soBugs...)
+				case "dalfox", "xsstrike", "kxss":
+					bugs = bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+					// Also check for second-order XSS
+					soBugs := bugdetect.ParseSecondOrderOutput(tr.Output, target)
+					bugs = append(bugs, soBugs...)
+				default:
+					bugs = bugdetect.ParseToolOutput(tr.Tool, tr.Output, target)
+				}
+				allBugs = append(allBugs, bugs...)
 			}
 
 			// Merge bizlogic findings
@@ -2005,6 +2029,37 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			allBugs = dedupBugs(allBugs)
 			state.BugsFound = len(allBugs)
 			state.BugTypes = extractBugTypes(allBugs)
+
+			// ── Chain Detection — find exploit chains ─────────────────────
+			// SSRF+port→RCE, XSS+CSRF→ATO, SQLi+admin→full compromise
+			if len(allBugs) >= 2 {
+				chains := bugdetect.ChainDetect(allBugs)
+				if len(chains) > 0 {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
+						fmt.Sprintf("  🔗 EXPLOIT CHAINS DETECTED: %d", len(chains))))
+					for _, chain := range chains {
+						fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
+							fmt.Sprintf("  ⚡ [%.0f%% confidence] %s", chain.Confidence*100, chain.Title)))
+						fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+							"     Impact: " + chain.Impact))
+					}
+					// Add chains as bugs too
+					for _, chain := range chains {
+						allBugs = append(allBugs, bugdetect.Bug{
+							Title:       "CHAIN: " + chain.Title,
+							Severity:    chain.Severity,
+							Tool:        "chain_detector",
+							Target:      target,
+							Description: chain.Impact,
+							CVSS:        9.5,
+							CWE:         "CWE-chain",
+							Confidence:  chain.Confidence,
+							FoundAt:     time.Now(),
+						})
+					}
+					state.BugsFound = len(allBugs)
+				}
+			}
 
 			// ── Brain: record hunt patterns ───────────────────────────────
 			for _, tr := range huntResult.Results {
