@@ -2396,36 +2396,42 @@ func findBinaryInCommonLocations(name string) bool {
 }
 
 // installPythonPipTool installs a Python CLI tool using the best available method.
-// Priority: pipx --force → pip3 --break-system-packages → pip3 (plain)
+// Priority: venv (isolated) → pipx → pip3 --break-system-packages
 // After each method, searches common locations and symlinks to /usr/local/bin.
 // Verifies the binary actually works with --version or --help.
 func installPythonPipTool(pkgName string) error {
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ↳ Installing %s...", pkgName)))
 
-	ensurePipx()
-
-	pipxEnv := append(os.Environ(),
-		"PIPX_BIN_DIR=/usr/local/bin",
-		"PIPX_HOME=/opt/pipx",
-	)
-
-	// Method 1: pipx install --force with PIPX_BIN_DIR=/usr/local/bin
-	cmd := exec.Command("pipx", "install", "--force", pkgName)
-	cmd.Env = pipxEnv
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = nil
-	if err := cmd.Run(); err == nil {
-		findBinaryInCommonLocations(pkgName)
-		if verifyBinary(pkgName) {
-			return nil
+	// Method 1: Install in master cybermind venv (most reliable on Kali/Ubuntu)
+	venvDir := "/opt/cybermind-pytools"
+	os.MkdirAll(venvDir, 0755)
+	// Create venv if not exists
+	if _, err := os.Stat(venvDir + "/.venv/bin/pip"); err != nil {
+		exec.Command("python3", "-m", "venv", venvDir+"/.venv").Run()
+	}
+	venvPip := venvDir + "/.venv/bin/pip"
+	if _, err := os.Stat(venvPip); err == nil {
+		cmd := exec.Command(venvPip, "install", pkgName, "-q", "--upgrade")
+		cmd.Stdin = nil
+		if err := cmd.Run(); err == nil {
+			// Symlink from venv to /usr/local/bin
+			binPath := venvDir + "/.venv/bin/" + pkgName
+			if _, e := os.Stat(binPath); e == nil {
+				exec.Command("sudo", "ln", "-sf", binPath, "/usr/local/bin/"+pkgName).Run()
+				return nil
+			}
+			// Try package name variations
+			findBinaryInCommonLocations(pkgName)
+			if verifyBinary(pkgName) {
+				return nil
+			}
 		}
 	}
 
-	// Method 2: pip3 install --break-system-packages
+	// Method 2: pip3 --break-system-packages (works on most systems)
 	cmd2 := exec.Command("pip3", "install", pkgName, "--break-system-packages", "-q")
-	cmd2.Stdout = os.Stdout
-	cmd2.Stderr = os.Stderr
+	cmd2.Stdout = nil
+	cmd2.Stderr = nil
 	cmd2.Stdin = nil
 	if err := cmd2.Run(); err == nil {
 		findBinaryInCommonLocations(pkgName)
@@ -2434,13 +2440,31 @@ func installPythonPipTool(pkgName string) error {
 		}
 	}
 
-	// Method 3: pip3 install (without --break-system-packages)
-	cmd3 := exec.Command("pip3", "install", pkgName, "-q")
-	cmd3.Stdout = os.Stdout
-	cmd3.Stderr = os.Stderr
+	// Method 3: pipx install (isolated, but may fail on some systems)
+	ensurePipx()
+	pipxEnv := append(os.Environ(),
+		"PIPX_BIN_DIR=/usr/local/bin",
+		"PIPX_HOME=/opt/pipx",
+	)
+	cmd3 := exec.Command("pipx", "install", "--force", pkgName)
+	cmd3.Env = pipxEnv
+	cmd3.Stdout = nil
+	cmd3.Stderr = nil
 	cmd3.Stdin = nil
-	if err := cmd3.Run(); err != nil {
-		return err
+	if err := cmd3.Run(); err == nil {
+		findBinaryInCommonLocations(pkgName)
+		if verifyBinary(pkgName) {
+			return nil
+		}
+	}
+
+	// Method 4: pip3 plain (last resort)
+	cmd4 := exec.Command("pip3", "install", pkgName, "-q")
+	cmd4.Stdout = nil
+	cmd4.Stderr = nil
+	cmd4.Stdin = nil
+	if err := cmd4.Run(); err != nil {
+		return fmt.Errorf("%s: all install methods failed", pkgName)
 	}
 	findBinaryInCommonLocations(pkgName)
 	if verifyBinary(pkgName) {
@@ -3627,13 +3651,58 @@ func main() {
 					if t.name == "naabu" {
 						aptInstall("libpcap-dev")
 					}
-					cmd2 := exec.Command("go", "install", module)
-					cmd2.Stdout = os.Stdout
-					cmd2.Stderr = os.Stderr
-					cmd2.Stdin = nil
-					installErr = cmd2.Run()
-					if installErr == nil {
-						symlinkGoTool(t.name)
+					// Special handling for tools with known module path conflicts
+					// Use GONOSUMCHECK + GOFLAGS to bypass module cache issues
+					goEnv := append(os.Environ(),
+						"GONOSUMCHECK=*",
+						"GOFLAGS=-mod=mod",
+						"GONOSUMDB=*",
+						"GOPATH="+os.Getenv("HOME")+"/go",
+					)
+					// Special cases for tools with known broken module paths
+					switch t.name {
+					case "gitleaks":
+						// gitleaks v8 has module path conflict — use direct binary download
+						dlCmd := exec.Command("bash", "-c",
+							`set -e
+LATEST=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep browser_download_url | grep linux_x64 | cut -d'"' -f4 | head -1)
+if [ -z "$LATEST" ]; then
+  LATEST="https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.21.2_linux_x64.tar.gz"
+fi
+curl -fsSL "$LATEST" -o /tmp/gitleaks.tar.gz
+mkdir -p /tmp/gitleaks_extract
+tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks_extract
+sudo cp /tmp/gitleaks_extract/gitleaks /usr/local/bin/gitleaks
+sudo chmod +x /usr/local/bin/gitleaks
+rm -rf /tmp/gitleaks.tar.gz /tmp/gitleaks_extract`)
+						dlCmd.Stdout = os.Stdout
+						dlCmd.Stderr = os.Stderr
+						dlCmd.Stdin = nil
+						installErr = dlCmd.Run()
+					case "mantra":
+						// mantra has module path conflict — use direct binary download or git clone + build
+						mantraCmd := exec.Command("bash", "-c",
+							`set -e
+git clone --depth=1 https://github.com/MrEmpy/mantra /tmp/mantra_build 2>/dev/null || true
+if [ -d /tmp/mantra_build ]; then
+  cd /tmp/mantra_build
+  go build -o /tmp/mantra_bin . 2>/dev/null && sudo cp /tmp/mantra_bin /usr/local/bin/mantra && sudo chmod +x /usr/local/bin/mantra
+  rm -rf /tmp/mantra_build /tmp/mantra_bin
+fi`)
+						mantraCmd.Stdout = os.Stdout
+						mantraCmd.Stderr = os.Stderr
+						mantraCmd.Stdin = nil
+						installErr = mantraCmd.Run()
+					default:
+						cmd2 := exec.Command("go", "install", module)
+						cmd2.Env = goEnv
+						cmd2.Stdout = os.Stdout
+						cmd2.Stderr = os.Stderr
+						cmd2.Stdin = nil
+						installErr = cmd2.Run()
+						if installErr == nil {
+							symlinkGoTool(t.name)
+						}
 					}
 
 				case strings.HasPrefix(t.install, "venv:"):

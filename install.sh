@@ -322,8 +322,18 @@ command -v paramspider &>/dev/null || pipx install paramspider 2>/dev/null || \
     install_python_git_tool "paramspider" "https://github.com/devanshbatham/ParamSpider" "/opt/ParamSpider" "paramspider.py" 2>/dev/null || true
 # XSStrike — isolated venv
 install_python_git_tool "xsstrike" "https://github.com/s0md3v/XSStrike" "/opt/XSStrike" "xsstrike.py" 2>/dev/null || true
-# Mantra (JS secret finder), Cariddi (deep crawler), BXss (blind XSS)
-go install github.com/MrEmpy/mantra@latest 2>/dev/null && symlink_go_tool "mantra" || true
+# Mantra (JS secret finder) — use git clone + build to avoid module path conflict
+if ! command -v mantra &>/dev/null; then
+    echo -e "${DIM}  Installing mantra (git clone + build)...${NC}"
+    rm -rf /tmp/mantra_build 2>/dev/null || true
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/MrEmpy/mantra /tmp/mantra_build 2>/dev/null && \
+    (cd /tmp/mantra_build && go build -o /tmp/mantra_bin . 2>/dev/null) && \
+    sudo cp /tmp/mantra_bin /usr/local/bin/mantra && \
+    sudo chmod +x /usr/local/bin/mantra && \
+    rm -rf /tmp/mantra_build /tmp/mantra_bin && \
+    echo -e "${GREEN}[✓] mantra installed${NC}" || \
+    echo -e "${YELLOW}[!] mantra install failed — skipping${NC}"
+fi
 go install github.com/edoardottt/cariddi/cmd/cariddi@latest 2>/dev/null && symlink_go_tool "cariddi" || true
 go install github.com/ethicalhackingplayground/bxss/v2/cmd/bxss@latest 2>/dev/null && symlink_go_tool "bxss" || true
 # ── 2025 NEW: ghauri — advanced SQLi (better than sqlmap for modern apps) ─────
@@ -501,8 +511,20 @@ if ! command -v dorks_hunter &>/dev/null; then
 fi
 # analyticsrelationships — Google Analytics subdomain discovery
 command -v analyticsrelationships &>/dev/null || (go install github.com/Josue87/analyticsrelationships@latest 2>/dev/null && symlink_go_tool "analyticsrelationships") || true
-# gitleaks — git secret detection
-command -v gitleaks &>/dev/null || (go install github.com/gitleaks/gitleaks/v8@latest 2>/dev/null && symlink_go_tool "gitleaks") || true
+# gitleaks — git secret detection (use binary release, not go install — module path conflict)
+if ! command -v gitleaks &>/dev/null; then
+    echo -e "${DIM}  Installing gitleaks (binary release)...${NC}"
+    GITLEAKS_VER=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v' 2>/dev/null || echo "8.21.2")
+    GITLEAKS_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VER}/gitleaks_${GITLEAKS_VER}_linux_x64.tar.gz"
+    curl -fsSL "$GITLEAKS_URL" -o /tmp/gitleaks.tar.gz 2>/dev/null && \
+    mkdir -p /tmp/gitleaks_extract && \
+    tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks_extract 2>/dev/null && \
+    sudo cp /tmp/gitleaks_extract/gitleaks /usr/local/bin/gitleaks && \
+    sudo chmod +x /usr/local/bin/gitleaks && \
+    rm -rf /tmp/gitleaks.tar.gz /tmp/gitleaks_extract && \
+    echo -e "${GREEN}[✓] gitleaks installed${NC}" || \
+    echo -e "${YELLOW}[!] gitleaks install failed${NC}"
+fi
 
 # ── reconftw — Full reconFTW power (Mega Mode) ───────────────────────────────
 # reconftw is the backbone of CyberMind's recon mode — 50+ tools in one

