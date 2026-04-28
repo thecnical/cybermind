@@ -2438,26 +2438,54 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 				}
 			}
 
-			// Save report with PoCs
+			// Save report with PoCs — World-class format
+			modeReport := bugdetect.ModeReport{
+				Mode:      "omega",
+				Target:    target,
+				StartTime: time.Now().Add(-2 * time.Hour),
+				EndTime:   time.Now(),
+				ToolsRun:  state.ToolsRan,
+				Bugs:      allBugs,
+				Chains:    bugdetect.ChainDetect(allBugs),
+				Technologies: state.Technologies,
+				OpenPorts:   state.OpenPorts,
+				AIAnalysis:  func() string {
+					if v, ok := allFindings["ai_analysis"]; ok {
+						return v
+					}
+					return ""
+				}(),
+				RawFindings: func() map[string]string {
+					m := make(map[string]string)
+					for k, v := range allFindings {
+						m[k] = v
+					}
+					return m
+				}(),
+			}
+			if reconResult.Context != nil {
+				modeReport.Subdomains = reconResult.Context.Subdomains
+				modeReport.LiveURLs = reconResult.Context.LiveURLs
+				modeReport.JSSecrets = reconResult.Context.ReconFTWSecrets
+				modeReport.CloudBuckets = reconResult.Context.ReconFTWBuckets
+				modeReport.TakeoverCandidates = reconResult.Context.ReconFTWTakeover
+			}
+			reportPath := bugdetect.SaveModeReport(modeReport)
+			if reportPath != "" {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render(
+					"  ✓ PoC Report saved: " + reportPath))
+			}
+
+			// Also save HackerOne-format report
 			bugReport := bugdetect.BugReport{
 				Target:    target,
 				Bugs:      allBugs,
 				StartTime: time.Now().Add(-2 * time.Hour),
 				EndTime:   time.Now(),
 			}
-			content := bugdetect.GenerateReportWithPoC(bugReport, pocs)
-			ts := time.Now().Format("2006-01-02_15-04-05")
-			safeTarget := strings.ReplaceAll(target, ".", "_")
-			reportPath := fmt.Sprintf("cybermind_bugs_%s_%s.md", safeTarget, ts)
-			if err := os.WriteFile(reportPath, []byte(content), 0644); err == nil {
-				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green2).Render(
-					"  ✓ Full bug report saved: " + reportPath))
-			}
-
-			// Also save HackerOne-format report
 			h1Content := bugdetect.GenerateH1Report(bugReport, pocs)
 			if h1Content != "" {
-				h1Path := fmt.Sprintf("cybermind_h1_report_%s_%s.md", safeTarget, ts)
+				h1Path := fmt.Sprintf("cybermind_h1_report_%s_%s.md", strings.ReplaceAll(target, ".", "_"), time.Now().Format("2006-01-02_15-04-05"))
 				if os.WriteFile(h1Path, []byte(h1Content), 0644) == nil {
 					fmt.Println(lipgloss.NewStyle().Foreground(green2).Render(
 						"  ✓ HackerOne report saved: " + h1Path))

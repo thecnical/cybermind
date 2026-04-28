@@ -587,21 +587,44 @@ func runAutoRecon(target string, requested []string) {
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 		recon.FormatReconSummary(target, savedDir, ctx.Subdomains, openPorts, technologies, allApiKeys, allEmails)))
 
-	// ── Save recon report ─────────────────────────────────────────────────
+	// ── Save recon report — World-class PoC format ───────────────────────
 	{
 		reportsDir := filepath.Join(home, ".cybermind", "reports")
 		os.MkdirAll(reportsDir, 0700)
-		ts := time.Now().Format("2006-01-02_15-04-05")
-		safeTarget := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
 
-		// Save AI analysis
-		analysisPath := filepath.Join(reportsDir, fmt.Sprintf("recon_%s_%s.md", safeTarget, ts))
-		reconContent := fmt.Sprintf("# Recon Report — %s\n\n**Date:** %s\n**Tools Run:** %d\n**Subdomains:** %d\n**Open Ports:** %v\n**Technologies:** %v\n**API Keys Found:** %d\n**Emails Found:** %d\n\n## AI Analysis\n\n%s\n",
-			target, time.Now().Format("2006-01-02 15:04:05"),
-			len(result.Tools), len(ctx.Subdomains), openPorts, technologies,
-			len(allApiKeys), len(allEmails), analysis)
-		if err2 := os.WriteFile(analysisPath, []byte(reconContent), 0644); err2 == nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Recon report: " + analysisPath))
+		// Build raw findings map
+		rawFindings := make(map[string]string)
+		for _, tr := range result.Results {
+			if tr.Output != "" {
+				rawFindings[tr.Tool] = tr.Output
+			}
+		}
+
+		// Build PoC report
+		modeReport := bugdetect.ModeReport{
+			Mode:        "recon",
+			Target:      target,
+			StartTime:   time.Now().Add(-time.Duration(len(result.Tools)) * 2 * time.Minute),
+			EndTime:     time.Now(),
+			ToolsRun:    result.Tools,
+			Bugs:        reconBugs,
+			Subdomains:  ctx.Subdomains,
+			LiveURLs:    liveURLs,
+			OpenPorts:   openPorts,
+			Technologies: technologies,
+			JSSecrets:   allApiKeys,
+			CloudBuckets: ctx.ReconFTWBuckets,
+			TakeoverCandidates: ctx.ReconFTWTakeover,
+			AIAnalysis:  analysis,
+			RawFindings: rawFindings,
+		}
+		reportPath := bugdetect.SaveModeReport(modeReport)
+		if reportPath != "" {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ✓ PoC Report saved: " + reportPath))
+			if len(reconBugs) > 0 {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+					fmt.Sprintf("  🔴 %d vulnerabilities found — check report for PoC + next steps", len(reconBugs))))
+			}
 		}
 
 		// ── Save snapshot for diff tracking ───────────────────────────────
@@ -714,13 +737,15 @@ func runAutoRecon(target string, requested []string) {
 
 		// Save bug report if bugs found
 		if len(reconBugs) > 0 {
+			ts2 := time.Now().Format("2006-01-02_15-04-05")
+			safeTarget2 := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
 			bugReport := bugdetect.BugReport{
 				Target:    target,
 				Bugs:      reconBugs,
 				StartTime: time.Now().Add(-30 * time.Minute),
 				EndTime:   time.Now(),
 			}
-			bugPath := filepath.Join(reportsDir, fmt.Sprintf("bugs_%s_%s.md", safeTarget, ts))
+			bugPath := filepath.Join(reportsDir, fmt.Sprintf("bugs_%s_%s.md", safeTarget2, ts2))
 			bugContent := bugdetect.GenerateReport(bugReport)
 			if os.WriteFile(bugPath, []byte(bugContent), 0644) == nil {
 				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
@@ -1311,43 +1336,63 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 	}
 	huntBugs = dedupBugsByKey(huntBugs)
 
-	// ── Save hunt report ──────────────────────────────────────────────────
+	// ── Save hunt report — World-class PoC format ────────────────────────
 	{
-		home, _ := os.UserHomeDir()
-		reportsDir := filepath.Join(home, ".cybermind", "reports")
-		os.MkdirAll(reportsDir, 0700)
-		ts := time.Now().Format("2006-01-02_15-04-05")
-		safeTarget := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
-
-		// Save AI analysis
-		analysisPath := filepath.Join(reportsDir, fmt.Sprintf("hunt_%s_%s.md", safeTarget, ts))
-		huntContent := fmt.Sprintf("# Hunt Report — %s\n\n**Date:** %s\n**Tools Run:** %d\n\n## AI Analysis\n\n%s\n",
-			target, time.Now().Format("2006-01-02 15:04:05"), len(result.Tools), analysis)
-		if err2 := os.WriteFile(analysisPath, []byte(huntContent), 0644); err2 == nil {
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Hunt report saved: " + analysisPath))
+		// Build raw findings map
+		rawFindings := make(map[string]string)
+		for _, tr := range result.Results {
+			if tr.Output != "" {
+				rawFindings[tr.Tool] = tr.Output
+			}
 		}
 
-		// Save bug report if bugs found
+		// Chain detection
+		var chains []bugdetect.BugChain
+		if len(huntBugs) >= 2 {
+			chains = bugdetect.ChainDetect(huntBugs)
+		}
+
+		modeReport := bugdetect.ModeReport{
+			Mode:        "hunt",
+			Target:      target,
+			StartTime:   time.Now().Add(-time.Duration(len(result.Tools)) * 3 * time.Minute),
+			EndTime:     time.Now(),
+			ToolsRun:    result.Tools,
+			Bugs:        huntBugs,
+			Chains:      chains,
+			AIAnalysis:  analysis,
+			RawFindings: rawFindings,
+		}
+		if result.Context != nil {
+			modeReport.LiveURLs = result.Context.LiveURLs
+		}
+		reportPath := bugdetect.SaveModeReport(modeReport)
+		if reportPath != "" {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ✓ PoC Report saved: " + reportPath))
+		}
+
+		// Save HackerOne format separately if bugs found
 		if len(huntBugs) > 0 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+				fmt.Sprintf("  🔴 %d bugs found! Report: %s", len(huntBugs), reportPath)))
+			brain.NotifyBugFound(target,
+				fmt.Sprintf("%d bugs found during hunt", len(huntBugs)),
+				"high", target, reportPath)
+
+			// Also save HackerOne format
 			bugReport := bugdetect.BugReport{
 				Target:    target,
 				Bugs:      huntBugs,
 				StartTime: time.Now().Add(-1 * time.Hour),
 				EndTime:   time.Now(),
 			}
-			bugPath := filepath.Join(reportsDir, fmt.Sprintf("bugs_%s_%s.md", safeTarget, ts))
-			bugContent := bugdetect.GenerateReport(bugReport)
-			if os.WriteFile(bugPath, []byte(bugContent), 0644) == nil {
-				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
-					fmt.Sprintf("  🔴 %d bugs found! Report: %s", len(huntBugs), bugPath)))
-				brain.NotifyBugFound(target,
-					fmt.Sprintf("%d bugs found during hunt", len(huntBugs)),
-					"high", target, bugPath)
-			}
-			// Also save HackerOne format
 			h1Content := bugdetect.GenerateH1Report(bugReport, map[int]string{})
 			if h1Content != "" {
-				h1Path := filepath.Join(reportsDir, fmt.Sprintf("h1_report_%s_%s.md", safeTarget, ts))
+				home2, _ := os.UserHomeDir()
+				ts2 := time.Now().Format("2006-01-02_15-04-05")
+				safeT2 := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
+				h1Path := filepath.Join(home2, ".cybermind", "reports", fmt.Sprintf("h1_report_%s_%s.md", safeT2, ts2))
+				os.MkdirAll(filepath.Dir(h1Path), 0700)
 				os.WriteFile(h1Path, []byte(h1Content), 0644)
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ HackerOne report: " + h1Path))
 			}
@@ -1804,10 +1849,36 @@ func runAbhimanyu(target, vulnType string) {
 		abhiBugs = dedupBugsByKey(abhiBugs)
 		if len(abhiBugs) > 0 {
 			home, _ := os.UserHomeDir()
-			reportsDir := filepath.Join(home, ".cybermind", "reports")
-			os.MkdirAll(reportsDir, 0700)
 			ts := time.Now().Format("2006-01-02_15-04-05")
 			safeTarget := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
+
+			// World-class PoC report
+			modeReport := bugdetect.ModeReport{
+				Mode:      "abhimanyu",
+				Target:    target,
+				StartTime: abhCtx.StartedAt,
+				EndTime:   time.Now(),
+				ToolsRun:  func() []string {
+					var tools []string
+					for _, r := range abhCtx.Results {
+						tools = append(tools, r.Tool)
+					}
+					return tools
+				}(),
+				Bugs:        abhiBugs,
+				Technologies: abhCtx.Technologies,
+				OpenPorts:   abhCtx.OpenPorts,
+			}
+			reportPath := bugdetect.SaveModeReport(modeReport)
+			if reportPath != "" {
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
+					fmt.Sprintf("  🔴 %d bugs confirmed! PoC Report: %s", len(abhiBugs), reportPath)))
+				brain.NotifyBugFound(target, fmt.Sprintf("%d bugs confirmed", len(abhiBugs)), "critical", target, reportPath)
+			}
+
+			// Also save legacy format for compatibility
+			reportsDir := filepath.Join(home, ".cybermind", "reports")
+			os.MkdirAll(reportsDir, 0700)
 			bugReport := bugdetect.BugReport{
 				Target:    target,
 				Bugs:      abhiBugs,
@@ -1815,11 +1886,7 @@ func runAbhimanyu(target, vulnType string) {
 				EndTime:   time.Now(),
 			}
 			bugPath := filepath.Join(reportsDir, fmt.Sprintf("abhimanyu_bugs_%s_%s.md", safeTarget, ts))
-			if os.WriteFile(bugPath, []byte(bugdetect.GenerateReport(bugReport)), 0644) == nil {
-				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render(
-					fmt.Sprintf("  🔴 %d bugs confirmed! Report: %s", len(abhiBugs), bugPath)))
-				brain.NotifyBugFound(target, fmt.Sprintf("%d bugs confirmed", len(abhiBugs)), "critical", target, bugPath)
-			}
+			os.WriteFile(bugPath, []byte(bugdetect.GenerateReport(bugReport)), 0644)
 		}
 	}
 }
