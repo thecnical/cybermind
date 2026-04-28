@@ -203,7 +203,7 @@ GO_TOOLS=(
     "interactsh-client:github.com/projectdiscovery/interactsh/cmd/interactsh-client"
     "puredns:github.com/d3mondev/puredns/v2"
     "cariddi:github.com/edoardottt/cariddi/cmd/cariddi"
-    "bxss:github.com/ethicalhackingplayground/bxss"
+    "bxss:github.com/ethicalhackingplayground/bxss/v2/cmd/bxss"
     "mantra:github.com/MrEmpy/mantra"
     "mapcidr:github.com/projectdiscovery/mapcidr/cmd/mapcidr"
     "cdncheck:github.com/projectdiscovery/cdncheck/cmd/cdncheck"
@@ -231,7 +231,7 @@ export PIPX_BIN_DIR=/usr/local/bin
 export PIPX_HOME=/opt/pipx
 # Fix shodan pkg_resources error
 pip3 install setuptools --break-system-packages -q 2>/dev/null || true
-PIPX_TOOLS=(shodan h8mail wafw00f arjun graphw00f waymore ghauri semgrep pip-audit)
+PIPX_TOOLS=(shodan h8mail wafw00f arjun waymore ghauri semgrep pip-audit)
 for tool in "${PIPX_TOOLS[@]}"; do
     if ! command -v "$tool" &>/dev/null; then
         pipx install "$tool" 2>/dev/null || \
@@ -303,18 +303,18 @@ command -v apktool &>/dev/null || sudo apt-get install -y apktool -qq 2>/dev/nul
 install_python_git_tool "smuggler" "https://github.com/defparam/smuggler" "/opt/smuggler" "smuggler.py" 2>/dev/null || true
 # JWT Tool (OAuth/JWT attack engine) — isolated venv
 install_python_git_tool "jwt_tool" "https://github.com/ticarpi/jwt_tool" "/opt/jwt_tool" "jwt_tool.py" 2>/dev/null || true
-# GraphQL attack tool — proper git install
-# graphw00f — GraphQL fingerprinting (git install, not pip)
+# graphw00f — GraphQL fingerprinting (git clone + requests only, NOT requirements.txt which includes wsgiref/Python2)
 if ! command -v graphw00f &>/dev/null; then
     GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/dolevf/graphw00f.git /opt/graphw00f 2>/dev/null && \
-    pip3 install -r /opt/graphw00f/requirements.txt --break-system-packages -q 2>/dev/null && \
+    pip3 install requests --break-system-packages -q 2>/dev/null && \
     sudo ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f && \
-    sudo chmod +x /usr/local/bin/graphw00f 2>/dev/null || true
+    sudo chmod +x /opt/graphw00f/main.py 2>/dev/null || true
 fi
 # SSRF map — isolated venv
 install_python_git_tool "ssrfmap" "https://github.com/swisskyrepo/SSRFmap" "/opt/ssrfmap" "ssrfmap.py" 2>/dev/null || true
-# SSTI exploitation (tplmap) — isolated venv
-install_python_git_tool "tplmap" "https://github.com/epinna/tplmap" "/opt/tplmap" "tplmap.py" 2>/dev/null || true
+# tplmap requires Python 2 — skip, install tinja as Python 3 replacement
+# install_python_git_tool "tplmap" "https://github.com/epinna/tplmap" "/opt/tplmap" "tplmap.py"  # Python 2 only
+command -v tinja &>/dev/null || pip3 install tinja --break-system-packages -q 2>/dev/null || true
 # CORS scanner — isolated venv
 install_python_git_tool "corsy" "https://github.com/s0md3v/Corsy" "/opt/corsy" "corsy.py" 2>/dev/null || true
 # ParamSpider — pipx (has proper package)
@@ -325,7 +325,7 @@ install_python_git_tool "xsstrike" "https://github.com/s0md3v/XSStrike" "/opt/XS
 # Mantra (JS secret finder), Cariddi (deep crawler), BXss (blind XSS)
 go install github.com/MrEmpy/mantra@latest 2>/dev/null && symlink_go_tool "mantra" || true
 go install github.com/edoardottt/cariddi/cmd/cariddi@latest 2>/dev/null && symlink_go_tool "cariddi" || true
-go install github.com/ethicalhackingplayground/bxss@latest 2>/dev/null && symlink_go_tool "bxss" || true
+go install github.com/ethicalhackingplayground/bxss/v2/cmd/bxss@latest 2>/dev/null && symlink_go_tool "bxss" || true
 # ── 2025 NEW: ghauri — advanced SQLi (better than sqlmap for modern apps) ─────
 command -v ghauri &>/dev/null || pipx install ghauri 2>/dev/null || \
     pip3 install ghauri --break-system-packages -q 2>/dev/null || true
@@ -375,9 +375,8 @@ command -v jsluice &>/dev/null || \
 # ── 2026 NEW: sourcemapper — extract source maps from JS ─────────────────────
 command -v sourcemapper &>/dev/null || \
     (go install github.com/denandz/sourcemapper@latest 2>/dev/null && symlink_go_tool "sourcemapper") || true
-# ── 2026 NEW: getjswords — generate wordlist from JS content ─────────────────
-command -v getjswords &>/dev/null || \
-    (go install github.com/m4ll0k/getjswords@latest 2>/dev/null && symlink_go_tool "getjswords") || true
+# ── 2026 NEW: getjswords — REMOVED: private/broken repo (github.com/m4ll0k/getjswords)
+# Use jsluice or cariddi for JS word extraction instead
 # ── 2026 NEW: swaggerspy — Swagger/OpenAPI endpoint discovery ────────────────
 command -v swaggerspy &>/dev/null || pip3 install swaggerspy --break-system-packages -q 2>/dev/null || true
 # ── v5.4.0 NEW: gowitness — screenshot capture for visual recon ──────────────
@@ -503,7 +502,7 @@ fi
 # analyticsrelationships — Google Analytics subdomain discovery
 command -v analyticsrelationships &>/dev/null || (go install github.com/Josue87/analyticsrelationships@latest 2>/dev/null && symlink_go_tool "analyticsrelationships") || true
 # gitleaks — git secret detection
-command -v gitleaks &>/dev/null || (go install github.com/gitleaks/gitleaks/v8/cmd/gitleaks@latest 2>/dev/null && symlink_go_tool "gitleaks") || true
+command -v gitleaks &>/dev/null || (go install github.com/gitleaks/gitleaks/v8@latest 2>/dev/null && symlink_go_tool "gitleaks") || true
 
 # ── reconftw — Full reconFTW power (Mega Mode) ───────────────────────────────
 # reconftw is the backbone of CyberMind's recon mode — 50+ tools in one

@@ -162,7 +162,7 @@ return []OmegaToolEntry{
 {"snmpwalk", "recon", "sudo apt install -y snmp", false, false, false, false, "", "", ""},
 {"dorks_hunter", "recon", "pip3 install dorks-hunter --break-system-packages", false, false, true, false, "", "", ""},
 {"analyticsrelationships", "recon", "go install github.com/Josue87/analyticsrelationships@latest", true, false, false, false, "", "", ""},
-{"gitleaks", "recon", "go install github.com/gitleaks/gitleaks/v8/cmd/gitleaks@latest", true, false, false, false, "", "", ""},
+{"gitleaks", "recon", "go install github.com/gitleaks/gitleaks/v8@latest", true, false, false, false, "", "", ""},
 {"testssl", "recon", "sudo apt install -y testssl.sh", false, false, false, false, "", "", ""},
 // ── Recon Phase 3 — Port Scanning ───────────────────────────────────
 {"nmap", "recon", "sudo apt install -y nmap", false, false, false, false, "", "", ""},
@@ -196,7 +196,7 @@ return []OmegaToolEntry{
 {"subjs", "hunt", "go install github.com/lc/subjs@latest", true, false, false, false, "", "", ""},
 {"trufflehog", "hunt", "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin", false, false, false, false, "", "", ""},
 {"mantra", "hunt", "go install github.com/MrEmpy/mantra@latest", true, false, false, false, "", "", ""},
-{"getjswords", "hunt", "go install github.com/m4ll0k/getjswords@latest", true, false, false, false, "", "", ""},
+// getjswords removed — private/broken repo (github.com/m4ll0k/getjswords)
 {"uro", "hunt", "pip3 install uro --break-system-packages", false, false, true, false, "", "", ""},
 {"swaggerspy", "hunt", "pip3 install swaggerspy --break-system-packages", false, false, true, false, "", "", ""},
 {"sourcemapper", "hunt", "go install github.com/denandz/sourcemapper@latest", true, false, false, false, "", "", ""},
@@ -206,17 +206,18 @@ return []OmegaToolEntry{
 {"x8", "hunt", "Download from https://github.com/Sh1Yo/x8/releases/latest", false, false, false, false, "", "", ""},
 {"smuggler", "hunt", "git clone https://github.com/defparam/smuggler /opt/smuggler && pip3 install -r /opt/smuggler/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/defparam/smuggler", "/opt/smuggler", "smuggler.py"},
 {"jwt_tool", "hunt", "git clone https://github.com/ticarpi/jwt_tool /opt/jwt_tool && pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/ticarpi/jwt_tool", "/opt/jwt_tool", "jwt_tool.py"},
-{"graphw00f", "hunt", "pip3 install graphw00f --break-system-packages", false, false, true, false, "", "", ""},
+{"graphw00f", "hunt", "git clone --depth=1 https://github.com/dolevf/graphw00f.git /opt/graphw00f && pip3 install requests --break-system-packages && ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f && chmod +x /opt/graphw00f/main.py", false, false, false, true, "https://github.com/dolevf/graphw00f.git", "/opt/graphw00f", "main.py"},
 // ── Hunt Phase 4 — XSS Hunting ──────────────────────────────────────
 {"dalfox", "hunt", "go install github.com/hahwul/dalfox/v2@latest", true, false, false, false, "", "", ""},
 {"xsstrike", "hunt", "git clone https://github.com/s0md3v/XSStrike /opt/xsstrike && pip3 install -r /opt/xsstrike/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/s0md3v/XSStrike", "/opt/xsstrike", "xsstrike.py"},
 {"kxss", "hunt", "go install github.com/Emoe/kxss@latest", true, false, false, false, "", "", ""},
-{"bxss", "hunt", "go install github.com/ethicalhackingplayground/bxss@latest", true, false, false, false, "", "", ""},
+{"bxss", "hunt", "go install github.com/ethicalhackingplayground/bxss/v2/cmd/bxss@latest", true, false, false, false, "", "", ""},
 {"corsy", "hunt", "git clone https://github.com/s0md3v/Corsy /opt/corsy && pip3 install -r /opt/corsy/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/s0md3v/Corsy", "/opt/corsy", "corsy.py"},
 // ── Hunt Phase 5 — Deep Vuln Scan ───────────────────────────────────
 {"gf", "hunt", "go install github.com/tomnomnom/gf@latest", true, false, false, false, "", "", ""},
 {"ssrfmap", "hunt", "git clone https://github.com/swisskyrepo/SSRFmap /opt/ssrfmap && pip3 install -r /opt/ssrfmap/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/swisskyrepo/SSRFmap", "/opt/ssrfmap", "ssrfmap.py"},
-{"tplmap", "hunt", "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/epinna/tplmap", "/opt/tplmap", "tplmap.py"},
+// tplmap requires Python 2 — use tinja instead (pip3 install tinja --break-system-packages)
+{"tinja", "hunt", "pip3 install tinja --break-system-packages", false, false, true, false, "", "", ""},
 {"liffy", "hunt", "git clone https://github.com/mzfr/liffy /opt/liffy && pip3 install -r /opt/liffy/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/mzfr/liffy", "/opt/liffy", "liffy.py"},
 {"gopherus", "hunt", "git clone https://github.com/tarunkant/Gopherus /opt/gopherus && pip3 install -r /opt/gopherus/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/tarunkant/Gopherus", "/opt/gopherus", "gopherus.py"},
 // ── Abhimanyu Phase 1 — Web Exploitation ────────────────────────────

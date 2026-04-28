@@ -2264,7 +2264,7 @@ func runUninstall() {
 			"dnstake", "second-order", "misconfig-mapper", "analyticsrelationships", "gitleaks",
 			"smap", "ctfr", "uro", "gospider", "cariddi", "urlfinder", "httprobe", "subjs",
 			"mantra", "kxss", "bxss", "gf", "chisel", "ligolo-ng", "kerbrute",
-			"gowitness", "getjswords", "swaggerspy", "waymore", "ghauri", "semgrep",
+			"gowitness", "swaggerspy", "waymore", "ghauri", "semgrep",
 			"trufflehog", "arjun", "paramspider", "graphw00f", "jwt_tool"}
 		for _, tool := range goTools {
 			for _, p := range []string{
@@ -3232,6 +3232,9 @@ func main() {
 				"/root/.cargo/bin/" + name,
 				"/snap/bin/" + name,
 				"/opt/" + name + "/" + name,
+				"/opt/cybermind-pytools/.venv/bin/" + name,
+				"/root/.local/share/pipx/venvs/" + name + "/bin/" + name,
+				home2 + "/.local/share/pipx/venvs/" + name + "/bin/" + name,
 			}
 			for _, p := range paths {
 				if _, err := os.Stat(p); err == nil {
@@ -3359,14 +3362,14 @@ func main() {
 			{"cariddi", "hunt", "go:github.com/edoardottt/cariddi/cmd/cariddi@latest", true, false},
 			{"subjs", "hunt", "go:github.com/lc/subjs@latest", true, false},
 			{"trufflehog", "hunt", "special:trufflehog", false, false},
-			{"mantra", "hunt", "go:github.com/Brosck/mantra@latest", true, false},
+			{"mantra", "hunt", "go:github.com/MrEmpy/mantra@latest", true, false},
 			// ── Hunt Phase 3 — Parameter Discovery ─────────────────────────────
 			{"paramspider", "hunt", "venv:https://github.com/devanshbatham/ParamSpider:/opt/ParamSpider:paramspider.py", false, false},
 			{"arjun", "hunt", "pipx:arjun", false, false},
 			{"x8", "hunt", "special:x8", false, false},
 			{"smuggler", "hunt", "venv:https://github.com/defparam/smuggler:/opt/smuggler:smuggler.py", false, false},
 			{"jwt_tool", "hunt", "venv:https://github.com/ticarpi/jwt_tool:/opt/jwt_tool:jwt_tool.py", false, false},
-			{"graphw00f", "hunt", "venv:https://github.com/dolevf/graphw00f:/opt/graphw00f:main.py", false, false},
+			{"graphw00f", "hunt", "special:graphw00f", false, false},
 			// ── Hunt Phase 4 — XSS Hunting ─────────────────────────────────────
 			{"xsstrike", "hunt", "venv:https://github.com/s0md3v/XSStrike:/opt/XSStrike:xsstrike.py", false, false},
 			{"dalfox", "hunt", "go:github.com/hahwul/dalfox/v2@latest", true, false},
@@ -3377,7 +3380,7 @@ func main() {
 			// ── Hunt Phase 5 — Deep Vuln Scan ──────────────────────────────────
 			{"gf", "hunt", "special:gf", true, false},
 			{"ssrfmap", "hunt", "venv:https://github.com/swisskyrepo/SSRFmap:/opt/ssrfmap:ssrfmap.py", false, false},
-			{"tplmap", "hunt", "venv:https://github.com/epinna/tplmap:/opt/tplmap:tplmap.py", false, false},
+			{"tplmap", "hunt", "special:tplmap", false, false},
 			{"liffy", "hunt", "venv:https://github.com/mzfr/liffy:/opt/liffy:liffy.py", false, false},
 			{"gopherus", "hunt", "venv:https://github.com/tarunkant/Gopherus:/opt/gopherus:gopherus.py", false, false},
 			// ── Exploit Phase 1 — Web Exploitation ─────────────────────────────
@@ -3386,7 +3389,7 @@ func main() {
 			{"wpscan", "exploit", "apt:wpscan", false, false},
 			{"nosqlmap", "exploit", "venv:https://github.com/codingo/NoSQLMap:/opt/nosqlmap:nosqlmap.py", false, false},
 			{"xxeinjector", "exploit", "special:xxeinjector", false, false},
-			{"tplmap", "exploit", "venv:https://github.com/epinna/tplmap:/opt/tplmap:tplmap.py", false, false},
+			{"tplmap", "exploit", "special:tplmap", false, false},
 			// ── Auth Attacks ────────────────────────────────────────────────────
 			{"hydra", "exploit", "apt:hydra", false, false},
 			{"john", "exploit", "apt:john", false, false},
@@ -3441,7 +3444,7 @@ func main() {
 			// ── 2025 NEW: Advanced Hunt ───────────────────────────────────────────
 			{"ghauri", "hunt", "pipx:ghauri", false, false},
 			{"cariddi", "hunt", "go:github.com/edoardottt/cariddi/cmd/cariddi@latest", true, false},
-			{"bxss", "hunt", "go:github.com/ethicalhackingplayground/bxss@latest", true, false},
+			{"bxss", "hunt", "go:github.com/ethicalhackingplayground/bxss/v2/cmd/bxss@latest", true, false},
 			{"mantra", "hunt", "go:github.com/MrEmpy/mantra@latest", true, false},
 			{"semgrep", "hunt", "pipx:semgrep", false, false},
 			{"liffy", "hunt", "venv:https://github.com/mzfr/liffy:/opt/liffy:liffy.py", false, false},
@@ -3455,7 +3458,7 @@ func main() {
 			// ── v5.4.0 NEW: JS Analysis ───────────────────────────────────────────
 			{"jsluice", "recon", "go:github.com/BishopFox/jsluice/cmd/jsluice@latest", true, false},
 			{"sourcemapper", "recon", "go:github.com/denandz/sourcemapper@latest", true, false},
-			{"getjswords", "hunt", "go:github.com/m4ll0k/getjswords@latest", true, false},
+			// getjswords removed — private/broken repo (github.com/m4ll0k/getjswords)
 			{"swaggerspy", "hunt", "pipx:swaggerspy", false, false},
 			// ── v5.4.0 NEW: Crawling Tools ────────────────────────────────────────
 			{"uro", "hunt", "pipx:uro", false, false},
@@ -3464,7 +3467,7 @@ func main() {
 			{"smap", "recon", "go:github.com/s0md3v/smap/cmd/smap@latest", true, false},
 			{"github-subdomains", "recon", "go:github.com/gwen001/github-subdomains@latest", true, false},
 			{"analyticsrelationships", "recon", "go:github.com/Josue87/analyticsrelationships@latest", true, false},
-			{"gitleaks", "recon", "go:github.com/gitleaks/gitleaks/v8/cmd/gitleaks@latest", true, false},
+			{"gitleaks", "recon", "go:github.com/gitleaks/gitleaks/v8@latest", true, false},
 			{"webanalyze", "recon", "go:github.com/rverton/webanalyze/cmd/webanalyze@latest", true, false},
 			{"favirecon", "recon", "go:github.com/edoardottt/favirecon/cmd/favirecon@latest", true, false},
 			// ── v5.4.0 NEW: Exploit Tools ─────────────────────────────────────────
@@ -3770,6 +3773,38 @@ sudo mv /tmp/sliver-client /usr/local/bin/sliver`)
 					dlCmd.Stdin = nil
 					installErr = dlCmd.Run()
 
+				case t.install == "special:graphw00f":
+					// graphw00f via pip fails on Python 3.13 (wsgiref is Python 2 only)
+					// Use git clone + install only 'requests' (not requirements.txt)
+					dlCmd := exec.Command("bash", "-c",
+						`set -e
+sudo rm -rf /opt/graphw00f
+git clone --depth=1 https://github.com/dolevf/graphw00f.git /opt/graphw00f
+pip3 install requests --break-system-packages -q
+sudo ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f
+sudo chmod +x /opt/graphw00f/main.py`)
+					dlCmd.Stdout = os.Stdout
+					dlCmd.Stderr = os.Stderr
+					dlCmd.Stdin = nil
+					installErr = dlCmd.Run()
+
+				case t.install == "special:tplmap":
+					// tplmap is Python 2 only — skip with message, add tinja as replacement
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+						fmt.Sprintf("  ⏭  %-20s tplmap requires Python 2 — use tinja instead", t.name)))
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+						"       Installing tinja (Python 3 SSTI scanner) as replacement..."))
+					tinjaCmd := exec.Command("pip3", "install", "tinja", "--break-system-packages", "-q")
+					tinjaCmd.Stdout = os.Stdout
+					tinjaCmd.Stderr = os.Stderr
+					tinjaCmd.Stdin = nil
+					if tinjaErr := tinjaCmd.Run(); tinjaErr == nil {
+						fmt.Println(lipgloss.NewStyle().Foreground(green).Render(
+							fmt.Sprintf("  ✓ %-20s tinja installed as tplmap replacement", t.name)))
+						instOK++
+					}
+					continue
+
 				case t.install == "special:evilginx2":
 					dlCmd := exec.Command("bash", "-c",
 						`set -e
@@ -3841,7 +3876,7 @@ rm -f /tmp/evilginx2.tar.gz`)
 						}
 					}
 					if retryErr == nil {
-						if _, checkErr := exec.LookPath(t.name); checkErr == nil {
+						if isToolInstalled(t.name) {
 							fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s installed (retry)", t.name)))
 							instOK++
 							continue
@@ -3999,7 +4034,8 @@ rm -f /tmp/evilginx2.tar.gz`)
 			{"shodan",    "shodan"},
 			{"h8mail",    "h8mail"},
 			{"arjun",     "arjun"},
-			{"graphw00f", "graphw00f"},
+			// graphw00f removed from pip — wsgiref is Python 2 only, fails on Python 3.13
+			// graphw00f is installed via git clone below
 			{"semgrep",   "semgrep"},
 			{"pip-audit", "pip-audit"},
 			{"waymore",   "waymore"},
@@ -4007,6 +4043,28 @@ rm -f /tmp/evilginx2.tar.gz`)
 
 		installed, failed := 0, 0
 		for _, t := range pipTools {
+			// Check if already installed before attempting install
+			alreadyOK := false
+			if _, err := exec.LookPath(t.name); err == nil {
+				alreadyOK = true
+			} else {
+				// Check venv locations
+				for _, p := range []string{
+					venvDir + "/.venv/bin/" + t.name,
+					"/opt/cybermind-pytools/.venv/bin/" + t.name,
+					"/root/.local/share/pipx/venvs/" + t.name + "/bin/" + t.name,
+				} {
+					if _, e := os.Stat(p); e == nil {
+						alreadyOK = true
+						break
+					}
+				}
+			}
+			if alreadyOK {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s already installed", t.name)))
+				installed++
+				continue
+			}
 			fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-20s"), t.name)
 			cmd := exec.Command(venvPip, "install", t.pkg, "-q")
 			cmd.Stdin = nil
@@ -4042,7 +4100,7 @@ rm -f /tmp/evilginx2.tar.gz`)
 			{"paramspider", "https://github.com/devanshbatham/ParamSpider", "/opt/ParamSpider", "paramspider.py"},
 			{"xsstrike",    "https://github.com/s0md3v/XSStrike",           "/opt/XSStrike",    "xsstrike.py"},
 			{"ssrfmap",     "https://github.com/swisskyrepo/SSRFmap",        "/opt/ssrfmap",     "ssrfmap.py"},
-			{"tplmap",      "https://github.com/epinna/tplmap",              "/opt/tplmap",      "tplmap.py"},
+			// tplmap is Python 2 only — skip, tinja is installed as replacement below
 			{"corsy",       "https://github.com/s0md3v/Corsy",               "/opt/corsy",       "corsy.py"},
 			{"smuggler",    "https://github.com/defparam/smuggler",           "/opt/smuggler",    "smuggler.py"},
 			{"jwt_tool",    "https://github.com/ticarpi/jwt_tool",            "/opt/jwt_tool",    "jwt_tool.py"},
@@ -4051,9 +4109,55 @@ rm -f /tmp/evilginx2.tar.gz`)
 		}
 
 		for _, gt := range gitTools {
+			// Check if already installed before attempting install
+			if _, err := exec.LookPath(gt.name); err == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ %-20s already installed", gt.name)))
+				installed++
+				continue
+			}
 			fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-20s"), gt.name)
 			if err := installPythonGitTool(gt.name, gt.repo, gt.dir, gt.script); err != nil {
 				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(" ✗ " + err.Error()))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ installed"))
+				installed++
+			}
+		}
+
+		// ── graphw00f — git clone method (pip fails on Python 3.13 due to wsgiref) ──
+		fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-20s"), "graphw00f")
+		if _, err := exec.LookPath("graphw00f"); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ already installed"))
+			installed++
+		} else {
+			gwCmd := exec.Command("bash", "-c",
+				`set -e
+sudo rm -rf /opt/graphw00f
+git clone --depth=1 https://github.com/dolevf/graphw00f.git /opt/graphw00f
+pip3 install requests --break-system-packages -q
+sudo ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f
+sudo chmod +x /opt/graphw00f/main.py`)
+			gwCmd.Stdin = nil
+			if err := gwCmd.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(" ✗ failed"))
+				failed++
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ installed"))
+				installed++
+			}
+		}
+
+		// ── tinja — Python 3 SSTI scanner (replaces tplmap which is Python 2 only) ──
+		fmt.Printf(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ %-20s"), "tinja (tplmap replacement)")
+		if _, err := exec.LookPath("tinja"); err == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ already installed"))
+			installed++
+		} else {
+			tinjaCmd := exec.Command("pip3", "install", "tinja", "--break-system-packages", "-q")
+			tinjaCmd.Stdin = nil
+			if err := tinjaCmd.Run(); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(red).Render(" ✗ failed"))
 				failed++
 			} else {
 				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(" ✓ installed"))

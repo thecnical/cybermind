@@ -890,32 +890,8 @@ OUTDIR="%s"
 			},
 		},
 	},
-	// ── getjswords — generate wordlist from JS content for targeted fuzzing ──────
-	// Extracts words from JS files to create custom wordlists
-	// These words are used by ffuf/feroxbuster for more targeted directory discovery
-	{
-		Name:        "getjswords",
-		Phase:       2,
-		Timeout:     120,
-		DomainOnly:  true,
-		InstallHint: "pip3 install getjswords --break-system-packages || go install github.com/m4ll0k/getjswords@latest",
-		BuildArgs: func(target string, ctx *ReconContext) []string {
-			u := target
-			if !strings.HasPrefix(u, "http") {
-				u = "https://" + u
-			}
-			return []string{"-u", u, "-o", "/tmp/cybermind_jswords.txt"}
-		},
-		FallbackArgs: []func(target string, ctx *ReconContext) []string{
-			func(target string, ctx *ReconContext) []string {
-				u := target
-				if !strings.HasPrefix(u, "http") {
-					u = "https://" + u
-				}
-				return []string{u}
-			},
-		},
-	},
+	// ── getjswords — REMOVED: private/broken repo (github.com/m4ll0k/getjswords)
+	// Use jsluice or cariddi for JS word extraction instead
 	// ── uro — URL deduplication + pattern normalization ───────────────────────────
 	// Deduplicates crawled URLs and normalizes patterns
 	// Reduces noise before feeding URLs to vulnerability scanners
@@ -2173,7 +2149,7 @@ var tier1Tools = []ToolSpec{
 		Phase:       2,
 		Timeout:     300,
 		DomainOnly:  true,
-		InstallHint: "go install github.com/gitleaks/gitleaks/v8/cmd/gitleaks@latest",
+		InstallHint: "go install github.com/gitleaks/gitleaks/v8@latest",
 		BuildArgs: func(target string, ctx *ReconContext) []string {
 			u := target
 			if !strings.HasPrefix(u, "http") {

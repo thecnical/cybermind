@@ -613,7 +613,7 @@ var huntRegistry = []HuntToolSpec{
 		Timeout:     300,
 		DomainOnly:  true,
 		// Fixed install hint — graphw00f is a git repo, not a pip package
-		InstallHint: "git clone https://github.com/dolevf/graphw00f.git /opt/graphw00f && pip3 install -r /opt/graphw00f/requirements.txt --break-system-packages && sudo ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f && sudo chmod +x /usr/local/bin/graphw00f",
+		InstallHint: "git clone --depth=1 https://github.com/dolevf/graphw00f.git /opt/graphw00f && pip3 install requests --break-system-packages && sudo ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f && sudo chmod +x /opt/graphw00f/main.py",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			u := target
 			if len(ctx.LiveURLs) > 0 {
@@ -784,7 +784,7 @@ var huntRegistry = []HuntToolSpec{
 		Phase:       4,
 		Timeout:     1800,
 		DomainOnly:  true,
-		InstallHint: "go install github.com/ethicalhackingplayground/bxss@latest",
+		InstallHint: "go install github.com/ethicalhackingplayground/bxss/v2/cmd/bxss@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			u := target
 			if len(ctx.LiveURLs) > 0 {
@@ -1273,35 +1273,8 @@ var huntRegistry = []HuntToolSpec{
 			},
 		},
 	},
-	// ── getjswords — generate wordlist from JS content ────────────────────────
-	// Extracts words from JS files → custom wordlist for targeted fuzzing
-	// These words are domain-specific and find endpoints generic wordlists miss
-	{
-		Name:        "getjswords",
-		Phase:       2,
-		Timeout:     120,
-		DomainOnly:  true,
-		InstallHint: "pip3 install getjswords --break-system-packages",
-		BuildArgs: func(target string, ctx *HuntContext) []string {
-			u := target
-			if len(ctx.LiveURLs) > 0 {
-				u = ctx.LiveURLs[0]
-			}
-			if !strings.HasPrefix(u, "http") {
-				u = "https://" + u
-			}
-			return []string{"-u", u, "-o", "/tmp/cybermind_jswords.txt"}
-		},
-		FallbackArgs: []func(target string, ctx *HuntContext) []string{
-			func(target string, ctx *HuntContext) []string {
-				u := target
-				if !strings.HasPrefix(u, "http") {
-					u = "https://" + u
-				}
-				return []string{u}
-			},
-		},
-	},
+	// ── getjswords — REMOVED: private/broken repo (github.com/m4ll0k/getjswords)
+	// Use jsluice or cariddi for JS word extraction instead
 	// ── uro — URL deduplication + pattern normalization ───────────────────────
 	// Deduplicates crawled URLs, removes noise, normalizes patterns
 	// Essential before feeding URLs to vulnerability scanners
@@ -1367,7 +1340,9 @@ var huntRegistry = []HuntToolSpec{
 		Phase:       5,
 		Timeout:     1800,
 		DomainOnly:  true,
-		InstallHint: "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
+		// tplmap requires Python 2 — use tinja instead on Python 3.13+
+		// Install tinja as replacement: pip3 install tinja --break-system-packages
+		InstallHint: "pip3 install tinja --break-system-packages  # tplmap requires Python 2; tinja is the Python 3 replacement",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
 			// Find a URL with parameters — best SSTI candidate
 			u := target
