@@ -6,6 +6,20 @@
 
 set -e
 
+# ── Disable ALL interactive prompts ──────────────────────────────────────────
+export DEBIAN_FRONTEND=noninteractive
+export DEBCONF_NONINTERACTIVE_SEEN=true
+export GIT_TERMINAL_PROMPT=0          # CRITICAL: Never ask for GitHub credentials
+export GIT_ASKPASS=echo               # Return empty string for any git credential prompt
+export GCM_INTERACTIVE=never          # Disable Git Credential Manager interactive mode
+export HOMEBREW_NO_AUTO_UPDATE=1      # No brew auto-update
+export PIP_NO_INPUT=1                 # No pip interactive prompts
+export NPM_CONFIG_YES=true            # No npm prompts
+
+# ── Trap errors — don't exit on tool install failures ────────────────────────
+# Individual tool installs use '|| true' so they never cause script exit
+# Only critical steps (binary download) will exit on failure
+
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -108,7 +122,7 @@ if [ -z "$BINARY" ] || ! command -v cybermind &>/dev/null; then
 
     REPO_DIR="/tmp/cybermind-src-$$"
     echo -e "${YELLOW}[*] Cloning CyberMind repo...${NC}"
-    git clone --depth=1 https://github.com/thecnical/cybermind.git "$REPO_DIR" 2>/dev/null
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/thecnical/cybermind.git "$REPO_DIR" 2>/dev/null
     cd "$REPO_DIR/cli"
     go mod tidy -q
     go build -ldflags="-s -w" -o /tmp/cybermind-built .
@@ -235,7 +249,7 @@ fi
 
 # ── GF patterns ───────────────────────────────────────────────────────────────
 if command -v gf &>/dev/null && [ ! -d "$HOME/.gf" ]; then
-    git clone --depth=1 https://github.com/1ndianl33t/Gf-Patterns "$HOME/.gf" 2>/dev/null || true
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/1ndianl33t/Gf-Patterns "$HOME/.gf" 2>/dev/null || true
 fi
 
 # ── Nuclei templates ──────────────────────────────────────────────────────────
@@ -251,23 +265,22 @@ if ! command -v interactsh-client &>/dev/null; then
 fi
 
 # ── Playwright (browser automation for XSS/OAuth/race conditions) ─────────────
+# NOTE: Playwright is optional — only needed for headless browser scanning of SPA apps
+# Skipped in initial install to avoid long download + Ubuntu 24.04 compatibility issues
+# Install manually if needed: sudo npm install -g playwright && sudo npx playwright install chromium --with-deps
 if ! command -v node &>/dev/null; then
-    echo -e "${DIM}  Installing Node.js for Playwright...${NC}"
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - 2>/dev/null || true
-    sudo apt-get install -y nodejs -qq 2>/dev/null || true
+    echo -e "${DIM}  Installing Node.js (lightweight, no Playwright)...${NC}"
+    sudo apt-get install -y nodejs npm -qq 2>/dev/null || true
 fi
-if command -v node &>/dev/null && ! node -e "require('playwright')" 2>/dev/null; then
-    echo -e "${DIM}  Installing Playwright (browser automation)...${NC}"
-    sudo npm install -g playwright 2>/dev/null || true
-    sudo npx playwright install chromium --with-deps 2>/dev/null || true
-fi
+# Playwright install is SKIPPED here — run manually if you need headless browser scanning:
+# sudo npm install -g playwright && sudo npx playwright install chromium --with-deps
 
 # ── install_python_git_tool: installs a Python git tool in isolated venv ──────
 # Usage: install_python_git_tool <name> <repo_url> <install_dir> <main_script>
 install_python_git_tool() {
     local name="$1" repo="$2" dir="$3" script="$4"
     command -v "$name" &>/dev/null && return 0
-    git clone --depth=1 "$repo" "$dir" 2>/dev/null || return 1
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 "$repo" "$dir" 2>/dev/null || return 1
     python3 -m venv "$dir/.venv" 2>/dev/null || { sudo apt-get install -y python3-venv -qq 2>/dev/null; python3 -m venv "$dir/.venv"; }
     "$dir/.venv/bin/pip" install --upgrade pip -q 2>/dev/null
     [ -f "$dir/requirements.txt" ] && "$dir/.venv/bin/pip" install -r "$dir/requirements.txt" -q 2>/dev/null || true
@@ -293,7 +306,7 @@ install_python_git_tool "jwt_tool" "https://github.com/ticarpi/jwt_tool" "/opt/j
 # GraphQL attack tool — proper git install
 # graphw00f — GraphQL fingerprinting (git install, not pip)
 if ! command -v graphw00f &>/dev/null; then
-    git clone --depth=1 https://github.com/dolevf/graphw00f.git /opt/graphw00f 2>/dev/null && \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/dolevf/graphw00f.git /opt/graphw00f 2>/dev/null && \
     pip3 install -r /opt/graphw00f/requirements.txt --break-system-packages -q 2>/dev/null && \
     sudo ln -sf /opt/graphw00f/main.py /usr/local/bin/graphw00f && \
     sudo chmod +x /usr/local/bin/graphw00f 2>/dev/null || true
@@ -387,7 +400,7 @@ command -v cloud_enum &>/dev/null || pipx install cloud-enum 2>/dev/null || \
 # SecretFinder — extract API keys/secrets from JS files
 if ! command -v secretfinder &>/dev/null; then
     echo -e "${DIM}  Installing SecretFinder...${NC}"
-    git clone --depth=1 https://github.com/m4ll0k/SecretFinder /opt/secretfinder 2>/dev/null && \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/m4ll0k/SecretFinder /opt/secretfinder 2>/dev/null && \
     pip3 install -r /opt/secretfinder/requirements.txt --break-system-packages -q 2>/dev/null && \
     printf '#!/bin/bash\npython3 /opt/secretfinder/SecretFinder.py "$@"\n' | sudo tee /usr/local/bin/secretfinder > /dev/null && \
     sudo chmod +x /usr/local/bin/secretfinder 2>/dev/null || true
@@ -395,7 +408,7 @@ fi
 # LinkFinder — extract endpoints from JS source code
 if ! command -v linkfinder &>/dev/null; then
     echo -e "${DIM}  Installing LinkFinder...${NC}"
-    git clone --depth=1 https://github.com/GerbenJavado/LinkFinder /opt/linkfinder 2>/dev/null && \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/GerbenJavado/LinkFinder /opt/linkfinder 2>/dev/null && \
     pip3 install -r /opt/linkfinder/requirements.txt --break-system-packages -q 2>/dev/null && \
     printf '#!/bin/bash\npython3 /opt/linkfinder/linkfinder.py "$@"\n' | sudo tee /usr/local/bin/linkfinder > /dev/null && \
     sudo chmod +x /usr/local/bin/linkfinder 2>/dev/null || true
@@ -403,7 +416,7 @@ fi
 # CMSeeK — CMS detection (WordPress, Drupal, Joomla, 180+ CMSes)
 if ! command -v cmseek &>/dev/null; then
     echo -e "${DIM}  Installing CMSeeK...${NC}"
-    git clone --depth=1 https://github.com/Tuhinshubhra/CMSeeK /opt/cmseek 2>/dev/null && \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/Tuhinshubhra/CMSeeK /opt/cmseek 2>/dev/null && \
     pip3 install -r /opt/cmseek/requirements.txt --break-system-packages -q 2>/dev/null && \
     printf '#!/bin/bash\npython3 /opt/cmseek/cmseek.py "$@"\n' | sudo tee /usr/local/bin/cmseek > /dev/null && \
     sudo chmod +x /usr/local/bin/cmseek 2>/dev/null || true
@@ -429,7 +442,7 @@ command -v emailfinder &>/dev/null || pipx install emailfinder 2>/dev/null || pi
 command -v dnsrecon &>/dev/null || sudo apt-get install -y dnsrecon -qq 2>/dev/null || pip3 install dnsrecon --break-system-packages -q 2>/dev/null || true
 # spoofcheck — email spoofing check
 if ! command -v spoofcheck &>/dev/null; then
-    git clone --depth=1 https://github.com/BishopFox/spoofcheck /opt/spoofcheck 2>/dev/null && \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/BishopFox/spoofcheck /opt/spoofcheck 2>/dev/null && \
     pip3 install -r /opt/spoofcheck/requirements.txt --break-system-packages -q 2>/dev/null && \
     printf '#!/bin/bash\npython3 /opt/spoofcheck/spoofcheck.py "$@"\n' | sudo tee /usr/local/bin/spoofcheck > /dev/null && \
     sudo chmod +x /usr/local/bin/spoofcheck 2>/dev/null || true
@@ -499,9 +512,11 @@ if ! command -v reconftw &>/dev/null || [ ! -f /opt/reconftw/reconftw.sh ]; then
     echo -e "${DIM}  Installing reconftw (Mega Mode — 5-10 min)...${NC}"
     # Remove stale install if exists
     [ -d /opt/reconftw ] && sudo rm -rf /opt/reconftw 2>/dev/null || true
-    git clone --depth=1 https://github.com/six2dez/reconftw.git /opt/reconftw 2>/dev/null && \
+    # Clone with credential prompt disabled — public repo, no auth needed
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo \
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/six2dez/reconftw.git /opt/reconftw 2>/dev/null && \
     chmod +x /opt/reconftw/reconftw.sh /opt/reconftw/install.sh && \
-    (cd /opt/reconftw && timeout 600 bash install.sh 2>/dev/null || true) && \
+    (cd /opt/reconftw && GIT_TERMINAL_PROMPT=0 timeout 600 bash install.sh 2>/dev/null || true) && \
     printf '#!/bin/bash\nexec bash /opt/reconftw/reconftw.sh "$@"\n' | sudo tee /usr/local/bin/reconftw > /dev/null && \
     sudo chmod +x /usr/local/bin/reconftw && \
     echo -e "${GREEN}[✓] reconftw installed${NC}" || \
@@ -509,7 +524,7 @@ if ! command -v reconftw &>/dev/null || [ ! -f /opt/reconftw/reconftw.sh ]; then
 elif [ -f /opt/reconftw/reconftw.sh ]; then
     # Update existing reconftw to latest
     echo -e "${DIM}  Updating reconftw to latest...${NC}"
-    (cd /opt/reconftw && git pull --ff-only 2>/dev/null || true)
+    (cd /opt/reconftw && GIT_TERMINAL_PROMPT=0 git pull --ff-only 2>/dev/null || true)
     # Ensure wrapper is up to date
     printf '#!/bin/bash\nexec bash /opt/reconftw/reconftw.sh "$@"\n' | sudo tee /usr/local/bin/reconftw > /dev/null
     sudo chmod +x /usr/local/bin/reconftw
