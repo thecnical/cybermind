@@ -2050,6 +2050,25 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 			// Set mode env so reconftw uses correct flags (quick/-s, deep/-r, overnight/-a --deep)
 			os.Setenv("CYBERMIND_MODE", mode)
 
+			// ── NEW v5.1.0: Crawling Intelligence Analysis ─────────────────
+			// Before running recon, analyze what crawling types are needed
+			crawlingIntel := brain.AnalyzeCrawlingNeeds(target, state.Technologies, state.LiveURLs, state.OpenPorts)
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				brain.FormatCrawlingPlan(crawlingIntel)))
+
+			// Set headless mode if SPA detected
+			if crawlingIntel.SPADetected {
+				os.Setenv("CYBERMIND_HEADLESS_CRAWL", "true")
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+					"  ⚡ SPA detected — enabling headless browser crawling (katana -headless)"))
+			}
+			// Set API crawling if API detected
+			if crawlingIntel.APIDetected {
+				os.Setenv("CYBERMIND_API_CRAWL", "true")
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+					"  🔌 API detected — enabling Swagger/OpenAPI crawling"))
+			}
+
 			reconResult = runAutoReconSilent(target, nil)
 			state.ReconDone = true
 			state.Phase = "recon_done"
@@ -2322,6 +2341,25 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		case "hunt":
 			agentAct(fmt.Sprintf("Running HUNT phase (focus: %s) — PARALLEL MODE...", decision.VulnFocus))
 			omegaLog("\n═══ AGENT: HUNT (PARALLEL) ═══")
+
+			// ── NEW v5.2.0: Crawling Intelligence Analysis for Hunt ───────
+			// Before running hunt, analyze what crawling types are needed
+			crawlingIntel := brain.AnalyzeCrawlingNeeds(target, state.Technologies, state.LiveURLs, state.OpenPorts)
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
+				brain.FormatCrawlingPlan(crawlingIntel)))
+
+			// Set headless mode if SPA detected
+			if crawlingIntel.SPADetected {
+				os.Setenv("CYBERMIND_HEADLESS_CRAWL", "true")
+				fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
+					"  ⚡ SPA detected — enabling headless browser crawling (katana -headless)"))
+			}
+			// Set API crawling if API detected
+			if crawlingIntel.APIDetected {
+				os.Setenv("CYBERMIND_API_CRAWL", "true")
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+					"  🔌 API detected — enabling Swagger/OpenAPI crawling"))
+			}
 
 			// ── Update self-think with fresh recon data ───────────────────
 			if reconResult.Context != nil {

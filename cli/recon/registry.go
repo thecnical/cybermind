@@ -827,7 +827,12 @@ OUTDIR="%s"
 			},
 		},
 	},
-	// ── katana-recon — structured crawl for endpoint discovery ───────────────
+	// ── katana — structured crawl + headless mode for SPA/JS-heavy sites ────────
+	// katana supports both standard and headless (Playwright) crawling
+	// -headless: uses real browser for JS-rendered content (SPA, React, Vue, Angular)
+	// -jc: JavaScript crawling mode (parses JS files for endpoints)
+	// -aff: automatic form filling (discovers POST endpoints)
+	// -kf all: extract all known fields (forms, links, scripts, etc.)
 	{
 		Name:        "katana",
 		Phase:       2,
@@ -839,17 +844,34 @@ OUTDIR="%s"
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			return []string{
+			// Detect if SPA/JS-heavy based on tech stack
+			isSPA := false
+			for _, tech := range ctx.Technologies {
+				t := strings.ToLower(tech)
+				if strings.Contains(t, "react") || strings.Contains(t, "vue") ||
+					strings.Contains(t, "angular") || strings.Contains(t, "next") ||
+					strings.Contains(t, "nuxt") || strings.Contains(t, "svelte") {
+					isSPA = true
+					break
+				}
+			}
+			args := []string{
 				"-u", u,
-				"-d", "2",
+				"-d", "3",
 				"-c", "20",
-				"-jc",
-				"-kf", "all",
+				"-jc",         // JS crawling
+				"-kf", "all",  // extract all fields
+				"-aff",        // automatic form filling
 				"-no-color",
 				"-silent",
 				"-timeout", "10",
 				"-o", "/tmp/cybermind_katana_recon.txt",
 			}
+			// Use headless mode for SPA sites
+			if isSPA {
+				args = append(args, "-headless")
+			}
+			return args
 		},
 		FallbackArgs: []func(target string, ctx *ReconContext) []string{
 			func(target string, ctx *ReconContext) []string {
@@ -857,7 +879,69 @@ OUTDIR="%s"
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}
-				return []string{"-u", u, "-d", "1", "-c", "10", "-silent", "-timeout", "10"}
+				return []string{"-u", u, "-d", "2", "-c", "10", "-jc", "-silent", "-timeout", "10"}
+			},
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-d", "1", "-c", "5", "-silent", "-timeout", "10"}
+			},
+		},
+	},
+	// ── getjswords — generate wordlist from JS content for targeted fuzzing ──────
+	// Extracts words from JS files to create custom wordlists
+	// These words are used by ffuf/feroxbuster for more targeted directory discovery
+	{
+		Name:        "getjswords",
+		Phase:       2,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "pip3 install getjswords --break-system-packages || go install github.com/m4ll0k/getjswords@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-u", u, "-o", "/tmp/cybermind_jswords.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{u}
+			},
+		},
+	},
+	// ── uro — URL deduplication + pattern normalization ───────────────────────────
+	// Deduplicates crawled URLs and normalizes patterns
+	// Reduces noise before feeding URLs to vulnerability scanners
+	{
+		Name:        "uro",
+		Phase:       2,
+		Timeout:     60,
+		DomainOnly:  true,
+		InstallHint: "pip3 install uro --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// uro reads from stdin — pipe all collected URLs through it
+			allURLFiles := []string{
+				"/tmp/cybermind_gau_recon.txt",
+				"/tmp/cybermind_waymore_recon.txt",
+				"/tmp/cybermind_katana_recon.txt",
+			}
+			for _, f := range allURLFiles {
+				if _, err := os.Stat(f); err == nil {
+					return []string{"-i", f, "-o", "/tmp/cybermind_uro_recon.txt"}
+				}
+			}
+			return []string{"-o", "/tmp/cybermind_uro_recon.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-o", "/tmp/cybermind_uro_recon.txt"}
 			},
 		},
 	},

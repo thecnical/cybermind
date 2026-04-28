@@ -194,6 +194,10 @@ return []OmegaToolEntry{
 {"subjs", "hunt", "go install github.com/lc/subjs@latest", true, false, false, false, "", "", ""},
 {"trufflehog", "hunt", "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin", false, false, false, false, "", "", ""},
 {"mantra", "hunt", "go install github.com/MrEmpy/mantra@latest", true, false, false, false, "", "", ""},
+{"getjswords", "hunt", "go install github.com/m4ll0k/getjswords@latest", true, false, false, false, "", "", ""},
+{"uro", "hunt", "pip3 install uro --break-system-packages", false, false, true, false, "", "", ""},
+{"swaggerspy", "hunt", "pip3 install swaggerspy --break-system-packages", false, false, true, false, "", "", ""},
+{"sourcemapper", "hunt", "go install github.com/denandz/sourcemapper@latest", true, false, false, false, "", "", ""},
 // ── Hunt Phase 3 — Parameter Discovery ──────────────────────────────
 {"paramspider", "hunt", "git clone https://github.com/devanshbatham/ParamSpider /opt/paramspider && pip3 install -r /opt/paramspider/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/devanshbatham/ParamSpider", "/opt/paramspider", "paramspider.py"},
 {"arjun", "hunt", "pip3 install arjun --break-system-packages", false, false, true, false, "", "", ""},

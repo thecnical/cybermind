@@ -18,7 +18,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="5.1.0"
+VERSION="5.2.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -362,6 +362,11 @@ command -v jsluice &>/dev/null || \
 # ── 2026 NEW: sourcemapper — extract source maps from JS ─────────────────────
 command -v sourcemapper &>/dev/null || \
     (go install github.com/denandz/sourcemapper@latest 2>/dev/null && symlink_go_tool "sourcemapper") || true
+# ── 2026 NEW: getjswords — generate wordlist from JS content ─────────────────
+command -v getjswords &>/dev/null || \
+    (go install github.com/m4ll0k/getjswords@latest 2>/dev/null && symlink_go_tool "getjswords") || true
+# ── 2026 NEW: swaggerspy — Swagger/OpenAPI endpoint discovery ────────────────
+command -v swaggerspy &>/dev/null || pip3 install swaggerspy --break-system-packages -q 2>/dev/null || true
 # ── 2025 NEW: semgrep — SAST code analysis ───────────────────────────────────
 command -v semgrep &>/dev/null || pipx install semgrep 2>/dev/null || \
     pip3 install semgrep --break-system-packages -q 2>/dev/null || true

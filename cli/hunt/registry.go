@@ -222,18 +222,39 @@ var huntRegistry = []HuntToolSpec{
 		DomainOnly:  true,
 		InstallHint: "go install github.com/projectdiscovery/katana/cmd/katana@latest",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Detect SPA/JS-heavy tech for headless mode
+			isSPA := false
+			for _, tech := range ctx.Technologies {
+				t := strings.ToLower(tech)
+				if strings.Contains(t, "react") || strings.Contains(t, "vue") ||
+					strings.Contains(t, "angular") || strings.Contains(t, "next") ||
+					strings.Contains(t, "nuxt") || strings.Contains(t, "svelte") ||
+					strings.Contains(t, "ember") || strings.Contains(t, "backbone") {
+					isSPA = true
+					break
+				}
+			}
+
+			baseArgs := []string{
+				"-d", "3",
+				"-c", "25",
+				"-jc",        // JS crawling
+				"-kf", "all", // extract all fields
+				"-aff",       // automatic form filling — discovers POST endpoints
+				"-no-color", "-silent",
+				"-timeout", "10",
+				"-o", "/tmp/cybermind_katana_hunt.txt",
+			}
+
+			// Add headless mode for SPA sites
+			if isSPA {
+				baseArgs = append(baseArgs, "-headless")
+			}
+
 			if len(ctx.LiveURLs) > 1 {
 				f := writeTempList(ctx.LiveURLs[:min(50, len(ctx.LiveURLs))])
 				if f != "" {
-					return []string{
-						"-list", f,
-						"-d", "3",   // depth 3 (was 10)
-						"-c", "25",  // 25 concurrent (was 500 — kills process)
-						"-jc", "-kf", "all", "-aff",
-						"-no-color", "-silent",
-						"-timeout", "10",
-						"-o", "/tmp/cybermind_katana_hunt.txt",
-					}
+					return append([]string{"-list", f}, baseArgs...)
 				}
 			}
 			u := target
@@ -243,14 +264,7 @@ var huntRegistry = []HuntToolSpec{
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			return []string{
-				"-u", u,
-				"-d", "3", "-c", "25",
-				"-jc", "-kf", "all", "-aff",
-				"-no-color", "-silent",
-				"-timeout", "10",
-				"-o", "/tmp/cybermind_katana_hunt.txt",
-			}
+			return append([]string{"-u", u}, baseArgs...)
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
@@ -1256,6 +1270,93 @@ var huntRegistry = []HuntToolSpec{
 					u = "https://" + u
 				}
 				return []string{"-u", u}
+			},
+		},
+	},
+	// ── getjswords — generate wordlist from JS content ────────────────────────
+	// Extracts words from JS files → custom wordlist for targeted fuzzing
+	// These words are domain-specific and find endpoints generic wordlists miss
+	{
+		Name:        "getjswords",
+		Phase:       2,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "pip3 install getjswords --break-system-packages",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{"-u", u, "-o", "/tmp/cybermind_jswords.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{u}
+			},
+		},
+	},
+	// ── uro — URL deduplication + pattern normalization ───────────────────────
+	// Deduplicates crawled URLs, removes noise, normalizes patterns
+	// Essential before feeding URLs to vulnerability scanners
+	{
+		Name:        "uro",
+		Phase:       2,
+		Timeout:     60,
+		DomainOnly:  true,
+		InstallHint: "pip3 install uro --break-system-packages",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// uro reads from stdin — pipe all collected URLs through it
+			allURLFiles := []string{
+				"/tmp/cybermind_gau.txt",
+				"/tmp/cybermind_waymore.txt",
+				"/tmp/cybermind_katana_hunt.txt",
+			}
+			for _, f := range allURLFiles {
+				if _, err := os.Stat(f); err == nil {
+					return []string{"-i", f, "-o", "/tmp/cybermind_uro_hunt.txt"}
+				}
+			}
+			return []string{"-o", "/tmp/cybermind_uro_hunt.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-o", "/tmp/cybermind_uro_hunt.txt"}
+			},
+		},
+	},
+	// ── SwaggerSpy — Swagger/OpenAPI endpoint discovery ──────────────────────
+	// Finds undocumented API endpoints via Swagger/OpenAPI spec analysis
+	// Discovers hidden admin endpoints, deprecated APIs, internal routes
+	{
+		Name:        "swaggerspy",
+		Phase:       2,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "pip3 install swaggerspy --break-system-packages || git clone https://github.com/UndeadSec/SwaggerSpy /opt/swaggerspy && pip3 install -r /opt/swaggerspy/requirements.txt --break-system-packages && sudo ln -sf /opt/swaggerspy/swaggerspy.py /usr/local/bin/swaggerspy",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{u}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{u}
 			},
 		},
 	},
