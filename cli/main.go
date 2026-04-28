@@ -2118,6 +2118,7 @@ func runUninstall() {
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • cybermind + cbm binaries from your system"))
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • ~/.cybermind/ (config, API key, chat history)"))
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • cybermind from PATH"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    • (optional) security tools + /opt/reconftw + /tmp/cybermind_*"))
 	fmt.Println()
 	fmt.Print(lipgloss.NewStyle().Foreground(red).Render("  Are you sure? [y/N] → "))
 
@@ -2262,21 +2263,38 @@ func runUninstall() {
 			"github-subdomains", "webanalyze", "favirecon", "jsluice", "sourcemapper",
 			"dnstake", "second-order", "misconfig-mapper", "analyticsrelationships", "gitleaks",
 			"smap", "ctfr", "uro", "gospider", "cariddi", "urlfinder", "httprobe", "subjs",
-			"mantra", "kxss", "bxss", "gf", "chisel", "ligolo-ng", "kerbrute"}
+			"mantra", "kxss", "bxss", "gf", "chisel", "ligolo-ng", "kerbrute",
+			"gowitness", "getjswords", "swaggerspy", "waymore", "ghauri", "semgrep",
+			"trufflehog", "arjun", "paramspider", "graphw00f", "jwt_tool"}
 		for _, tool := range goTools {
-			for _, p := range []string{"/usr/local/bin/" + tool, "/root/go/bin/" + tool} {
+			for _, p := range []string{
+				"/usr/local/bin/" + tool,
+				"/root/go/bin/" + tool,
+				homedir + "/go/bin/" + tool,
+				"/root/.local/bin/" + tool,
+				homedir + "/.local/bin/" + tool,
+			} {
 				os.Remove(p)
 			}
 		}
-		// Remove opt directories
-		optDirs := []string{"/opt/reconftw", "/opt/secretfinder", "/opt/linkfinder", "/opt/cmseek",
+		// Remove opt directories (git-cloned tools)
+		optDirs := []string{
+			"/opt/reconftw", "/opt/secretfinder", "/opt/linkfinder", "/opt/cmseek",
 			"/opt/xsstrike", "/opt/corsy", "/opt/ssrfmap", "/opt/tplmap", "/opt/liffy",
 			"/opt/gopherus", "/opt/smuggler", "/opt/jwt_tool", "/opt/graphw00f",
-			"/opt/paramspider", "/opt/nosqlmap", "/opt/spoofcheck", "/opt/dorks_hunter"}
-		for _, d := range optDirs {
-			os.RemoveAll(d)
+			"/opt/paramspider", "/opt/nosqlmap", "/opt/spoofcheck", "/opt/dorks_hunter",
+			"/opt/cybermind-pytools", "/opt/shodan-venv", "/opt/sliver",
+			"/opt/xxeinjector", "/opt/testssl", "/opt/pywhisker",
 		}
+		for _, d := range optDirs {
+			if _, err := os.Stat(d); err == nil {
+				exec.Command("sudo", "rm", "-rf", d).Run()
+			}
+		}
+		// Remove /tmp/cybermind_* temp files
+		exec.Command("bash", "-c", "rm -rf /tmp/cybermind_* /tmp/cybermind-* 2>/dev/null").Run()
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Security tools removed"))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ /tmp/cybermind_* temp files cleaned"))
 	}
 
 	if failed == 0 {
@@ -3643,22 +3661,13 @@ func main() {
 					installErr = cmd2.Run()
 
 				case t.install == "special:playwright":
-					// Install Playwright for headless browser scanning (SPA support)
-					aptInstall("nodejs", "npm")
-					npmCmd := exec.Command("sudo", "npm", "install", "-g", "playwright")
-					npmCmd.Stdout = os.Stdout
-					npmCmd.Stderr = os.Stderr
-					npmCmd.Stdin = nil
-					if err := npmCmd.Run(); err != nil {
-						installErr = err
-					} else {
-						// Install Chromium browser
-						pwCmd := exec.Command("sudo", "npx", "playwright", "install", "chromium", "--with-deps")
-						pwCmd.Stdout = os.Stdout
-						pwCmd.Stderr = os.Stderr
-						pwCmd.Stdin = nil
-						pwCmd.Run() // non-fatal
-					}
+					// Playwright — optional, only for headless browser scanning of SPA apps
+					// Show as optional — don't auto-install (100MB+ download)
+					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+						fmt.Sprintf("  ⏭  %-20s optional (SPA headless scanning)", t.name)))
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+						"       Install manually: sudo npm install -g playwright && sudo npx playwright install chromium --with-deps"))
+					continue
 
 				case t.install == "special:shodan":
 					// Fix: shodan needs setuptools for pkg_resources
