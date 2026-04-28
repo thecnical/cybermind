@@ -226,15 +226,17 @@ func printHelp() {
 		fmt.Println(d.Render("  TELEGRAM_BOT_TOKEN   → bug found notifications via Telegram"))
 		fmt.Println(d.Render("  TELEGRAM_CHAT_ID     → your Telegram chat ID for notifications"))
 		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🆕 New in v4.9.0:"))
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🆕 New in v5.4.0 — World-Class Bug Bounty:"))
 		fmt.Println(g.Render("  cybermind /recon <target> --incremental") + d.Render("  → Only scan new assets since last run"))
 		fmt.Println(g.Render("  cybermind /recon <target> --monitor") + d.Render("      → Continuous monitoring mode"))
-		fmt.Println(d.Render("  ↳ JS deep analysis: SecretFinder, jsluice, LinkFinder, retire.js, sourcemapper, CMSeeK"))
-		fmt.Println(d.Render("  ↳ HTML report auto-generated after every scan → ~/.cybermind/reports/"))
-		fmt.Println(d.Render("  ↳ Diff tracking: highlights new findings vs previous scan"))
-		fmt.Println(d.Render("  ↳ Hotlist: risk-scored top assets → ~/.cybermind/recon/<target>/hotlist.txt"))
-		fmt.Println(d.Render("  ↳ Asset store: all findings → ~/.cybermind/assets.jsonl"))
-		fmt.Println(d.Render("  ↳ OMEGA: reconFTW mode-aware (quick=-s, deep=-r, overnight=-a --deep)"))
+		fmt.Println(d.Render("  ↳ 30+ recon tools: gowitness (screenshots), ASN→CIDR pipeline, GraphQL discovery"))
+		fmt.Println(d.Render("  ↳ 40+ hunt tools: IDOR, race conditions, OAuth, cache poisoning, prototype pollution"))
+		fmt.Println(d.Render("  ↳ Confidence scoring: every bug scored 0.0-1.0, false positives filtered"))
+		fmt.Println(d.Render("  ↳ Chain detection: SSRF+port→RCE, XSS+CSRF→ATO, SQLi+admin→full compromise"))
+		fmt.Println(d.Render("  ↳ Real-time feedback: OMEGA adapts mid-execution based on tool output"))
+		fmt.Println(d.Render("  ↳ Adaptive WAF bypass: Cloudflare/Akamai/AWS/Imperva/F5 specific tamper scripts"))
+		fmt.Println(d.Render("  ↳ Credential reuse: found creds auto-tested across SSH/SMB/RDP/MySQL/Redis"))
+		fmt.Println(d.Render("  ↳ HTML report + hotlist + asset store + diff tracking after every scan"))
 		fmt.Println()
 	}
 
@@ -265,14 +267,15 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /doctor") + d.Render("               → update CLI + check/install tools"))
 	fmt.Println(g.Render("  cybermind report") + d.Render("                → generate pentest report from history"))
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🆕 New in v5.0.0:"))
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🆕 New in v5.4.0:"))
 	fmt.Println(g.Render("  cybermind /recon <target> --incremental") + d.Render("  → only scan new assets"))
 	fmt.Println(g.Render("  cybermind /recon <target> --monitor") + d.Render("      → continuous monitoring"))
-	fmt.Println(d.Render("  ↳ 60+ recon tools: Tier1(wafw00f/uncover/shuffledns/cdncheck/smap/rustscan/dnsrecon/dnstake)"))
-	fmt.Println(d.Render("  ↳ Tier2(ctfr/sslscan/testssl/misconfig-mapper/second-order/analyticsrelationships)"))
-	fmt.Println(d.Render("  ↳ Tier3(crosslinked/dorks_hunter/gitleaks/enum4linux-ng)"))
-	fmt.Println(d.Render("  ↳ HTML report + hotlist + asset store + diff tracking after every scan"))
-	fmt.Println(d.Render("  ↳ Recon Brain: attack surface analysis + auto hunt focus"))
+	fmt.Println(d.Render("  ↳ 30+ recon tools: gowitness screenshots, ASN→CIDR, GraphQL, subdomain takeover verify"))
+	fmt.Println(d.Render("  ↳ 40+ hunt tools: IDOR, race conditions, OAuth/OIDC, cache poisoning, deserialization"))
+	fmt.Println(d.Render("  ↳ Confidence scoring (0.0-1.0) + chain detection (SSRF→RCE, XSS→ATO)"))
+	fmt.Println(d.Render("  ↳ Real-time OMEGA feedback + adaptive WAF bypass (Cloudflare/Akamai/AWS/Imperva)"))
+	fmt.Println(d.Render("  ↳ Credential reuse: found creds auto-tested across SSH/SMB/RDP/MySQL/Redis"))
+	fmt.Println(d.Render("  ↳ Kerberoasting + AS-REP Roasting + AWS exploitation (pacu) in Abhimanyu"))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  HISTORY:"))
 	fmt.Println(g.Render("  cybermind history") + d.Render("               → view chat history"))
@@ -3349,6 +3352,26 @@ func main() {
 			{"node", "hunt", "apt:nodejs", false, false},
 			{"nuclei", "hunt", "go:github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false},
 			{"playwright", "hunt", "special:playwright", false, false},
+			// ── v5.4.0 NEW: Screenshot + Visual Recon ────────────────────────────
+			{"gowitness", "recon", "go:github.com/sensepost/gowitness@latest", true, false},
+			// ── v5.4.0 NEW: JS Analysis ───────────────────────────────────────────
+			{"jsluice", "recon", "go:github.com/BishopFox/jsluice/cmd/jsluice@latest", true, false},
+			{"sourcemapper", "recon", "go:github.com/denandz/sourcemapper@latest", true, false},
+			{"getjswords", "hunt", "go:github.com/m4ll0k/getjswords@latest", true, false},
+			{"swaggerspy", "hunt", "pipx:swaggerspy", false, false},
+			// ── v5.4.0 NEW: Crawling Tools ────────────────────────────────────────
+			{"uro", "hunt", "pipx:uro", false, false},
+			{"ctfr", "recon", "pipx:ctfr", false, false},
+			{"dnstake", "recon", "go:github.com/pwnesia/dnstake/cmd/dnstake@latest", true, false},
+			{"smap", "recon", "go:github.com/s0md3v/smap/cmd/smap@latest", true, false},
+			{"github-subdomains", "recon", "go:github.com/gwen001/github-subdomains@latest", true, false},
+			{"analyticsrelationships", "recon", "go:github.com/Josue87/analyticsrelationships@latest", true, false},
+			{"gitleaks", "recon", "go:github.com/gitleaks/gitleaks/v8/cmd/gitleaks@latest", true, false},
+			{"webanalyze", "recon", "go:github.com/rverton/webanalyze/cmd/webanalyze@latest", true, false},
+			{"favirecon", "recon", "go:github.com/edoardottt/favirecon/cmd/favirecon@latest", true, false},
+			// ── v5.4.0 NEW: Exploit Tools ─────────────────────────────────────────
+			{"pacu", "exploit", "pipx:pacu", false, false},
+			{"roadrecon", "exploit", "pipx:roadrecon", false, false},
 		}
 
 		var missing []toolEntry
