@@ -34,6 +34,7 @@ type Bug struct {
 	CVE         string   // if applicable
 	CVSS        float64
 	CWE         string
+	Confidence  float64  // 0.0-1.0 confidence score
 	FoundAt     time.Time
 }
 
@@ -85,6 +86,10 @@ var negativePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)0\s+vulnerabilities`),
 	regexp.MustCompile(`(?i)nothing\s+found`),
 	regexp.MustCompile(`(?i)target\s+does\s+not\s+appear\s+to\s+be\s+vulnerable`),
+	regexp.MustCompile(`(?i)no\s+issues\s+found`),
+	regexp.MustCompile(`(?i)scan\s+complete.*0\s+findings`),
+	regexp.MustCompile(`(?i)all\s+parameters\s+appear\s+safe`),
+	regexp.MustCompile(`(?i)no\s+vulnerabilities\s+detected`),
 }
 
 // isNegativeOutput returns true if the output is a "not vulnerable" result — should be skipped.
@@ -169,14 +174,15 @@ func ParseNucleiOutput(output, target string) []Bug {
 		}
 
 		bug := Bug{
-			Title:    fmt.Sprintf("[%s] %s", strings.ToUpper(string(sev)), templateID),
-			Severity: sev,
-			Tool:     "nuclei",
-			Target:   target,
-			URL:      url,
-			Evidence: line,
-			CVE:      cve,
-			FoundAt:  time.Now(),
+			Title:      fmt.Sprintf("[%s] %s", strings.ToUpper(string(sev)), templateID),
+			Severity:   sev,
+			Tool:       "nuclei",
+			Target:     target,
+			URL:        url,
+			Evidence:   line,
+			CVE:        cve,
+			Confidence: toolConfidence("nuclei", sev),
+			FoundAt:    time.Now(),
 		}
 		bug.Description = describeNucleiTemplate(templateID)
 		bug.CVSS = severityToCVSS(sev)
@@ -228,6 +234,7 @@ func ParseDalfoxOutput(output, target string) []Bug {
 			Evidence:    line,
 			CVSS:        6.1,
 			CWE:         "CWE-79",
+			Confidence:  toolConfidence("dalfox", SeverityHigh),
 			FoundAt:     time.Now(),
 		})
 	}
@@ -264,68 +271,106 @@ func parseGenericOutput(toolName, output, target string) []Bug {
 	if sqlmapPattern.MatchString(output) {
 		evidence := extractEvidence(output, sqlmapPattern)
 		if evidence != "" && !isNegativeOutput(evidence) {
-			bugs = append(bugs, Bug{
-				Title:       "SQL Injection — Confirmed",
-				Severity:    SeverityCritical,
-				Tool:        toolName,
-				Target:      target,
-				Description: "SQL injection vulnerability confirmed. Attacker can read/modify database, potentially achieve RCE.",
-				Evidence:    evidence,
-				CVSS:        9.8,
-				CWE:         "CWE-89",
-				FoundAt:     time.Now(),
-			})
+			conf := toolConfidence("sqlmap", SeverityCritical)
+			if conf >= MinConfidenceThreshold {
+				bugs = append(bugs, Bug{
+					Title:       "SQL Injection — Confirmed",
+					Severity:    SeverityCritical,
+					Tool:        toolName,
+					Target:      target,
+					Description: "SQL injection vulnerability confirmed. Attacker can read/modify database, potentially achieve RCE.",
+					Evidence:    evidence,
+					CVSS:        9.8,
+					CWE:         "CWE-89",
+					Confidence:  conf,
+					FoundAt:     time.Now(),
+				})
+			}
 		}
 	}
 
 	if ssrfPattern.MatchString(output) {
 		evidence := extractEvidence(output, ssrfPattern)
 		if evidence != "" && !isNegativeOutput(evidence) {
-			bugs = append(bugs, Bug{
-				Title:       "Server-Side Request Forgery (SSRF) — Confirmed",
-				Severity:    SeverityHigh,
-				Tool:        toolName,
-				Target:      target,
-				Description: "SSRF vulnerability confirmed. Server made a request to an internal/controlled endpoint.",
-				Evidence:    evidence,
-				CVSS:        8.6,
-				CWE:         "CWE-918",
-				FoundAt:     time.Now(),
-			})
+			conf := 0.75
+			if conf >= MinConfidenceThreshold {
+				bugs = append(bugs, Bug{
+					Title:       "Server-Side Request Forgery (SSRF) — Confirmed",
+					Severity:    SeverityHigh,
+					Tool:        toolName,
+					Target:      target,
+					Description: "SSRF vulnerability confirmed. Server made a request to an internal/controlled endpoint.",
+					Evidence:    evidence,
+					CVSS:        8.6,
+					CWE:         "CWE-918",
+					Confidence:  conf,
+					FoundAt:     time.Now(),
+				})
+			}
 		}
 	}
 
 	if lfiPattern.MatchString(output) {
 		evidence := extractEvidence(output, lfiPattern)
 		if evidence != "" && !isNegativeOutput(evidence) {
-			bugs = append(bugs, Bug{
-				Title:       "Local File Inclusion (LFI) — Confirmed",
-				Severity:    SeverityHigh,
-				Tool:        toolName,
-				Target:      target,
-				Description: "LFI vulnerability confirmed. Attacker can read arbitrary files from the server.",
-				Evidence:    evidence,
-				CVSS:        7.5,
-				CWE:         "CWE-22",
-				FoundAt:     time.Now(),
-			})
+			conf := 0.80
+			if conf >= MinConfidenceThreshold {
+				bugs = append(bugs, Bug{
+					Title:       "Local File Inclusion (LFI) — Confirmed",
+					Severity:    SeverityHigh,
+					Tool:        toolName,
+					Target:      target,
+					Description: "LFI vulnerability confirmed. Attacker can read arbitrary files from the server.",
+					Evidence:    evidence,
+					CVSS:        7.5,
+					CWE:         "CWE-22",
+					Confidence:  conf,
+					FoundAt:     time.Now(),
+				})
+			}
 		}
 	}
 
 	if rcePattern.MatchString(output) {
 		evidence := extractEvidence(output, rcePattern)
 		if evidence != "" && !isNegativeOutput(evidence) {
-			bugs = append(bugs, Bug{
-				Title:       "Remote Code Execution (RCE) — Confirmed",
-				Severity:    SeverityCritical,
-				Tool:        toolName,
-				Target:      target,
-				Description: "RCE vulnerability confirmed. Attacker can execute arbitrary commands on the server.",
-				Evidence:    evidence,
-				CVSS:        10.0,
-				CWE:         "CWE-78",
-				FoundAt:     time.Now(),
-			})
+			conf := 0.90
+			if conf >= MinConfidenceThreshold {
+				bugs = append(bugs, Bug{
+					Title:       "Remote Code Execution (RCE) — Confirmed",
+					Severity:    SeverityCritical,
+					Tool:        toolName,
+					Target:      target,
+					Description: "RCE vulnerability confirmed. Attacker can execute arbitrary commands on the server.",
+					Evidence:    evidence,
+					CVSS:        10.0,
+					CWE:         "CWE-78",
+					Confidence:  conf,
+					FoundAt:     time.Now(),
+				})
+			}
+		}
+	}
+
+	// IDOR detection
+	if idorPattern.MatchString(output) {
+		evidence := extractEvidence(output, idorPattern)
+		if evidence != "" && !isNegativeOutput(evidence) {
+			conf := 0.60
+			if conf >= MinConfidenceThreshold {
+				bugs = append(bugs, Bug{
+					Title:       "Insecure Direct Object Reference (IDOR)",
+					Severity:    SeverityHigh,
+					Tool:        toolName,
+					Target:      target,
+					Description: "Potential IDOR vulnerability detected. Verify by accessing another user's resources.",
+					Evidence:    evidence,
+					CVSS:        7.5,
+					CWE:         "CWE-639",
+					Confidence:  conf,
+					FoundAt:     time.Now(),
+				})
+			}
 		}
 	}
 
@@ -507,6 +552,293 @@ func describeNucleiTemplate(templateID string) string {
 	default:
 		return fmt.Sprintf("Vulnerability detected by nuclei template: %s", templateID)
 	}
+}
+
+// ─── Confidence Scoring ───────────────────────────────────────────────────────
+
+// MinConfidenceThreshold — skip findings below this confidence level
+const MinConfidenceThreshold = 0.5
+
+// toolConfidence returns the base confidence for a tool's findings
+func toolConfidence(toolName string, severity Severity) float64 {
+	switch toolName {
+	case "nuclei":
+		switch severity {
+		case SeverityCritical:
+			return 0.95
+		case SeverityHigh:
+			return 0.85
+		case SeverityMedium:
+			return 0.70
+		default:
+			return 0.60
+		}
+	case "dalfox":
+		return 0.90 // dalfox confirmed XSS
+	case "sqlmap":
+		return 0.95 // sqlmap confirmed SQLi
+	case "ghauri":
+		return 0.92 // ghauri confirmed SQLi
+	default:
+		return 0.60 // generic pattern match
+	}
+}
+
+// ─── IDOR Detection ───────────────────────────────────────────────────────────
+
+// idorConfirmedPattern matches confirmed IDOR — actual unauthorized data access
+var idorConfirmedPattern = regexp.MustCompile(`(?i)(unauthorized.*access.*user|access.*other.*user.*data|idor.*confirmed|object.*reference.*bypass|200.*different.*user.*id)`)
+
+// ParseIDOROutput parses IDOR scan output for confirmed findings
+func ParseIDOROutput(output, target string) []Bug {
+	var bugs []Bug
+	if isNegativeOutput(output) || !hasMinimumEvidence(output) {
+		return nil
+	}
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || isNegativeOutput(line) {
+			continue
+		}
+		if idorConfirmedPattern.MatchString(line) || idorPattern.MatchString(line) {
+			confidence := 0.65
+			if idorConfirmedPattern.MatchString(line) {
+				confidence = 0.80
+			}
+			if confidence < MinConfidenceThreshold {
+				continue
+			}
+			bugs = append(bugs, Bug{
+				Title:       "Insecure Direct Object Reference (IDOR)",
+				Severity:    SeverityHigh,
+				Tool:        "idor-scan",
+				Target:      target,
+				Description: "IDOR vulnerability detected. Attacker can access or modify other users' data by manipulating object identifiers.",
+				Evidence:    line,
+				CVSS:        7.5,
+				CWE:         "CWE-639",
+				Confidence:  confidence,
+				FoundAt:     time.Now(),
+			})
+		}
+	}
+	return bugs
+}
+
+// ─── Business Logic Detection ─────────────────────────────────────────────────
+
+// bizLogicPatterns matches business logic vulnerabilities
+var bizLogicPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(negative.*price|price.*-\d|zero.*price|price.*0\.00)`),
+	regexp.MustCompile(`(?i)(coupon.*reuse|same.*coupon.*applied|discount.*applied.*multiple)`),
+	regexp.MustCompile(`(?i)(email.*change.*without.*verification|account.*takeover.*email|unverified.*email.*change)`),
+	regexp.MustCompile(`(?i)(race.*condition.*success|concurrent.*request.*success|double.*spend)`),
+}
+
+// ParseBizLogicOutput parses business logic test output
+func ParseBizLogicOutput(output, target string) []Bug {
+	var bugs []Bug
+	if isNegativeOutput(output) || !hasMinimumEvidence(output) {
+		return nil
+	}
+	for _, pattern := range bizLogicPatterns {
+		if pattern.MatchString(output) {
+			evidence := extractEvidence(output, pattern)
+			if evidence == "" || isNegativeOutput(evidence) {
+				continue
+			}
+			title := "Business Logic Vulnerability"
+			desc := "Business logic flaw detected."
+			lower := strings.ToLower(evidence)
+			if strings.Contains(lower, "price") {
+				title = "Price Manipulation"
+				desc = "Price manipulation vulnerability. Attacker can set negative or zero prices."
+			} else if strings.Contains(lower, "coupon") {
+				title = "Coupon Reuse Vulnerability"
+				desc = "Coupon can be applied multiple times, leading to unauthorized discounts."
+			} else if strings.Contains(lower, "email") {
+				title = "Account Takeover via Email Change"
+				desc = "Email change without verification allows account takeover."
+			} else if strings.Contains(lower, "race") {
+				title = "Race Condition"
+				desc = "Race condition allows concurrent requests to bypass business logic."
+			}
+			bugs = append(bugs, Bug{
+				Title:       title,
+				Severity:    SeverityHigh,
+				Tool:        "bizlogic",
+				Target:      target,
+				Description: desc,
+				Evidence:    evidence,
+				CVSS:        7.0,
+				CWE:         "CWE-840",
+				Confidence:  0.70,
+				FoundAt:     time.Now(),
+			})
+		}
+	}
+	return bugs
+}
+
+// ─── Second-Order Bug Detection ───────────────────────────────────────────────
+
+// storedXSSPattern matches stored/second-order XSS indicators
+var storedXSSPattern = regexp.MustCompile(`(?i)(stored.*xss|persistent.*xss|second.*order.*xss|xss.*stored|xss.*persisted)`)
+
+// secondOrderSQLiPattern matches second-order SQLi indicators
+var secondOrderSQLiPattern = regexp.MustCompile(`(?i)(second.*order.*sql|stored.*sql.*injection|second.*order.*injection)`)
+
+// ParseSecondOrderOutput parses output for second-order vulnerabilities
+func ParseSecondOrderOutput(output, target string) []Bug {
+	var bugs []Bug
+	if isNegativeOutput(output) || !hasMinimumEvidence(output) {
+		return nil
+	}
+	if storedXSSPattern.MatchString(output) {
+		evidence := extractEvidence(output, storedXSSPattern)
+		if evidence != "" && !isNegativeOutput(evidence) {
+			bugs = append(bugs, Bug{
+				Title:       "Stored/Second-Order XSS",
+				Severity:    SeverityHigh,
+				Tool:        "second-order",
+				Target:      target,
+				Description: "Stored XSS vulnerability. Malicious script is persisted and executed when other users view the content.",
+				Evidence:    evidence,
+				CVSS:        8.0,
+				CWE:         "CWE-79",
+				Confidence:  0.75,
+				FoundAt:     time.Now(),
+			})
+		}
+	}
+	if secondOrderSQLiPattern.MatchString(output) {
+		evidence := extractEvidence(output, secondOrderSQLiPattern)
+		if evidence != "" && !isNegativeOutput(evidence) {
+			bugs = append(bugs, Bug{
+				Title:       "Second-Order SQL Injection",
+				Severity:    SeverityCritical,
+				Tool:        "second-order",
+				Target:      target,
+				Description: "Second-order SQL injection. Malicious input is stored and later used in an unsafe SQL query.",
+				Evidence:    evidence,
+				CVSS:        9.0,
+				CWE:         "CWE-89",
+				Confidence:  0.75,
+				FoundAt:     time.Now(),
+			})
+		}
+	}
+	return bugs
+}
+
+// ─── Chain Detection ──────────────────────────────────────────────────────────
+
+// BugChain represents a chain of vulnerabilities that together form a higher-impact attack
+type BugChain struct {
+	Title       string
+	Bugs        []Bug
+	Impact      string
+	Severity    Severity
+	Confidence  float64
+}
+
+// ChainDetect analyzes a list of bugs and identifies exploit chains
+func ChainDetect(bugs []Bug) []BugChain {
+	var chains []BugChain
+
+	// Build lookup maps
+	hasSSRF := false
+	hasXSS := false
+	hasCSRF := false
+	hasSQLi := false
+	hasAdminPanel := false
+	hasOpenPort := false
+
+	for _, b := range bugs {
+		lower := strings.ToLower(b.Title + " " + b.Description + " " + b.Evidence)
+		if strings.Contains(lower, "ssrf") {
+			hasSSRF = true
+		}
+		if strings.Contains(lower, "xss") {
+			hasXSS = true
+		}
+		if strings.Contains(lower, "csrf") {
+			hasCSRF = true
+		}
+		if strings.Contains(lower, "sql") {
+			hasSQLi = true
+		}
+		if strings.Contains(lower, "admin") || strings.Contains(lower, "panel") {
+			hasAdminPanel = true
+		}
+		if strings.Contains(lower, "port") || strings.Contains(lower, "open") {
+			hasOpenPort = true
+		}
+	}
+
+	// SSRF + open port → potential SSRF→RCE chain
+	if hasSSRF && hasOpenPort {
+		chains = append(chains, BugChain{
+			Title:      "SSRF → Internal Service Access → Potential RCE",
+			Impact:     "SSRF can be used to access internal services (Redis, Memcached, internal APIs). If internal services are vulnerable, this can lead to RCE.",
+			Severity:   SeverityCritical,
+			Confidence: 0.75,
+		})
+	}
+
+	// XSS + CSRF → account takeover chain
+	if hasXSS && hasCSRF {
+		chains = append(chains, BugChain{
+			Title:      "XSS + CSRF → Account Takeover",
+			Impact:     "XSS can be used to steal CSRF tokens and perform CSRF attacks, leading to account takeover without user interaction.",
+			Severity:   SeverityHigh,
+			Confidence: 0.80,
+		})
+	}
+
+	// SQLi + admin panel → full compromise chain
+	if hasSQLi && hasAdminPanel {
+		chains = append(chains, BugChain{
+			Title:      "SQLi + Admin Panel → Full Application Compromise",
+			Impact:     "SQL injection can be used to extract admin credentials, which combined with admin panel access leads to full application compromise.",
+			Severity:   SeverityCritical,
+			Confidence: 0.85,
+		})
+	}
+
+	return chains
+}
+
+// ─── Race Condition Detection ─────────────────────────────────────────────────
+
+// raceConditionPattern matches race condition success indicators
+var raceConditionPattern = regexp.MustCompile(`(?i)(race.*condition.*detected|concurrent.*request.*success|double.*spend.*detected|race.*win|parallel.*request.*bypass)`)
+
+// ParseRaceConditionOutput parses race condition test output
+func ParseRaceConditionOutput(output, target string) []Bug {
+	var bugs []Bug
+	if isNegativeOutput(output) || !hasMinimumEvidence(output) {
+		return nil
+	}
+	if raceConditionPattern.MatchString(output) {
+		evidence := extractEvidence(output, raceConditionPattern)
+		if evidence != "" && !isNegativeOutput(evidence) {
+			bugs = append(bugs, Bug{
+				Title:       "Race Condition",
+				Severity:    SeverityHigh,
+				Tool:        "race-check",
+				Target:      target,
+				Description: "Race condition vulnerability detected. Concurrent requests can bypass business logic controls.",
+				Evidence:    evidence,
+				CVSS:        7.5,
+				CWE:         "CWE-362",
+				Confidence:  0.70,
+				FoundAt:     time.Now(),
+			})
+		}
+	}
+	return bugs
 }
 
 // ─── Next Target Suggestion ───────────────────────────────────────────────────

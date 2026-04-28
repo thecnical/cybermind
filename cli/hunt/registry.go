@@ -1675,4 +1675,340 @@ var huntRegistry = []HuntToolSpec{
 			},
 		},
 	},
+
+	// ── sqlmap-hunt — SQLi with paramspider output ───────────────────────────
+	// Phase 5: After paramspider runs, feed params to sqlmap
+	{
+		Name:        "sqlmap-hunt",
+		Phase:       5,
+		Timeout:     3600,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install sqlmap -y",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			paramFile := "/tmp/cybermind_paramspider.txt"
+			if _, err := os.Stat(paramFile); err == nil {
+				return []string{
+					"-m", paramFile,
+					"--batch",
+					"--level", "3",
+					"--risk", "2",
+					"--dbs",
+					"--random-agent",
+					"--tamper", "space2comment,between",
+					"--output-dir", "/tmp/cybermind_sqlmap_hunt/",
+				}
+			}
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				for _, lu := range ctx.LiveURLs {
+					if strings.Contains(lu, "=") {
+						u = lu
+						break
+					}
+				}
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"-u", u,
+				"--batch",
+				"--level", "3",
+				"--risk", "2",
+				"--dbs",
+				"--random-agent",
+				"--tamper", "space2comment,between",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "--batch", "--level", "1", "--dbs", "--random-agent"}
+			},
+		},
+	},
+
+	// ── idor-scan — IDOR testing with nuclei templates ────────────────────────
+	{
+		Name:        "idor-scan",
+		Phase:       3,
+		Timeout:     1800,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			args := []string{
+				"-t", "vulnerabilities/generic/idor.yaml",
+				"-t", "vulnerabilities/generic/",
+				"-severity", "critical,high,medium",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_idor.txt",
+			}
+			allURLs := dedup(append(ctx.AllURLs, ctx.LiveURLs...))
+			if len(allURLs) > 0 {
+				f := writeTempList(allURLs)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-t", "vulnerabilities/generic/", "-u", target, "-severity", "critical,high", "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ── race-check — race condition testing with ffuf parallel requests ───────
+	{
+		Name:        "race-check",
+		Phase:       3,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install ffuf",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			paramWordlist := "/usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt"
+			if _, err := os.Stat(paramWordlist); err != nil {
+				paramWordlist = "/usr/share/wordlists/dirb/common.txt"
+			}
+			return []string{
+				"-u", u + "?FUZZ=test",
+				"-w", paramWordlist,
+				"-t", "50",
+				"-rate", "100",
+				"-ac",
+				"-mc", "200,201,204,301,302",
+				"-s",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u, "-w", "/usr/share/wordlists/dirb/common.txt", "-t", "20", "-ac", "-s"}
+			},
+		},
+	},
+
+	// ── oauth-nuclei — OAuth testing with nuclei templates ───────────────────
+	{
+		Name:        "oauth-nuclei",
+		Phase:       3,
+		Timeout:     1200,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			args := []string{
+				"-t", "vulnerabilities/oauth/",
+				"-t", "exposures/tokens/",
+				"-severity", "critical,high,medium",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_oauth.txt",
+			}
+			allURLs := dedup(append(ctx.AllURLs, ctx.LiveURLs...))
+			if len(allURLs) > 0 {
+				f := writeTempList(allURLs)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-t", "exposures/tokens/", "-u", target, "-severity", "critical,high", "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ── file-upload-nuclei — file upload vulnerability testing ───────────────
+	{
+		Name:        "file-upload-nuclei",
+		Phase:       4,
+		Timeout:     1200,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			args := []string{
+				"-t", "vulnerabilities/generic/file-upload.yaml",
+				"-severity", "critical,high",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_file_upload.txt",
+			}
+			allURLs := dedup(append(ctx.AllURLs, ctx.LiveURLs...))
+			if len(allURLs) > 0 {
+				f := writeTempList(allURLs)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-t", "vulnerabilities/generic/", "-u", target, "-severity", "critical,high", "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ── cache-poison-nuclei — cache poisoning detection ───────────────────────
+	{
+		Name:        "cache-poison-nuclei",
+		Phase:       4,
+		Timeout:     1200,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			args := []string{
+				"-t", "vulnerabilities/generic/cache-poisoning.yaml",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_cache_poison.txt",
+			}
+			allURLs := dedup(append(ctx.AllURLs, ctx.LiveURLs...))
+			if len(allURLs) > 0 {
+				f := writeTempList(allURLs)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-t", "vulnerabilities/generic/", "-u", target, "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ── prototype-pollution-nuclei — prototype pollution detection ────────────
+	{
+		Name:        "prototype-pollution-nuclei",
+		Phase:       4,
+		Timeout:     1200,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			args := []string{
+				"-t", "vulnerabilities/generic/prototype-pollution.yaml",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_proto_pollution.txt",
+			}
+			allURLs := dedup(append(ctx.AllURLs, ctx.LiveURLs...))
+			if len(allURLs) > 0 {
+				f := writeTempList(allURLs)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-t", "vulnerabilities/generic/", "-u", target, "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ── deserialization-nuclei — deserialization vulnerability detection ───────
+	{
+		Name:        "deserialization-nuclei",
+		Phase:       5,
+		Timeout:     1200,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			args := []string{
+				"-t", "vulnerabilities/java/",
+				"-t", "vulnerabilities/generic/deserialization.yaml",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_deserialization.txt",
+			}
+			allURLs := dedup(append(ctx.AllURLs, ctx.LiveURLs...))
+			if len(allURLs) > 0 {
+				f := writeTempList(allURLs)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				return []string{"-t", "vulnerabilities/java/", "-u", target, "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ── api-version-ffuf — API version discovery ─────────────────────────────
+	{
+		Name:        "api-version-ffuf",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "sudo apt install ffuf",
+		BuildArgs: func(target string, ctx *HuntContext) []string {
+			u := target
+			if len(ctx.LiveURLs) > 0 {
+				u = ctx.LiveURLs[0]
+			}
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			// Strip path to get base URL
+			if idx := strings.Index(u[8:], "/"); idx > 0 {
+				u = u[:8+idx]
+			}
+			// Write API version wordlist
+			apiVersions := "v1\nv2\nv3\napi\napi/v1\napi/v2\napi/v3\nrest\ngraphql\nswagger\nopenapi\n"
+			apiWordlist := "/tmp/cybermind_api_versions.txt"
+			os.WriteFile(apiWordlist, []byte(apiVersions), 0600)
+			return []string{
+				"-u", u + "/FUZZ",
+				"-w", apiWordlist,
+				"-t", "50",
+				"-ac",
+				"-mc", "200,201,204,301,302,307,401,403",
+				"-fc", "404",
+				"-s",
+				"-o", "/tmp/cybermind_api_versions_found.json",
+				"-of", "json",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *HuntContext) []string{
+			func(target string, ctx *HuntContext) []string {
+				u := target
+				if len(ctx.LiveURLs) > 0 {
+					u = ctx.LiveURLs[0]
+				}
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"-u", u + "/FUZZ", "-w", "/tmp/cybermind_api_versions.txt", "-t", "20", "-ac", "-s"}
+			},
+		},
+	},
 }

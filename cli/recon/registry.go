@@ -2224,7 +2224,216 @@ var tier1Tools = []ToolSpec{
 	},
 }
 
+// ─── TIER 4 TOOLS — v5.4.0 additions ─────────────────────────────────────────
+
+var tier4Tools = []ToolSpec{
+	// ── gowitness — screenshot capture for live URLs ──────────────────────────
+	{
+		Name:        "gowitness",
+		Phase:       4,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/sensepost/gowitness@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// After httpx runs, save URLs to file for gowitness
+			urlsFile := "/tmp/cybermind_httpx_urls.txt"
+			if _, err := os.Stat(urlsFile); err == nil {
+				return []string{
+					"file",
+					"-f", urlsFile,
+					"--screenshot-path", "/tmp/cybermind_screenshots/",
+					"--disable-db",
+				}
+			}
+			u := target
+			if !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			return []string{
+				"single",
+				"--url", u,
+				"--screenshot-path", "/tmp/cybermind_screenshots/",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				u := target
+				if !strings.HasPrefix(u, "http") {
+					u = "https://" + u
+				}
+				return []string{"single", "--url", u, "--screenshot-path", "/tmp/cybermind_screenshots/"}
+			},
+		},
+	},
+
+	// ── mapcidr (ASN→CIDR pipeline) — expand ASN ranges to IP CIDRs ──────────
+	// After asnmap runs, pipe to mapcidr for all IP ranges
+	{
+		Name:        "mapcidr-asn",
+		Phase:       3,
+		Timeout:     120,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/mapcidr/cmd/mapcidr@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Pipe asnmap JSON output to mapcidr for CIDR list
+			asnFile := "/tmp/cybermind_asnmap.json"
+			if _, err := os.Stat(asnFile); err == nil {
+				return []string{"-cl", "-silent", "-o", "/tmp/cybermind_cidr_ranges.txt"}
+			}
+			return []string{"-cidr", target + "/24", "-silent", "-o", "/tmp/cybermind_cidr_ranges.txt"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-cidr", target + "/24", "-silent"}
+			},
+		},
+	},
+
+	// ── dnsx PTR — reverse DNS lookup on discovered IP ranges ────────────────
+	{
+		Name:        "dnsx-ptr",
+		Phase:       3,
+		Timeout:     300,
+		DomainOnly:  false,
+		InstallHint: "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			cidrFile := "/tmp/cybermind_cidr_ranges.txt"
+			if _, err := os.Stat(cidrFile); err == nil {
+				return []string{
+					"-l", cidrFile,
+					"-ptr",
+					"-resp-only",
+					"-silent",
+					"-o", "/tmp/cybermind_ptr_records.txt",
+				}
+			}
+			if len(ctx.LiveHosts) > 0 {
+				f := writeTempList(ctx.LiveHosts)
+				if f != "" {
+					return []string{"-l", f, "-ptr", "-resp-only", "-silent", "-o", "/tmp/cybermind_ptr_records.txt"}
+				}
+			}
+			return []string{"-d", target, "-ptr", "-resp-only", "-silent"}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-d", target, "-ptr", "-resp-only", "-silent"}
+			},
+		},
+	},
+
+	// ── spoofcheck — email spoofing check (SPF/DMARC/DKIM) ──────────────────
+	// Already in tier1Tools but ensure it's properly integrated
+	{
+		Name:        "spoofcheck",
+		Phase:       1,
+		Timeout:     60,
+		DomainOnly:  true,
+		InstallHint: "pip3 install spoofcheck --break-system-packages || git clone https://github.com/BishopFox/spoofcheck /opt/spoofcheck && pip3 install -r /opt/spoofcheck/requirements.txt --break-system-packages && sudo ln -sf /opt/spoofcheck/spoofcheck.py /usr/local/bin/spoofcheck",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			return []string{target}
+		},
+	},
+
+	// ── nuclei-takeover-v2 — subdomain takeover with nuclei templates ─────────
+	{
+		Name:        "nuclei-takeover-v2",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			args := []string{
+				"-t", "takeovers/",
+				"-severity", "critical,high",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_nuclei_takeover2.txt",
+			}
+			if len(ctx.Subdomains) > 0 {
+				f := writeTempList(ctx.Subdomains)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-t", "takeovers/", "-u", target, "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ── nuclei-graphql — GraphQL discovery and introspection ─────────────────
+	{
+		Name:        "nuclei-graphql",
+		Phase:       6,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && nuclei -update-templates",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			args := []string{
+				"-t", "exposures/apis/graphql-introspection.yaml",
+				"-t", "exposures/apis/",
+				"-silent", "-no-color",
+				"-c", "25", "-rl", "25",
+				"-o", "/tmp/cybermind_nuclei_graphql.txt",
+			}
+			if len(ctx.LiveURLs) > 0 {
+				f := writeTempList(ctx.LiveURLs)
+				if f != "" {
+					return append(args, "-l", f)
+				}
+			}
+			return append(args, "-u", target)
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				return []string{"-t", "exposures/apis/", "-u", target, "-silent", "-no-color", "-c", "10"}
+			},
+		},
+	},
+
+	// ── cloud_enum-v2 — properly integrated cloud enumeration ────────────────
+	{
+		Name:        "cloud_enum-v2",
+		Phase:       2,
+		Timeout:     600,
+		DomainOnly:  true,
+		InstallHint: "pip3 install cloud-enum --break-system-packages",
+		BuildArgs: func(target string, ctx *ReconContext) []string {
+			// Extract base keyword (e.g., "shopify" from "shopify.com")
+			keyword := target
+			if idx := strings.LastIndex(target, "."); idx > 0 {
+				keyword = target[:idx]
+				// Handle subdomains: take the second-to-last part
+				if idx2 := strings.LastIndex(keyword, "."); idx2 > 0 {
+					keyword = keyword[idx2+1:]
+				}
+			}
+			return []string{
+				"-k", keyword,
+				"-k", target,
+				"--disable-azure",
+				"--disable-gcp",
+				"-l", "/tmp/cybermind_cloud_enum.txt",
+			}
+		},
+		FallbackArgs: []func(target string, ctx *ReconContext) []string{
+			func(target string, ctx *ReconContext) []string {
+				keyword := target
+				if idx := strings.LastIndex(target, "."); idx > 0 {
+					keyword = target[:idx]
+				}
+				return []string{"-k", keyword, "-l", "/tmp/cybermind_cloud_enum.txt"}
+			},
+		},
+	},
+}
+
 func init() {
 	// Append all tier tools to the main registry at startup
 	toolRegistry = append(toolRegistry, tier1Tools...)
+	toolRegistry = append(toolRegistry, tier4Tools...)
 }
