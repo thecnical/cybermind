@@ -656,23 +656,27 @@ func ValidateKey(key string) (string, error) {
 
 // cyberSecSystemPrompt is the system prompt injected into every chat request.
 // STRICT: No greeting, no self-introduction, no "Next Steps", no MITRE unless asked.
-const cyberSecSystemPrompt = `NEVER introduce yourself. NEVER say "I am CyberMind" or "Hello, I am". Answer directly. For greetings like "hi/hello/hey", respond with ONE line max like "What target?" or "Ready. What do you need?"
+const cyberSecSystemPrompt = `CRITICAL INSTRUCTION — READ FIRST:
+NEVER introduce yourself. NEVER say "I am CyberMind", "Hello, I'm", "Hi! I'm", "As CyberMind", "As an AI", "I'm an AI assistant". NEVER. NOT ONCE. NOT EVER.
+For ANY greeting (hi/hello/hey/sup/yo/namaste/salaam): respond with MAXIMUM 1 line. Example: "Ready. What's the target?" or "Go ahead." NOTHING ELSE.
+NEVER ask "What can I help you with?" or "How can I assist?" — these are FORBIDDEN phrases.
+NEVER add "Next Steps:" sections. NEVER add MITRE ATT&CK unless asked. NEVER add CVSS unless asked.
+NEVER ask clarifying questions — make assumptions and answer directly.
+If user says "help" or "help me" — give ONE direct technical tip, not a list of what you can do.
 
-You are CyberMind — an elite offensive security AI for bug bounty hunters, pentesters, and red teamers.
+You are CyberMind — an elite offensive security AI. Answer like a senior pentester texting a colleague. Direct. Technical. No fluff.
 
-ABSOLUTE RULES — NEVER BREAK THESE:
-1. NEVER say "I am CyberMind" or introduce yourself — EVER. Not even once.
-2. NEVER say "created by" or mention Sanjay Pandey or CyberMind Team unprompted.
-3. NEVER ask "What is the target?" or "What do you need help with?" — answer directly.
-4. NEVER add "Next Steps:" sections unless the user explicitly asks for next steps.
-5. NEVER add MITRE ATT&CK mappings, CVSS scores, or severity ratings unless asked.
-6. NEVER ask clarifying questions — make reasonable assumptions and answer.
-7. NEVER add numbered lists of "what I can help with" — just answer the question.
-8. For greetings (hi/hello/hey/sup): respond with 1 line max, no self-introduction. Example: "Ready. What's the target?"
-9. For "help me in cyber" or similar: give a direct technical answer immediately, no preamble.
-10. For security questions: answer with exact commands, tools, payloads — no fluff.
+ONLY say who you are if user explicitly asks: "who are you" / "what are you" / "what is cybermind".
 
-ONLY introduce yourself if user explicitly asks: "who are you", "what are you", "what is cybermind".
+ABSOLUTE RULES:
+1. NEVER introduce yourself — EVER
+2. NEVER say "created by" or mention any team/person unprompted
+3. NEVER ask "What is the target?" — if no target given, ask in 3 words max: "Target?"
+4. NEVER add "Next Steps:" unless asked
+5. NEVER add MITRE/CVSS/severity unless asked
+6. NEVER ask clarifying questions — assume and answer
+7. Greetings → 1 line max response
+8. "help me in cyber" → give direct technical answer immediately
 
 CRAWLING INTELLIGENCE — Know WHEN and HOW to use each crawling type:
 
@@ -745,7 +749,7 @@ CRAWLING DECISION RULES:
 - Deep mode → all crawling types in parallel
 - Overnight → all crawling + headless + authenticated
 
-You are a direct, expert security assistant. Answer immediately. No fluff. No self-promotion.`
+Answer immediately. No fluff. No self-promotion. No introductions.`
 
 // injectSystemPrompt prepends the system prompt as the first message if not already present.
 // This ensures the backend uses our system prompt even if it doesn't support the system_prompt field.
@@ -760,15 +764,73 @@ func injectSystemPrompt(history []Message) []Message {
 	return append([]Message{{Role: "system", Content: cyberSecSystemPrompt}}, history...)
 }
 
+// filterSelfIntro removes AI self-introduction lines from responses.
+// Even if backend ignores the system prompt, we strip it client-side.
+func filterSelfIntro(response string) string {
+	if response == "" {
+		return response
+	}
+	lines := strings.Split(response, "\n")
+	var filtered []string
+	skipPatterns := []string{
+		"i am cybermind",
+		"i'm cybermind",
+		"hello, i am",
+		"hello! i am",
+		"hi, i am",
+		"hi! i am",
+		"hi there! i am",
+		"hello there! i am",
+		"greetings! i am",
+		"as cybermind",
+		"as an ai assistant",
+		"as an ai",
+		"i'm an ai",
+		"i am an ai",
+		"i'm here to help",
+		"how can i assist",
+		"how can i help you",
+		"what can i help you with",
+		"what would you like help with",
+		"i'd be happy to help",
+		"i'd be glad to help",
+		"certainly! i",
+		"of course! i",
+		"sure! i",
+		"absolutely! i",
+	}
+	for _, line := range lines {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		skip := false
+		for _, pat := range skipPatterns {
+			if strings.Contains(lower, pat) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			filtered = append(filtered, line)
+		}
+	}
+	result := strings.Join(filtered, "\n")
+	// Trim leading blank lines after filtering
+	result = strings.TrimLeft(result, "\n")
+	return result
+}
+
 // SendChat sends prompt with conversation history
 func SendChat(prompt string, history []Message) (string, error) {
 	enriched := injectSystemPrompt(history)
-	return post("/chat", chatRequest{
+	resp, err := post("/chat", chatRequest{
 		Prompt:       prompt,
 		Messages:     enriched,
 		SystemPrompt: cyberSecSystemPrompt,
 		Mode:         "security",
 	})
+	if err != nil {
+		return resp, err
+	}
+	return filterSelfIntro(resp), nil
 }
 
 // SendChatStream sends prompt and streams tokens via SSE.
@@ -852,7 +914,7 @@ func SendChatStream(prompt string, history []Message, onToken func(string)) (str
 	if result == "" {
 		return SendChat(prompt, history) // fallback if stream was empty
 	}
-	return result, nil
+	return filterSelfIntro(result), nil
 }
 
 // SendPrompt — simple chat without history

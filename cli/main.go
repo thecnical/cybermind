@@ -2743,6 +2743,9 @@ func promptForAPIKey() string {
 func main() {
 	args := os.Args[1:]
 
+	// Sync version to UI package so TUI header shows correct version
+	ui.Version = Version
+
 	// ── Auto-update check (background, non-blocking) ──────────────────────────
 	// Runs silently on every startup — notifies user if a newer version exists
 	go func() {
@@ -3166,6 +3169,16 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Windows/macOS: AI chat + Vibe Coder + VSCode extension are fully functional."))
 			fmt.Println()
 			return
+		}
+
+		// ── WSL detection — show warning for raw socket tools ────────────────
+		wslMode := isWSL()
+		if wslMode {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render("  ⚠  WSL detected — some tools have limitations:"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  • masscan/zmap: raw sockets don't work on WSL — use naabu instead"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  • All other tools work normally on WSL"))
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ naabu works on WSL (no raw sockets needed)"))
+			fmt.Println()
 		}
 
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ② Installing system dependencies first..."))
@@ -3728,6 +3741,12 @@ rm -f /tmp/evilginx2.tar.gz`)
 
 				if installErr != nil {
 					// ── Retry once before marking as failed ──────────────────
+					// Python tools (pipx/venv) are NEVER retried — skip them
+					if strings.HasPrefix(t.install, "pipx:") || strings.HasPrefix(t.install, "venv:") {
+						fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
+							fmt.Sprintf("  ⏭  %-20s Python tool — install manually: cybermind /install-python-tools", t.name)))
+						continue
+					}
 					fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(fmt.Sprintf("  ↻ %-20s retrying...", t.name)))
 					retryErr := installErr
 					switch {
@@ -3744,9 +3763,6 @@ rm -f /tmp/evilginx2.tar.gz`)
 						if retryErr == nil {
 							symlinkGoTool(t.name)
 						}
-					case strings.HasPrefix(t.install, "pipx:"):
-						pkg := strings.TrimPrefix(t.install, "pipx:")
-						retryErr = installPythonPipTool(pkg)
 					}
 					if retryErr == nil {
 						if _, checkErr := exec.LookPath(t.name); checkErr == nil {
@@ -3855,7 +3871,7 @@ rm -f /tmp/evilginx2.tar.gz`)
 				"  sudo cybermind /install-python-tools"))
 			fmt.Println()
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				"  Or install individually:"))
+				"  Or install individually (v5.4.0 tools):"))
 			pythonTools := []string{
 				"pip3 install waymore --break-system-packages",
 				"pip3 install arjun --break-system-packages",
@@ -3866,6 +3882,10 @@ rm -f /tmp/evilginx2.tar.gz`)
 				"pip3 install spoofcheck --break-system-packages",
 				"pip3 install crosslinked --break-system-packages",
 				"pip3 install ctfr --break-system-packages",
+				"pip3 install swaggerspy --break-system-packages",
+				"pip3 install semgrep --break-system-packages",
+				"pip3 install pacu --break-system-packages",
+				"pip3 install roadrecon --break-system-packages",
 			}
 			for _, cmd := range pythonTools {
 				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    " + cmd))
