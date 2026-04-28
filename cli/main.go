@@ -20,7 +20,6 @@ import (
 	"cybermind-cli/abhimanyu"
 	"cybermind-cli/api"
 	"cybermind-cli/bizlogic"
-	"cybermind-cli/breach"
 	"cybermind-cli/brain"
 	"cybermind-cli/bugdetect"
 	"cybermind-cli/chain"
@@ -195,9 +194,8 @@ func printHelp() {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  🔍 OSINT + Intelligence:"))
 		fmt.Println(g.Render("  cybermind /osint-deep <target>") + d.Render("              → Deep OSINT (45 tools, 9 phases)"))
-		fmt.Println(g.Render("  cybermind /osint-deep user@gmail.com") + d.Render("        → Email + breach + social footprint"))
+		fmt.Println(g.Render("  cybermind /osint-deep user@gmail.com") + d.Render("        → Email + social footprint"))
 		fmt.Println(g.Render("  cybermind /osint-deep johndoe") + d.Render("               → Username hunt across 3000+ sites"))
-		fmt.Println(g.Render("  cybermind /breach <email|domain>") + d.Render("            → Breach intel (HIBP + BreachDir + LeakCheck)"))
 		fmt.Println(g.Render("  cybermind /threat <ip|domain|hash>") + d.Render("          → Threat intel (VT + AbuseIPDB + OTX + URLScan)"))
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).Render("  ⚙️  Reverse Engineering:"))
@@ -251,10 +249,6 @@ func printHelp() {
 	fmt.Println(g.Render("  cybermind /devsec <github-url|path>") + d.Render("  → DevSec scanner (secrets, SAST, deps) [Starter+]"))
 	fmt.Println(g.Render("  cybermind /scan <target>") + d.Render("        → native network scan (no tools needed)"))
 	fmt.Println(g.Render("  cybermind /osint <domain>") + d.Render("       → DNS + Shodan OSINT (free, no key)"))
-	fmt.Println(g.Render("  cybermind /breach <email|domain>") + d.Render("  → breach intelligence (HIBP + LeakCheck + IntelX)"))
-	fmt.Println(g.Render("  cybermind /breach +91XXXXXXXXXX") + d.Render("    → WhatsApp OSINT (name, about, photo)"))
-	fmt.Println(g.Render("  cybermind /breach --index /dump.txt") + d.Render(" → index local breach dump to SQLite"))
-	fmt.Println(g.Render("  cybermind /breach --setup") + d.Render("          → save RapidAPI key (BreachDirectory + WhatsApp)"))
 	fmt.Println(g.Render("  cybermind /threat <ip|domain|url|hash>") + d.Render(" → threat intel (VirusTotal + AbuseIPDB + OTX + IOC + URLScan)"))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(purple).Render("  OPTIONAL INTEGRATIONS:"))
@@ -2831,7 +2825,7 @@ func main() {
 			"payload": true, "cve": true, "wordlist": true,
 			"doctor": true, "uninstall": true,
 			"platform": true, "brain": true,
-			"breach": true, "threat": true,
+			"threat": true,
 			"notify": true, "devsec": true,
 			// kept for backward compat (show deprecation message)
 			"portscan": true, "locate": true,
@@ -4219,32 +4213,7 @@ rm -f /tmp/evilginx2.tar.gz`)
 		}
 		fmt.Println()
 
-		// ── RapidAPI key setup (BreachDirectory + WhatsApp OSINT) ────────────
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  🔑 Breach Intelligence Setup (RapidAPI)"))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  BreachDirectory + WhatsApp OSINT require a RapidAPI key."))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Get your free key: rapidapi.com → Apps → default-application → X-RapidAPI-Key"))
-		fmt.Println()
-
-		existingKey := breach.GetRapidAPIKey()
-		if existingKey != "" {
-			masked := existingKey[:min(8, len(existingKey))] + strings.Repeat("•", 20)
-			fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ RapidAPI key already configured: " + masked))
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  To update: cybermind /breach --setup"))
-		} else {
-			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Enter RapidAPI Key (press Enter to skip): "))
-			var rapidKey string
-			fmt.Scanln(&rapidKey)
-			rapidKey = strings.TrimSpace(rapidKey)
-			if rapidKey != "" {
-				if err := breach.SaveRapidAPIKey(rapidKey); err != nil {
-					fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ Failed to save key: " + err.Error()))
-				} else {
-					fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ RapidAPI key saved — BreachDirectory + WhatsApp OSINT enabled"))
-				}
-			} else {
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Skipped. Run: cybermind /breach --setup  to add later"))
-			}
-		}
+		// RapidAPI setup removed (breach mode removed)
 		fmt.Println()
 
 	case "/abhimanyu":
@@ -5105,30 +5074,6 @@ rm -f /tmp/evilginx2.tar.gz`)
 		}
 		runLocate(args[1], true, localMode)
 
-	case "/breach":
-		// Breach Intelligence — works on all OS (API-based)
-		if len(args) < 2 {
-			printError("Usage: cybermind /breach <email|domain|+phone>")
-			printError("       cybermind /breach --setup              (save RapidAPI key)")
-			printError("       cybermind /breach --index /path/dump.txt (index local dump)")
-			printError("Examples:")
-			printError("  cybermind /breach user@gmail.com")
-			printError("  cybermind /breach +91XXXXXXXXXX")
-			printError("  cybermind /breach @company.com")
-			printError("  cybermind /breach --index /tmp/linkedin_dump.txt")
-			os.Exit(1)
-		}
-		if err := storage.Load(); err != nil {
-			fmt.Println("Warning:", err)
-		}
-		// --setup doesn't need API key
-		if args[1] != "--setup" {
-			if !localMode && !requireAPIKey() {
-				os.Exit(1)
-			}
-		}
-		runBreachCheck(args[1:], localMode)
-
 	case "/threat":
 		// Threat Intelligence — works on all OS (VirusTotal + AbuseIPDB + OTX + IOC + URLScan)
 		if len(args) < 2 {
@@ -5150,7 +5095,15 @@ rm -f /tmp/evilginx2.tar.gz`)
 		if !localMode && !requireAPIKey() {
 			os.Exit(1)
 		}
-		runThreatIntel(args[1], localMode)
+		// Threat intel via AI (breach package removed)
+		threatTarget := args[1]
+		prompt := fmt.Sprintf("Threat intelligence analysis for: %s\nProvide: reputation, known malicious activity, CVEs, MITRE ATT&CK mapping, recommended defensive actions.", threatTarget)
+		if result, err := api.SendPrompt(prompt); err == nil {
+			printResult("🔴 Threat Intel → "+threatTarget, utils.StripMarkdown(result))
+			_ = storage.AddEntry("/threat "+threatTarget, result)
+		} else {
+			printError("Threat intel failed: " + err.Error())
+		}
 
 	case "/payload":
 		// Payload generator — works on all OS

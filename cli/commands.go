@@ -21,7 +21,6 @@ import (
 	"cybermind-cli/abhimanyu"
 	"cybermind-cli/bizlogic"
 	"cybermind-cli/brain"
-	"cybermind-cli/breach"
 	"cybermind-cli/bugdetect"
 	"cybermind-cli/hunt"
 	"cybermind-cli/omega"
@@ -798,13 +797,6 @@ func runOSINTDeep(target string, requested []string, localMode bool) {
 				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("     → " + p))
 			}
 		}
-		if len(ctx.BreachesFound) > 0 {
-			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-				fmt.Sprintf("  🔓 BREACHES FOUND:    %d", len(ctx.BreachesFound))))
-			for _, b := range ctx.BreachesFound[:min(3, len(ctx.BreachesFound))] {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("     ⚠ " + b))
-			}
-		}
 		if len(ctx.EmployeesFound) > 0 {
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
 				fmt.Sprintf("  👥 Employees found:   %d", len(ctx.EmployeesFound))))
@@ -854,53 +846,7 @@ func runOSINTDeep(target string, requested []string, localMode bool) {
 		osintPayload.SubdomainsFound = ctx.SubdomainsFound
 		osintPayload.EmployeesFound = ctx.EmployeesFound
 		osintPayload.SocialProfiles = ctx.SocialProfiles
-		osintPayload.BreachesFound = ctx.BreachesFound
 		osintPayload.GitHubLeaks = ctx.GitHubLeaks
-
-		// Run breach check + LeakInsight on found emails concurrently
-		if len(ctx.EmailsFound) > 0 && !localMode {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
-				fmt.Sprintf("  ⟳ Breach check on %d emails...", len(ctx.EmailsFound))))
-			checkEmails := ctx.EmailsFound
-			if len(checkEmails) > 5 {
-				checkEmails = checkEmails[:5] // limit to 5 to avoid rate limits
-			}
-			type emailBreachResult struct {
-				email   string
-				entries []breach.BreachEntry
-				leaks   []breach.LeakInsightResult
-			}
-			emailCh := make(chan emailBreachResult, len(checkEmails))
-			for _, email := range checkEmails {
-				go func(e string) {
-					br := breach.CheckAll(e)
-					lr, _ := breach.CheckLeakInsight(e)
-					emailCh <- emailBreachResult{email: e, entries: br.Breaches, leaks: lr}
-				}(email)
-			}
-			for range checkEmails {
-				r := <-emailCh
-				if len(r.entries) > 0 {
-					formatted := breach.FormatBreachResult(breach.BreachResult{Target: r.email, Breaches: r.entries})
-					ctx.BreachesFound = append(ctx.BreachesFound, formatted)
-					osintPayload.BreachesFound = append(osintPayload.BreachesFound, formatted)
-					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-						fmt.Sprintf("  ⚠ BREACH: %s — %d breaches found!", r.email, len(r.entries))))
-				}
-				for _, lr := range r.leaks {
-					entry := fmt.Sprintf("[leakinsight] %s — source: %s", r.email, lr.Source)
-					if lr.Password != "" {
-						entry += fmt.Sprintf(" — PASSWORD: %s", lr.Password)
-					}
-					ctx.BreachesFound = append(ctx.BreachesFound, entry)
-					osintPayload.BreachesFound = append(osintPayload.BreachesFound, entry)
-				}
-				if len(r.leaks) > 0 {
-					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-						fmt.Sprintf("  ⚠ LeakInsight: %s — %d records!", r.email, len(r.leaks))))
-				}
-			}
-		}
 
 		// Social Media Scanner for username targets (Phase 3)
 		if targetType == "username" || targetType == "person" || targetType == "email" {
@@ -908,23 +854,7 @@ func runOSINTDeep(target string, requested []string, localMode bool) {
 			if strings.Contains(target, "@") {
 				username = strings.Split(target, "@")[0]
 			}
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
-				"  ⟳ Social Media Scanner (RapidAPI)..."))
-			socialResults, err := breach.CheckSocialMediaScanner(username)
-			if err == nil && len(socialResults) > 0 {
-				for _, sr := range socialResults {
-					if sr.Found {
-						profile := sr.Platform + ": " + username
-						if sr.URL != "" {
-							profile = sr.Platform + ": " + sr.URL
-						}
-						ctx.SocialProfiles = append(ctx.SocialProfiles, profile)
-						osintPayload.SocialProfiles = append(osintPayload.SocialProfiles, profile)
-						fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-							fmt.Sprintf("  ✓ Found on %s", sr.Platform)))
-					}
-				}
-			}
+			_ = username // social media scanner removed
 		}
 	}
 
@@ -1052,25 +982,11 @@ func runRevEng(target, mode string, requested []string, localMode bool) {
 		}
 	}
 
-	// VirusTotal hash check after malware analysis
+	// VirusTotal hash check skipped (breach package removed)
 	if result.Context != nil && result.Context.SHA256Hash != "" {
 		sha256hash := result.Context.SHA256Hash
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
-			fmt.Sprintf("  ⟳ VirusTotal hash check: %s...", sha256hash[:16]+"...")))
-		vtResult, err := breach.CheckVirusTotal(sha256hash)
-		if err == nil && vtResult != nil {
-			vtColor := lipgloss.Color("#00FF00")
-			if vtResult.Malicious > 0 {
-				vtColor = lipgloss.Color("#FF4444")
-			} else if vtResult.Suspicious > 0 {
-				vtColor = lipgloss.Color("#FFD700")
-			}
-			fmt.Println(lipgloss.NewStyle().Foreground(vtColor).Render(
-				fmt.Sprintf("  🦠 VirusTotal: %d/%d malicious | %d suspicious",
-					vtResult.Malicious, vtResult.TotalVendors, vtResult.Suspicious)))
-			findings["virustotal"] = fmt.Sprintf("Hash: %s | Malicious: %d/%d | Suspicious: %d | Harmless: %d",
-				sha256hash, vtResult.Malicious, vtResult.TotalVendors, vtResult.Suspicious, vtResult.Harmless)
-		}
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+			fmt.Sprintf("  ℹ  Hash: %s... — check manually at virustotal.com", sha256hash[:16])))
 	}
 
 	combined := revengPkg.GetRevEngCombinedOutput(result)
@@ -1200,43 +1116,8 @@ func runLocate(target string, advanced bool, localMode bool) {
 		}
 	}
 
-	// AbuseIPDB + AlienVault OTX for IP targets (Level 1 enrichment)
+	// AbuseIPDB + OTX threat intel removed (breach package removed)
 	locTargetType := locatePkg.DetectLocateTargetType(target)
-	if locTargetType == "ip" {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(
-			"  ⟳ AbuseIPDB + OTX threat intel..."))
-		type ipIntelResult struct {
-			abuse *breach.AbuseIPDBResult
-			otx   *breach.OTXResult
-		}
-		ipCh := make(chan ipIntelResult, 1)
-		go func() {
-			a, _ := breach.CheckAbuseIPDB(target)
-			o, _ := breach.CheckAlienVaultOTX(target)
-			ipCh <- ipIntelResult{abuse: a, otx: o}
-		}()
-		ipIntel := <-ipCh
-		if ipIntel.abuse != nil {
-			abuseColor := lipgloss.Color("#00FF00")
-			if ipIntel.abuse.AbuseScore > 50 {
-				abuseColor = lipgloss.Color("#FF4444")
-			} else if ipIntel.abuse.AbuseScore > 10 {
-				abuseColor = lipgloss.Color("#FFD700")
-			}
-			fmt.Println(lipgloss.NewStyle().Foreground(abuseColor).Render(
-				fmt.Sprintf("  🛡 AbuseIPDB: score=%d%% | reports=%d | ISP=%s | country=%s",
-					ipIntel.abuse.AbuseScore, ipIntel.abuse.TotalReports, ipIntel.abuse.ISP, ipIntel.abuse.Country)))
-			findings["abuseipdb"] = fmt.Sprintf("AbuseScore: %d%%, Reports: %d, ISP: %s, Country: %s",
-				ipIntel.abuse.AbuseScore, ipIntel.abuse.TotalReports, ipIntel.abuse.ISP, ipIntel.abuse.Country)
-		}
-		if ipIntel.otx != nil && ipIntel.otx.Pulses > 0 {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(
-				fmt.Sprintf("  🔴 OTX: %d threat pulses | tags: %s",
-					ipIntel.otx.Pulses, strings.Join(ipIntel.otx.Tags[:min(3, len(ipIntel.otx.Tags))], ", "))))
-			findings["otx"] = fmt.Sprintf("Pulses: %d, MalwareFamily: %s, Tags: %s",
-				ipIntel.otx.Pulses, ipIntel.otx.MalwareFamily, strings.Join(ipIntel.otx.Tags, ", "))
-		}
-	}
 
 	combined := locatePkg.GetLocateCombinedOutput(result)
 	if len(combined) > 20000 {
@@ -1277,500 +1158,7 @@ func runLocate(target string, advanced bool, localMode bool) {
 	_ = storage.AddEntry("/locate "+target, clean)
 }
 
-// ─── Breach Check Command Handler ────────────────────────────────────────────
-
-// runBreachCheck handles /breach command — standalone breach intelligence.
-// Supports: email check, domain check, local dump indexing, API key config.
-func runBreachCheck(args []string, localMode bool) {
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render("  🔓 BREACH INTELLIGENCE"))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
-	fmt.Println()
-
-	if len(args) == 0 {
-		printError("Usage: cybermind /breach <email|domain>")
-		return
-	}
-
-	// Handle --index flag (index local dump file)
-	if args[0] == "--index" {
-		if len(args) < 2 {
-			printError("Usage: cybermind /breach --index /path/to/dump.txt")
-			return
-		}
-		dumpPath := args[1]
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
-			"  ⟳ Indexing breach dump: " + dumpPath))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  Supports: email:password, email:hash, plain email lists"))
-		fmt.Println()
-		if err := breach.IndexLocalDump(dumpPath); err != nil {
-			printError("Index failed: " + err.Error())
-			return
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			"  ✓ Dump indexed to ~/.cybermind/breach/breaches.db"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  Search: cybermind /breach user@email.com"))
-		return
-	}
-
-	// Handle --setup flag (save RapidAPI key)
-	if args[0] == "--setup" {
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🔑 Breach Intelligence Setup"))
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Your RapidAPI key gives access to:"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ BreachDirectory — email:password breach lookup"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ WhatsApp OSINT — phone number intelligence"))
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Get your key: rapidapi.com → Dashboard → Apps → default-application → X-RapidAPI-Key"))
-		fmt.Println()
-		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Enter RapidAPI Key: "))
-		var key string
-		fmt.Scanln(&key)
-		key = strings.TrimSpace(key)
-		if key == "" {
-			printError("No key entered")
-			return
-		}
-		if err := breach.SaveRapidAPIKey(key); err != nil {
-			printError("Failed to save key: " + err.Error())
-			return
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ RapidAPI key saved to ~/.cybermind/config.json"))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Test: cybermind /breach user@gmail.com"))
-		return
-	}
-
-	target := args[0]
-
-	// Phone number → WhatsApp OSINT
-	if breach.DetectTargetType(target) == "phone" {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			fmt.Sprintf("  Target: %s | Type: phone → WhatsApp OSINT", target)))
-		fmt.Println()
-
-		rapidKey := breach.GetRapidAPIKey()
-		if rapidKey == "" {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
-				"  ⚠ RapidAPI key not set — run: cybermind /breach --setup"))
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-				"  WhatsApp OSINT requires RapidAPI key (rapidapi.com)"))
-			return
-		}
-
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ WhatsApp OSINT lookup..."))
-		info, err := breach.CheckWhatsApp(target)
-		if err != nil {
-			printError("WhatsApp OSINT failed: " + err.Error())
-		} else if info != nil && info.Found {
-			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FF00")).Render(
-				"  ✓ WhatsApp account found!"))
-			if info.Name != "" {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  Name:     " + info.Name))
-			}
-			if info.About != "" {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  About:    " + info.About))
-			}
-			if info.Business {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render("  Type:     Business Account"))
-			}
-			if info.Photo != "" {
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Photo:    " + info.Photo))
-			}
-		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-				"  No WhatsApp account found for " + target))
-		}
-
-		// Also try full OSINT fetch
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Full OSINT fetch..."))
-		osintData, err := breach.CheckWhatsAppFetchOSINT(target)
-		if err == nil && osintData != "" && osintData != "{}" {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("  " + func() string { n := len(osintData); if n > 500 { n = 500 }; return osintData[:n] }()))
-		}
-		return
-	}
-	// Determine target type
-	tType := breach.DetectTargetType(target)
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		fmt.Sprintf("  Target: %s | Type: %s", target, tType)))
-
-	// Plan-based source selection
-	// Free: HIBP only (breach names, no passwords)
-	// Starter+: HIBP + LeakCheck
-	// Pro+: All sources including BreachDirectory
-	plan := strings.ToLower(api.GetCachedPlan())
-	isStarter := plan == "starter" || plan == "pro" || plan == "elite"
-	isPro := plan == "pro" || plan == "elite"
-
-	var sourceList string
-	switch {
-	case isPro:
-		sourceList = "HIBP + BreachDirectory + LeakCheck + Local SQLite"
-	case isStarter:
-		sourceList = "HIBP + LeakCheck + Local SQLite (upgrade to Pro+ for BreachDirectory)"
-	default:
-		sourceList = "HIBP only — breach names (upgrade to Starter+ for LeakCheck, Pro+ for BreachDirectory)"
-	}
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  Sources: " + sourceList))
-	fmt.Println()
-
-	// Show API key status
-	hibpKey := "free tier (breach names only)"
-	if os.Getenv("HIBP_API_KEY") != "" {
-		hibpKey = "configured ✓ (full details)"
-	}
-	intelxKey := "not set (free tier)"
-	if os.Getenv("INTELX_API_KEY") != "" {
-		intelxKey = "configured ✓"
-	}
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		fmt.Sprintf("  HIBP key: %s | IntelX key: %s", hibpKey, intelxKey)))
-	fmt.Println()
-
-	// Run breach check
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Checking breach databases..."))
-	start := time.Now()
-
-	var result breach.BreachResult
-	if isPro {
-		// Pro+: all sources
-		result = breach.CheckAll(target)
-	} else if isStarter {
-		// Starter+: HIBP + LeakCheck (no BreachDirectory)
-		result.Target = target
-		result.Type = tType
-		if hibpEntries, err := breach.CheckHIBP(target); err == nil && len(hibpEntries) > 0 {
-			result.Breaches = append(result.Breaches, hibpEntries...)
-			result.Sources = append(result.Sources, "hibp")
-		}
-		if lcEntries, err := breach.CheckLeakCheck(target); err == nil && len(lcEntries) > 0 {
-			result.Breaches = append(result.Breaches, lcEntries...)
-			result.Sources = append(result.Sources, "leakcheck")
-		}
-		if localEntries, err := breach.SearchLocalDump(target); err == nil && len(localEntries) > 0 {
-			result.Breaches = append(result.Breaches, localEntries...)
-			result.Sources = append(result.Sources, "local")
-		}
-	} else {
-		// Free: HIBP only (breach names, no passwords)
-		result.Target = target
-		result.Type = tType
-		if hibpEntries, err := breach.CheckHIBP(target); err == nil {
-			result.Breaches = append(result.Breaches, hibpEntries...)
-			if len(hibpEntries) > 0 {
-				result.Sources = append(result.Sources, "hibp")
-			}
-		} else {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
-				"  ⚠ HIBP check failed: " + err.Error()))
-		}
-		if len(result.Breaches) == 0 && len(result.Sources) == 0 {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-				"  ℹ  Free tier uses HIBP only. Upgrade to Starter+ for LeakCheck, Pro+ for BreachDirectory."))
-		}
-	}
-	took := time.Since(start)
-
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		fmt.Sprintf("  Checked in %s | Sources: %s", took.Round(time.Millisecond),
-			func() string {
-				if len(result.Sources) == 0 {
-					return "none responded"
-				}
-				return strings.Join(result.Sources, ", ")
-			}())))
-	fmt.Println()
-
-	// Display results
-	if len(result.Breaches) == 0 {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
-			"  ✓ No breaches found for " + target))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-			"  Note: Free tier may have limited coverage. Use --keys to add API keys for full results."))
-		return
-	}
-
-	// Breaches found — display them
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-		fmt.Sprintf("  ⚠ BREACHES FOUND: %d total", len(result.Breaches))))
-	fmt.Println()
-
-	for _, b := range result.Breaches {
-		line := fmt.Sprintf("  [%s] %s", b.Source, b.Name)
-		if b.Date != "" {
-			line += fmt.Sprintf(" (%s)", b.Date)
-		}
-		if b.Count > 0 {
-			line += fmt.Sprintf(" — %d records", b.Count)
-		}
-		if len(b.DataTypes) > 0 {
-			line += fmt.Sprintf(" — leaked: %s", strings.Join(b.DataTypes, ", "))
-		}
-		color := lipgloss.Color("#FF4444")
-		if b.Password != "" {
-			line += fmt.Sprintf(" — PASSWORD: %s", b.Password)
-			color = lipgloss.Color("#FF0000") // brighter red for plaintext passwords
-		}
-		if b.Hash != "" {
-			hashPreview := b.Hash
-			if len(hashPreview) > 16 {
-				hashPreview = hashPreview[:16] + "..."
-			}
-			line += fmt.Sprintf(" — HASH: %s", hashPreview)
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(color).Render(line))
-	}
-
-	// Also run LeakInsight for additional coverage
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ LeakInsight extended search (14B+ records)..."))
-	leakResults, leakErr := breach.CheckLeakInsight(target)
-	if leakErr == nil && len(leakResults) > 0 {
-		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(
-			fmt.Sprintf("  ⚠ LeakInsight: %d additional records found", len(leakResults))))
-		for _, lr := range leakResults {
-			line := fmt.Sprintf("  [leakinsight] source: %s", lr.Source)
-			if lr.Date != "" {
-				line += fmt.Sprintf(" (%s)", lr.Date)
-			}
-			if lr.Password != "" {
-				line += fmt.Sprintf(" — PASSWORD: %s", lr.Password)
-			}
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(line))
-		}
-	}
-
-	// AbuseIPDB for IP targets
-	if tType == "ip" || (!strings.Contains(target, "@") && !strings.HasPrefix(target, "@") && len(strings.Split(target, ".")) == 4) {
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AbuseIPDB reputation check..."))
-		abuseResult, abuseErr := breach.CheckAbuseIPDB(target)
-		if abuseErr == nil && abuseResult != nil {
-			abuseColor := lipgloss.Color("#00FF00")
-			if abuseResult.AbuseScore > 50 {
-				abuseColor = lipgloss.Color("#FF4444")
-			} else if abuseResult.AbuseScore > 10 {
-				abuseColor = lipgloss.Color("#FFD700")
-			}
-			fmt.Println(lipgloss.NewStyle().Foreground(abuseColor).Render(
-				fmt.Sprintf("  🛡 AbuseIPDB: score=%d%% | reports=%d | ISP=%s | country=%s",
-					abuseResult.AbuseScore, abuseResult.TotalReports, abuseResult.ISP, abuseResult.Country)))
-		}
-	}
-
-	fmt.Println()
-
-	// AI analysis of breach results
-	if !localMode {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AI breach risk analysis..."))
-		formatted := breach.FormatBreachResult(result)
-		prompt := fmt.Sprintf(`Breach Intelligence Analysis for: %s
-
-%s
-
-Provide:
-1. Risk assessment (what attackers can do with this data)
-2. Credential stuffing attack vectors
-3. Password pattern analysis (if passwords visible)
-4. Recommended immediate actions for the target
-5. Services likely affected (based on breach names)
-6. MITRE ATT&CK techniques applicable`, target, formatted)
-
-		aiResult, aiErr := api.SendPrompt(prompt)
-		if aiErr == nil {
-			clean := utils.StripMarkdown(aiResult)
-			printResult("🔓 Breach Analysis → "+target, clean)
-			_ = storage.AddEntry("/breach "+target, clean)
-		}
-	}
-
-	// Save raw results
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  Tip: Run /osint-deep for full OSINT including breach check on all found emails"))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  Tip: cybermind /breach --index /dump.txt to add local breach dumps"))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  Tip: cybermind /threat <ip|domain|hash> for full threat intel (VirusTotal + AbuseIPDB + OTX)"))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  API keys (free): AbuseIPDB → abuseipdb.com/account/api | VirusTotal → virustotal.com/gui/my-apikey"))
-}
-
-// ─── Threat Intel Command Handler ────────────────────────────────────────────
-
-// runThreatIntel handles /threat command — aggregated threat intelligence.
-// Runs VirusTotal + AbuseIPDB + AlienVault OTX + IOC Search + URLScan + GreyNoise concurrently.
-func runThreatIntel(target string, localMode bool) {
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render("  🔴 THREAT INTELLIGENCE — " + target))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  Sources: VirusTotal + AbuseIPDB + AlienVault OTX + IOC Search + URLScan + GreyNoise"))
-	fmt.Println()
-
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ Running concurrent threat intel checks..."))
-	start := time.Now()
-	report := breach.CheckAllThreatIntel(target)
-	took := time.Since(start)
-
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		fmt.Sprintf("  Completed in %s", took.Round(time.Millisecond))))
-	fmt.Println()
-
-	// Verdict banner
-	verdictColor := lipgloss.Color("#00FF00")
-	verdictIcon := "✓"
-	switch report.Verdict {
-	case "malicious":
-		verdictColor = lipgloss.Color("#FF0000")
-		verdictIcon = "⚠"
-	case "suspicious":
-		verdictColor = lipgloss.Color("#FFD700")
-		verdictIcon = "⚡"
-	}
-	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(verdictColor).Render(
-		fmt.Sprintf("  %s VERDICT: %s (score: %d/100)", verdictIcon, strings.ToUpper(report.Verdict), report.OverallScore)))
-	fmt.Println()
-
-	// IOC Search
-	if report.IOC != nil {
-		iocColor := lipgloss.Color("#00FF00")
-		if report.IOC.Malicious {
-			iocColor = lipgloss.Color("#FF4444")
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(iocColor).Render(
-			fmt.Sprintf("  [IOC Search]   malicious=%v | score=%.0f | tags=%s",
-				report.IOC.Malicious, report.IOC.Score, strings.Join(report.IOC.Tags, ", "))))
-	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [IOC Search]   no data (RapidAPI key required)"))
-	}
-
-	// AbuseIPDB
-	if report.AbuseIP != nil {
-		abuseColor := lipgloss.Color("#00FF00")
-		if report.AbuseIP.AbuseScore > 50 {
-			abuseColor = lipgloss.Color("#FF4444")
-		} else if report.AbuseIP.AbuseScore > 10 {
-			abuseColor = lipgloss.Color("#FFD700")
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(abuseColor).Render(
-			fmt.Sprintf("  [AbuseIPDB]    score=%d%% | reports=%d | ISP=%s | country=%s",
-				report.AbuseIP.AbuseScore, report.AbuseIP.TotalReports, report.AbuseIP.ISP, report.AbuseIP.Country)))
-	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [AbuseIPDB]    skipped (IP targets only, or set ABUSEIPDB_API_KEY)"))
-	}
-
-	// VirusTotal
-	if report.VirusTotal != nil {
-		vtColor := lipgloss.Color("#00FF00")
-		if report.VirusTotal.Malicious > 0 {
-			vtColor = lipgloss.Color("#FF4444")
-		} else if report.VirusTotal.Suspicious > 0 {
-			vtColor = lipgloss.Color("#FFD700")
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(vtColor).Render(
-			fmt.Sprintf("  [VirusTotal]   malicious=%d/%d | suspicious=%d | harmless=%d",
-				report.VirusTotal.Malicious, report.VirusTotal.TotalVendors,
-				report.VirusTotal.Suspicious, report.VirusTotal.Harmless)))
-		if report.VirusTotal.Permalink != "" {
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-				"                 → " + report.VirusTotal.Permalink))
-		}
-	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [VirusTotal]   skipped (set VIRUSTOTAL_API_KEY — free 500/day)"))
-	}
-
-	// AlienVault OTX
-	if report.OTX != nil {
-		otxColor := lipgloss.Color("#00FF00")
-		if report.OTX.Pulses > 5 {
-			otxColor = lipgloss.Color("#FF4444")
-		} else if report.OTX.Pulses > 0 {
-			otxColor = lipgloss.Color("#FFD700")
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(otxColor).Render(
-			fmt.Sprintf("  [OTX]          pulses=%d | malware=%s | tags=%s",
-				report.OTX.Pulses, report.OTX.MalwareFamily, strings.Join(report.OTX.Tags[:min(3, len(report.OTX.Tags))], ", "))))
-	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [OTX]          no data"))
-	}
-
-	// URLScan
-	if report.URLScan != nil {
-		urlColor := lipgloss.Color("#00FF00")
-		if report.URLScan.Malicious {
-			urlColor = lipgloss.Color("#FF4444")
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(urlColor).Render(
-			fmt.Sprintf("  [URLScan]      malicious=%v | score=%d | ip=%s | country=%s",
-				report.URLScan.Malicious, report.URLScan.Score, report.URLScan.IP, report.URLScan.Country)))
-	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [URLScan]      skipped (URL/domain targets only)"))
-	}
-
-	// GreyNoise
-	if report.GreyNoise != nil {
-		gnColor := lipgloss.Color("#00FF00")
-		if report.GreyNoise.Classification == "malicious" {
-			gnColor = lipgloss.Color("#FF4444")
-		} else if report.GreyNoise.Noise {
-			gnColor = lipgloss.Color("#FFD700")
-		}
-		fmt.Println(lipgloss.NewStyle().Foreground(gnColor).Render(
-			fmt.Sprintf("  [GreyNoise]    class=%s | noise=%v | riot=%v | name=%s",
-				report.GreyNoise.Classification, report.GreyNoise.Noise, report.GreyNoise.Riot, report.GreyNoise.Name)))
-	} else {
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  [GreyNoise]    skipped (IP targets only)"))
-	}
-
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  Free API keys: abuseipdb.com/account/api (1000/day) | virustotal.com/gui/my-apikey (500/day)"))
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
-		"  Set keys: export ABUSEIPDB_API_KEY=key | export VIRUSTOTAL_API_KEY=key"))
-
-	// AI analysis
-	if !localMode {
-		fmt.Println()
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  ⟳ AI threat analysis..."))
-
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Threat Intelligence Report for: %s\n\n", target))
-		sb.WriteString(fmt.Sprintf("Verdict: %s (score: %d/100)\n\n", report.Verdict, report.OverallScore))
-		if report.IOC != nil {
-			sb.WriteString(fmt.Sprintf("IOC Search: malicious=%v, score=%.0f, tags=%s\n",
-				report.IOC.Malicious, report.IOC.Score, strings.Join(report.IOC.Tags, ", ")))
-		}
-		if report.AbuseIP != nil {
-			sb.WriteString(fmt.Sprintf("AbuseIPDB: score=%d%%, reports=%d, ISP=%s\n",
-				report.AbuseIP.AbuseScore, report.AbuseIP.TotalReports, report.AbuseIP.ISP))
-		}
-		if report.VirusTotal != nil {
-			sb.WriteString(fmt.Sprintf("VirusTotal: %d/%d malicious, %d suspicious\n",
-				report.VirusTotal.Malicious, report.VirusTotal.TotalVendors, report.VirusTotal.Suspicious))
-		}
-		if report.OTX != nil {
-			sb.WriteString(fmt.Sprintf("OTX: %d pulses, malware=%s\n", report.OTX.Pulses, report.OTX.MalwareFamily))
-		}
-		if report.GreyNoise != nil {
-			sb.WriteString(fmt.Sprintf("GreyNoise: %s, noise=%v\n", report.GreyNoise.Classification, report.GreyNoise.Noise))
-		}
-
-		prompt := sb.String() + "\n\nProvide:\n1. Threat assessment and attack context\n2. Recommended defensive actions\n3. MITRE ATT&CK techniques if malicious\n4. Attribution hints if available"
-
-		aiResult, aiErr := api.SendPrompt(prompt)
-		if aiErr == nil {
-			clean := utils.StripMarkdown(aiResult)
-			printResult("🔴 Threat Intel → "+target, clean)
-			_ = storage.AddEntry("/threat "+target, clean)
-		}
-	}
-}
-
-// ─── OMEGA Agentic Brain Loop ─────────────────────────────────────────────────
+// ─── OMEGA Agentic Brain Loop ─────────────────────────────────────────────
 
 // agentPrint prints a styled agent brain message
 func agentPrint(msg string) {
@@ -4332,17 +3720,17 @@ func runOmegaSpecializedPipeline(pipeline omega.OmegaPipeline, localMode bool) {
 			if len(args) > 0 {
 				runOSINTDeep(args[0], nil, localMode)
 			}
-		case "/breach":
-			if len(args) > 0 {
-				runBreachCheck(args, localMode)
-			}
 		case "/locate":
 			if len(args) > 0 {
 				runLocate(args[0], false, localMode)
 			}
 		case "/threat":
 			if len(args) > 0 {
-				runThreatIntel(args[0], localMode)
+				// Threat intel via AI analysis
+				prompt := fmt.Sprintf("Threat intelligence analysis for: %s\nProvide: reputation, known malicious activity, CVEs, MITRE ATT&CK mapping, recommended actions.", args[0])
+				if result, err := api.SendPrompt(prompt); err == nil {
+					printResult("🔴 Threat Intel → "+args[0], utils.StripMarkdown(result))
+				}
 			}
 		case "/osint":
 			if len(args) > 0 {
