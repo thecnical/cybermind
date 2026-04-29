@@ -3386,7 +3386,7 @@ func main() {
 			{"cariddi", "hunt", "go:github.com/edoardottt/cariddi/cmd/cariddi@latest", true, false},
 			{"subjs", "hunt", "go:github.com/lc/subjs@latest", true, false},
 			{"trufflehog", "hunt", "special:trufflehog", false, false},
-			{"mantra", "hunt", "go:github.com/MrEmpy/mantra@latest", true, false},
+			{"mantra", "hunt", "special:mantra", false, false},
 			// ── Hunt Phase 3 — Parameter Discovery ─────────────────────────────
 			{"paramspider", "hunt", "venv:https://github.com/devanshbatham/ParamSpider:/opt/ParamSpider:paramspider.py", false, false},
 			{"arjun", "hunt", "pipx:arjun", false, false},
@@ -3469,7 +3469,7 @@ func main() {
 			{"ghauri", "hunt", "pipx:ghauri", false, false},
 			{"cariddi", "hunt", "go:github.com/edoardottt/cariddi/cmd/cariddi@latest", true, false},
 			{"bxss", "hunt", "go:github.com/ethicalhackingplayground/bxss/v2/cmd/bxss@latest", true, false},
-			{"mantra", "hunt", "go:github.com/MrEmpy/mantra@latest", true, false},
+			{"mantra", "hunt", "special:mantra", false, false},
 			{"semgrep", "hunt", "pipx:semgrep", false, false},
 			{"liffy", "hunt", "venv:https://github.com/mzfr/liffy:/opt/liffy:liffy.py", false, false},
 			{"gopherus", "hunt", "venv:https://github.com/tarunkant/Gopherus:/opt/gopherus:gopherus.py", false, false},
@@ -3491,9 +3491,15 @@ func main() {
 			{"smap", "recon", "go:github.com/s0md3v/smap/cmd/smap@latest", true, false},
 			{"github-subdomains", "recon", "go:github.com/gwen001/github-subdomains@latest", true, false},
 			{"analyticsrelationships", "recon", "go:github.com/Josue87/analyticsrelationships@latest", true, false},
-			{"gitleaks", "recon", "go:github.com/gitleaks/gitleaks/v8@latest", true, false},
+			{"gitleaks", "recon", "special:gitleaks", false, false},
 			{"webanalyze", "recon", "go:github.com/rverton/webanalyze/cmd/webanalyze@latest", true, false},
 			{"favirecon", "recon", "go:github.com/edoardottt/favirecon/cmd/favirecon@latest", true, false},
+			// ── v5.4.0 NEW: Missing tools from images ────────────────────────────
+			{"ipinfo", "recon", "go:github.com/ipinfo/cli/ipinfo@latest", true, false},
+			{"cloud_enum", "recon", "pipx:cloud-enum", false, false},
+			{"spoofcheck", "recon", "venv:https://github.com/BishopFox/spoofcheck:/opt/spoofcheck:spoofcheck.py", false, false},
+			{"second-order", "recon", "go:github.com/mhmdiaa/second-order@latest", true, false},
+			{"misconfig-mapper", "recon", "go:github.com/intigriti/misconfig-mapper/cmd/misconfig-mapper@latest", true, false},
 			// ── v5.4.0 NEW: Exploit Tools ─────────────────────────────────────────
 			{"pacu", "exploit", "pipx:pacu", false, false},
 			{"roadrecon", "exploit", "pipx:roadrecon", false, false},
@@ -3659,50 +3665,14 @@ func main() {
 						"GONOSUMDB=*",
 						"GOPATH="+os.Getenv("HOME")+"/go",
 					)
-					// Special cases for tools with known broken module paths
-					switch t.name {
-					case "gitleaks":
-						// gitleaks v8 has module path conflict — use direct binary download
-						dlCmd := exec.Command("bash", "-c",
-							`set -e
-LATEST=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep browser_download_url | grep linux_x64 | cut -d'"' -f4 | head -1)
-if [ -z "$LATEST" ]; then
-  LATEST="https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.21.2_linux_x64.tar.gz"
-fi
-curl -fsSL "$LATEST" -o /tmp/gitleaks.tar.gz
-mkdir -p /tmp/gitleaks_extract
-tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks_extract
-sudo cp /tmp/gitleaks_extract/gitleaks /usr/local/bin/gitleaks
-sudo chmod +x /usr/local/bin/gitleaks
-rm -rf /tmp/gitleaks.tar.gz /tmp/gitleaks_extract`)
-						dlCmd.Stdout = os.Stdout
-						dlCmd.Stderr = os.Stderr
-						dlCmd.Stdin = nil
-						installErr = dlCmd.Run()
-					case "mantra":
-						// mantra has module path conflict — use direct binary download or git clone + build
-						mantraCmd := exec.Command("bash", "-c",
-							`set -e
-git clone --depth=1 https://github.com/MrEmpy/mantra /tmp/mantra_build 2>/dev/null || true
-if [ -d /tmp/mantra_build ]; then
-  cd /tmp/mantra_build
-  go build -o /tmp/mantra_bin . 2>/dev/null && sudo cp /tmp/mantra_bin /usr/local/bin/mantra && sudo chmod +x /usr/local/bin/mantra
-  rm -rf /tmp/mantra_build /tmp/mantra_bin
-fi`)
-						mantraCmd.Stdout = os.Stdout
-						mantraCmd.Stderr = os.Stderr
-						mantraCmd.Stdin = nil
-						installErr = mantraCmd.Run()
-					default:
-						cmd2 := exec.Command("go", "install", module)
-						cmd2.Env = goEnv
-						cmd2.Stdout = os.Stdout
-						cmd2.Stderr = os.Stderr
-						cmd2.Stdin = nil
-						installErr = cmd2.Run()
-						if installErr == nil {
-							symlinkGoTool(t.name)
-						}
+					cmd2 := exec.Command("go", "install", module)
+					cmd2.Env = goEnv
+					cmd2.Stdout = os.Stdout
+					cmd2.Stderr = os.Stderr
+					cmd2.Stdin = nil
+					installErr = cmd2.Run()
+					if installErr == nil {
+						symlinkGoTool(t.name)
 					}
 
 				case strings.HasPrefix(t.install, "venv:"):
@@ -3889,6 +3859,35 @@ rm -f /tmp/evilginx2.tar.gz`)
 					dlCmd.Stderr = os.Stderr
 					dlCmd.Stdin = nil
 					installErr = dlCmd.Run()
+
+				case t.install == "special:gitleaks":
+					dlCmd := exec.Command("bash", "-c",
+						`set -e
+GITLEAKS_VER=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v' 2>/dev/null || echo "8.21.2")
+curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VER}/gitleaks_${GITLEAKS_VER}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+mkdir -p /tmp/gitleaks_extract
+tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks_extract
+sudo cp /tmp/gitleaks_extract/gitleaks /usr/local/bin/gitleaks
+sudo chmod +x /usr/local/bin/gitleaks
+rm -rf /tmp/gitleaks.tar.gz /tmp/gitleaks_extract`)
+					dlCmd.Stdout = os.Stdout
+					dlCmd.Stderr = os.Stderr
+					dlCmd.Stdin = nil
+					installErr = dlCmd.Run()
+
+				case t.install == "special:mantra":
+					mantraCmd := exec.Command("bash", "-c",
+						`set -e
+rm -rf /tmp/mantra_build
+git clone --depth=1 https://github.com/MrEmpy/mantra /tmp/mantra_build
+cd /tmp/mantra_build && go build -o /tmp/mantra_bin .
+sudo cp /tmp/mantra_bin /usr/local/bin/mantra
+sudo chmod +x /usr/local/bin/mantra
+rm -rf /tmp/mantra_build /tmp/mantra_bin`)
+					mantraCmd.Stdout = os.Stdout
+					mantraCmd.Stderr = os.Stderr
+					mantraCmd.Stdin = nil
+					installErr = mantraCmd.Run()
 
 				default:
 					// apt fallback for any unhandled tool
@@ -4990,6 +4989,30 @@ sudo chmod +x /opt/graphw00f/main.py`)
 			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render(
 				session.PrintSessionSummary()))
 			return
+		}
+
+		// Quick pre-check: count installed tools
+		installedCount := 0
+		criticalTools := []string{"subfinder", "httpx", "nuclei", "naabu", "katana", "dalfox", "gau", "waybackurls"}
+		for _, tool := range criticalTools {
+			if _, err := exec.LookPath(tool); err == nil {
+				installedCount++
+			}
+		}
+		if installedCount < 4 {
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
+				fmt.Sprintf("  ⚠  Only %d/8 critical tools installed!", installedCount)))
+			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
+				"  Run first: sudo cybermind /doctor"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
+				"  Then retry: sudo cybermind /plan " + planTarget))
+			fmt.Println()
+			fmt.Print(lipgloss.NewStyle().Foreground(yellow).Render("  Continue anyway? [y/N] → "))
+			var ans string
+			fmt.Scanln(&ans)
+			if strings.ToLower(strings.TrimSpace(ans)) != "y" {
+				return
+			}
 		}
 
 		runOmegaPlan(planTarget, localMode)

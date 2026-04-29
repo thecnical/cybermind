@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"cybermind-cli/anon"
@@ -1329,12 +1331,31 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		maxIterations = 10 // increased from 8
 	}
 
+	// ── Signal handler — save on Ctrl+C or kill ──────────────────────────
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow2).Render("  ⚡ Interrupted — saving partial results..."))
+		if len(allBugs) > 0 || len(allFindings) > 0 {
+			saveOmegaPartialResults(target, allBugs, allFindings, state, mode)
+		}
+		os.Exit(0)
+	}()
+
 	for iter := 0; iter < maxIterations; iter++ {
 		state.Iteration = iter + 1
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Foreground(dim2).Render(fmt.Sprintf("  %s", strings.Repeat("─", 60))))
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow2).Render(
 			fmt.Sprintf("  🔄 AGENT ITERATION %d/%d", iter+1, maxIterations)))
+		fmt.Println()
+
+		// Auto-save every 5 iterations
+		if iter > 0 && iter%5 == 0 && (len(allBugs) > 0 || len(allFindings) > 0) {
+			go saveOmegaPartialResults(target, allBugs, allFindings, state, mode)
+		}
 		fmt.Println()
 
 		// ── Ask AI brain what to do next ─────────────────────────────────
@@ -2840,6 +2861,59 @@ func runAgenticOmega(target, skillLevel, focusBugs, mode string, localMode bool)
 		findingChance = 45
 	}
 	api.SendAttackSessionComplete(target, "omega", state.BugsFound, len(state.ToolsRan), findingChance)
+}
+
+// saveOmegaPartialResults saves partial OMEGA results when interrupted
+func saveOmegaPartialResults(target string, bugs []bugdetect.Bug, findings map[string]string, state api.AgentState, mode string) {
+	home, _ := os.UserHomeDir()
+	safeTarget := strings.NewReplacer(".", "_", "/", "_", ":", "_").Replace(target)
+	ts := time.Now().Format("2006-01-02_15-04-05")
+
+	// Save to Desktop/Downloads/~.cybermind/reports
+	dirs := []string{
+		filepath.Join(home, "Desktop"),
+		filepath.Join(home, "Downloads"),
+		filepath.Join(home, ".cybermind", "reports"),
+	}
+
+	content := fmt.Sprintf("# CyberMind OMEGA Partial Results\n\n")
+	content += fmt.Sprintf("**Target:** %s\n**Mode:** %s\n**Saved:** %s\n**Status:** INTERRUPTED\n\n", target, mode, ts)
+	content += fmt.Sprintf("**Bugs found:** %d\n**Tools ran:** %d\n\n", len(bugs), len(state.ToolsRan))
+
+	if len(bugs) > 0 {
+		content += "## Bugs Found\n\n"
+		for i, b := range bugs {
+			content += fmt.Sprintf("### %d. %s [%s]\n", i+1, b.Title, strings.ToUpper(string(b.Severity)))
+			if b.URL != "" {
+				content += fmt.Sprintf("- URL: %s\n", b.URL)
+			}
+			content += fmt.Sprintf("- Tool: %s | CVSS: %.1f\n\n", b.Tool, b.CVSS)
+		}
+	}
+
+	if len(findings) > 0 {
+		content += "## Raw Findings\n\n"
+		for tool, output := range findings {
+			if output != "" {
+				short := output
+				if len(short) > 500 {
+					short = short[:500] + "...[truncated]"
+				}
+				content += fmt.Sprintf("### %s\n```\n%s\n```\n\n", tool, short)
+			}
+		}
+	}
+
+	filename := fmt.Sprintf("cybermind_omega_partial_%s_%s.md", safeTarget, ts)
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); err == nil {
+			path := filepath.Join(dir, filename)
+			if os.WriteFile(path, []byte(content), 0644) == nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ Partial results saved: " + path))
+				return
+			}
+		}
+	}
 }
 
 // localAgentDecision makes a decision without AI — pure logic fallback
