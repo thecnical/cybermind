@@ -493,7 +493,51 @@ if ! command -v testssl &>/dev/null && ! command -v testssl.sh &>/dev/null; then
     sudo ln -sf /opt/testssl/testssl.sh /usr/local/bin/testssl 2>/dev/null) || true
 fi
 
-# ── v5.0.0 NEW: Tier 3 Recon Tools ───────────────────────────────────────────
+# ── v5.4.0 NEW: cloud_enum — git clone (PyPI package name is wrong) ──────────
+if ! command -v cloud_enum &>/dev/null; then
+    echo -e "${DIM}  Installing cloud_enum (git clone)...${NC}"
+    sudo rm -rf /opt/cloud_enum 2>/dev/null || true
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/initstring/cloud_enum /opt/cloud_enum 2>/dev/null && \
+    python3 -m venv /opt/cloud_enum/.venv 2>/dev/null && \
+    /opt/cloud_enum/.venv/bin/pip install -r /opt/cloud_enum/requirements.txt -q 2>/dev/null || true && \
+    printf '#!/bin/bash\nexec /opt/cloud_enum/.venv/bin/python3 /opt/cloud_enum/cloud_enum.py "$@"\n' | sudo tee /usr/local/bin/cloud_enum > /dev/null && \
+    sudo chmod +x /usr/local/bin/cloud_enum && \
+    echo -e "${GREEN}[✓] cloud_enum installed${NC}" || \
+    echo -e "${YELLOW}[!] cloud_enum install failed${NC}"
+fi
+# ── v5.4.0 NEW: ctfr — git clone (pipx fails due to numpy deps) ──────────────
+if ! command -v ctfr &>/dev/null; then
+    echo -e "${DIM}  Installing ctfr (git clone)...${NC}"
+    sudo rm -rf /opt/ctfr 2>/dev/null || true
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/UnaPibaGeek/ctfr /opt/ctfr 2>/dev/null && \
+    python3 -m venv /opt/ctfr/.venv 2>/dev/null && \
+    /opt/ctfr/.venv/bin/pip install requests -q 2>/dev/null || true && \
+    printf '#!/bin/bash\nexec /opt/ctfr/.venv/bin/python3 /opt/ctfr/ctfr.py "$@"\n' | sudo tee /usr/local/bin/ctfr > /dev/null && \
+    sudo chmod +x /usr/local/bin/ctfr && \
+    echo -e "${GREEN}[✓] ctfr installed${NC}" || \
+    echo -e "${YELLOW}[!] ctfr install failed${NC}"
+fi
+# ── v5.4.0 NEW: spoofcheck — git clone (not on PyPI) ─────────────────────────
+if ! command -v spoofcheck &>/dev/null; then
+    echo -e "${DIM}  Installing spoofcheck (git clone)...${NC}"
+    sudo rm -rf /opt/spoofcheck 2>/dev/null || true
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git clone --depth=1 https://github.com/BishopFox/spoofcheck /opt/spoofcheck 2>/dev/null && \
+    python3 -m venv /opt/spoofcheck/.venv 2>/dev/null && \
+    (/opt/spoofcheck/.venv/bin/pip install -r /opt/spoofcheck/requirements.txt -q 2>/dev/null || \
+     /opt/spoofcheck/.venv/bin/pip install dnspython pyspf -q 2>/dev/null || true) && \
+    printf '#!/bin/bash\nexec /opt/spoofcheck/.venv/bin/python3 /opt/spoofcheck/spoofcheck.py "$@"\n' | sudo tee /usr/local/bin/spoofcheck > /dev/null && \
+    sudo chmod +x /usr/local/bin/spoofcheck && \
+    echo -e "${GREEN}[✓] spoofcheck installed${NC}" || \
+    echo -e "${YELLOW}[!] spoofcheck install failed${NC}"
+fi
+# ── v5.4.0 NEW: rustscan — apt (Kali has it), fallback cargo ─────────────────
+if ! command -v rustscan &>/dev/null; then
+    sudo apt-get install -y rustscan -qq 2>/dev/null || \
+    (command -v cargo &>/dev/null && cargo install rustscan 2>/dev/null && \
+     for d in "$HOME/.cargo/bin" "/root/.cargo/bin"; do [ -f "$d/rustscan" ] && sudo ln -sf "$d/rustscan" /usr/local/bin/rustscan && break; done) || true
+fi
+# ── v5.4.0 NEW: enum4linux-ng — apt ──────────────────────────────────────────
+command -v enum4linux-ng &>/dev/null || sudo apt-get install -y enum4linux-ng -qq 2>/dev/null || true
 echo -e "${DIM}  Installing Tier 3 recon tools (crosslinked, enum4linux-ng, dorks_hunter, analyticsrelationships, gitleaks)...${NC}"
 # crosslinked — LinkedIn employee enum
 command -v crosslinked &>/dev/null || pip3 install crosslinked --break-system-packages -q 2>/dev/null || true

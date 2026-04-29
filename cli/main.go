@@ -3441,7 +3441,7 @@ func main() {
 			{"mitm6", "exploit", "pipx:mitm6", false, false},
 			// ── Tunneling + Exfil ───────────────────────────────────────────────
 			{"chisel", "exploit", "go:github.com/jpillora/chisel@latest", true, false},
-			{"ligolo-ng", "exploit", "go:github.com/nicocha30/ligolo-ng/cmd/proxy@latest", true, false},
+			{"ligolo-ng", "exploit", "special:ligolo_ng", true, false},
 			{"iodine", "exploit", "apt:iodine", false, false},
 			// ── C2 Frameworks ───────────────────────────────────────────────────
 			{"sliver", "exploit", "special:sliver", false, false},
@@ -3483,10 +3483,10 @@ func main() {
 			{"jsluice", "recon", "go:github.com/BishopFox/jsluice/cmd/jsluice@latest", true, false},
 			{"sourcemapper", "recon", "go:github.com/denandz/sourcemapper@latest", true, false},
 			// getjswords removed — private/broken repo (github.com/m4ll0k/getjswords)
-			{"swaggerspy", "hunt", "pipx:swaggerspy", false, false},
+			{"swaggerspy", "hunt", "special:swaggerspy", false, false},
 			// ── v5.4.0 NEW: Crawling Tools ────────────────────────────────────────
 			{"uro", "hunt", "pipx:uro", false, false},
-			{"ctfr", "recon", "pipx:ctfr", false, false},
+			{"ctfr", "recon", "special:ctfr", false, false},
 			{"dnstake", "recon", "go:github.com/pwnesia/dnstake/cmd/dnstake@latest", true, false},
 			{"smap", "recon", "go:github.com/s0md3v/smap/cmd/smap@latest", true, false},
 			{"github-subdomains", "recon", "go:github.com/gwen001/github-subdomains@latest", true, false},
@@ -3496,10 +3496,26 @@ func main() {
 			{"favirecon", "recon", "go:github.com/edoardottt/favirecon/cmd/favirecon@latest", true, false},
 			// ── v5.4.0 NEW: Missing tools from images ────────────────────────────
 			{"ipinfo", "recon", "go:github.com/ipinfo/cli/ipinfo@latest", true, false},
-			{"cloud_enum", "recon", "pipx:cloud-enum", false, false},
-			{"spoofcheck", "recon", "venv:https://github.com/BishopFox/spoofcheck:/opt/spoofcheck:spoofcheck.py", false, false},
+			{"cloud_enum", "recon", "special:cloud_enum", false, false},
+			{"spoofcheck", "recon", "special:spoofcheck", false, false},
+			{"ctfr", "recon", "special:ctfr", false, false},
+			{"rustscan", "recon", "special:rustscan", false, false},
+			{"enum4linux-ng", "recon", "apt:enum4linux-ng", false, false},
+			{"gowitness", "recon", "go:github.com/sensepost/gowitness@latest", true, false},
+			{"jsluice", "recon", "go:github.com/BishopFox/jsluice/cmd/jsluice@latest", true, false},
+			{"sourcemapper", "recon", "go:github.com/denandz/sourcemapper@latest", true, false},
+			{"dnstake", "recon", "go:github.com/pwnesia/dnstake/cmd/dnstake@latest", true, false},
+			{"smap", "recon", "go:github.com/s0md3v/smap/cmd/smap@latest", true, false},
+			{"github-subdomains", "recon", "go:github.com/gwen001/github-subdomains@latest", true, false},
+			{"analyticsrelationships", "recon", "go:github.com/Josue87/analyticsrelationships@latest", true, false},
+			{"gitleaks", "recon", "special:gitleaks", false, false},
+			{"webanalyze", "recon", "go:github.com/rverton/webanalyze/cmd/webanalyze@latest", true, false},
+			{"favirecon", "recon", "go:github.com/edoardottt/favirecon/cmd/favirecon@latest", true, false},
 			{"second-order", "recon", "go:github.com/mhmdiaa/second-order@latest", true, false},
 			{"misconfig-mapper", "recon", "go:github.com/intigriti/misconfig-mapper/cmd/misconfig-mapper@latest", true, false},
+			{"uro", "hunt", "pipx:uro", false, false},
+			{"swaggerspy", "hunt", "special:swaggerspy", false, false},
+			{"ghauri", "hunt", "pipx:ghauri", false, false},
 			// ── v5.4.0 NEW: Exploit Tools ─────────────────────────────────────────
 			{"pacu", "exploit", "pipx:pacu", false, false},
 			{"roadrecon", "exploit", "pipx:roadrecon", false, false},
@@ -3734,6 +3750,70 @@ func main() {
 						exec.Command("sudo", "chmod", "+x", "/usr/local/bin/shodan").Run()
 					}
 
+				case t.install == "special:cloud_enum":
+					// cloud_enum — git clone method (PyPI package name is wrong)
+					cloudCmd := exec.Command("bash", "-c",
+						`set -e
+sudo rm -rf /opt/cloud_enum
+GIT_TERMINAL_PROMPT=0 git clone --depth=1 https://github.com/initstring/cloud_enum /opt/cloud_enum
+python3 -m venv /opt/cloud_enum/.venv
+/opt/cloud_enum/.venv/bin/pip install -r /opt/cloud_enum/requirements.txt -q 2>/dev/null || true
+printf '#!/bin/bash\nexec /opt/cloud_enum/.venv/bin/python3 /opt/cloud_enum/cloud_enum.py "$@"\n' | sudo tee /usr/local/bin/cloud_enum > /dev/null
+sudo chmod +x /usr/local/bin/cloud_enum`)
+					cloudCmd.Stdout = os.Stdout
+					cloudCmd.Stderr = os.Stderr
+					cloudCmd.Stdin = nil
+					installErr = cloudCmd.Run()
+
+				case t.install == "special:spoofcheck":
+					// spoofcheck — git clone + venv (not on PyPI)
+					spoofCmd := exec.Command("bash", "-c",
+						`set -e
+sudo rm -rf /opt/spoofcheck
+GIT_TERMINAL_PROMPT=0 git clone --depth=1 https://github.com/BishopFox/spoofcheck /opt/spoofcheck
+python3 -m venv /opt/spoofcheck/.venv
+/opt/spoofcheck/.venv/bin/pip install -r /opt/spoofcheck/requirements.txt -q 2>/dev/null || \
+/opt/spoofcheck/.venv/bin/pip install dnspython pyspf -q 2>/dev/null || true
+printf '#!/bin/bash\nexec /opt/spoofcheck/.venv/bin/python3 /opt/spoofcheck/spoofcheck.py "$@"\n' | sudo tee /usr/local/bin/spoofcheck > /dev/null
+sudo chmod +x /usr/local/bin/spoofcheck`)
+					spoofCmd.Stdout = os.Stdout
+					spoofCmd.Stderr = os.Stderr
+					spoofCmd.Stdin = nil
+					installErr = spoofCmd.Run()
+
+				case t.install == "special:ctfr":
+					// ctfr — git clone method (pipx/pip fails due to numpy deps)
+					ctfrCmd := exec.Command("bash", "-c",
+						`set -e
+sudo rm -rf /opt/ctfr
+GIT_TERMINAL_PROMPT=0 git clone --depth=1 https://github.com/UnaPibaGeek/ctfr /opt/ctfr
+python3 -m venv /opt/ctfr/.venv
+/opt/ctfr/.venv/bin/pip install requests -q 2>/dev/null || true
+printf '#!/bin/bash\nexec /opt/ctfr/.venv/bin/python3 /opt/ctfr/ctfr.py "$@"\n' | sudo tee /usr/local/bin/ctfr > /dev/null
+sudo chmod +x /usr/local/bin/ctfr`)
+					ctfrCmd.Stdout = os.Stdout
+					ctfrCmd.Stderr = os.Stderr
+					ctfrCmd.Stdin = nil
+					installErr = ctfrCmd.Run()
+
+				case t.install == "special:swaggerspy":
+					// swaggerspy — git clone method (not on PyPI)
+					swaggerCmd := exec.Command("bash", "-c",
+						`set -e
+sudo rm -rf /opt/swaggerspy
+GIT_TERMINAL_PROMPT=0 git clone --depth=1 https://github.com/UnaPibaGeek/swaggerspy /opt/swaggerspy 2>/dev/null || \
+GIT_TERMINAL_PROMPT=0 git clone --depth=1 https://github.com/nicowillis/swaggerspy /opt/swaggerspy 2>/dev/null || true
+if [ -f /opt/swaggerspy/swaggerspy.py ]; then
+  python3 -m venv /opt/swaggerspy/.venv
+  /opt/swaggerspy/.venv/bin/pip install requests -q 2>/dev/null || true
+  printf '#!/bin/bash\nexec /opt/swaggerspy/.venv/bin/python3 /opt/swaggerspy/swaggerspy.py "$@"\n' | sudo tee /usr/local/bin/swaggerspy > /dev/null
+  sudo chmod +x /usr/local/bin/swaggerspy
+fi`)
+					swaggerCmd.Stdout = os.Stdout
+					swaggerCmd.Stderr = os.Stderr
+					swaggerCmd.Stdin = nil
+					installErr = swaggerCmd.Run()
+
 				case t.install == "special:x8":
 					installErr = installX8()
 
@@ -3859,6 +3939,46 @@ rm -f /tmp/evilginx2.tar.gz`)
 					dlCmd.Stderr = os.Stderr
 					dlCmd.Stdin = nil
 					installErr = dlCmd.Run()
+
+				case t.install == "special:ligolo_ng":
+					// ligolo-ng — apt install (Kali has it), fallback to go install
+					ligoloCmd := exec.Command("bash", "-c",
+						`set -e
+# Try apt first (Kali has ligolo-ng package)
+sudo apt-get install -y ligolo-ng -qq 2>/dev/null && command -v ligolo-ng && exit 0
+# Fallback: go install (binary is named 'proxy', symlink to ligolo-ng)
+go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest 2>/dev/null
+for gobin in "$HOME/go/bin" "/root/go/bin"; do
+  if [ -f "$gobin/proxy" ]; then
+    sudo ln -sf "$gobin/proxy" /usr/local/bin/ligolo-ng
+    break
+  fi
+done`)
+					ligoloCmd.Stdout = os.Stdout
+					ligoloCmd.Stderr = os.Stderr
+					ligoloCmd.Stdin = nil
+					installErr = ligoloCmd.Run()
+
+				case t.install == "special:rustscan":
+					// rustscan — apt install (Kali has it), fallback to cargo
+					rustCmd := exec.Command("bash", "-c",
+						`set -e
+# Try apt first
+sudo apt-get install -y rustscan -qq 2>/dev/null && command -v rustscan && exit 0
+# Fallback: cargo install
+command -v cargo &>/dev/null || sudo apt-get install -y cargo -qq 2>/dev/null || true
+cargo install rustscan 2>/dev/null
+# Symlink from cargo bin
+for cargobin in "$HOME/.cargo/bin" "/root/.cargo/bin"; do
+  if [ -f "$cargobin/rustscan" ]; then
+    sudo ln -sf "$cargobin/rustscan" /usr/local/bin/rustscan
+    break
+  fi
+done`)
+					rustCmd.Stdout = os.Stdout
+					rustCmd.Stderr = os.Stderr
+					rustCmd.Stdin = nil
+					installErr = rustCmd.Run()
 
 				case t.install == "special:gitleaks":
 					dlCmd := exec.Command("bash", "-c",
