@@ -3533,9 +3533,6 @@ fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt
 if len(ctx0.EmailsFound) > 0 {
 fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  v Emails: %d found", len(ctx0.EmailsFound))))
 }
-if len(ctx0.BreachesFound) > 0 {
-fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4444")).Render(fmt.Sprintf("  ! BREACHES: %d found - credential stuffing possible!", len(ctx0.BreachesFound))))
-}
 if len(ctx0.SocialProfiles) > 0 {
 fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(fmt.Sprintf("  v Social profiles: %d found", len(ctx0.SocialProfiles))))
 }

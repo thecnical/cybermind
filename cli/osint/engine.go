@@ -95,7 +95,6 @@ type OSINTContext struct {
 	SubdomainsFound []string
 	EmployeesFound  []string
 	SocialProfiles  []string
-	BreachesFound   []string
 	PhoneInfo       []string
 	IPRanges        []string
 	GitHubLeaks     []string
@@ -121,7 +120,6 @@ type OSINTSession struct {
 	SubdomainsFound []string          `json:"subdomains_found"`
 	EmployeesFound  []string          `json:"employees_found"`
 	SocialProfiles  []string          `json:"social_profiles"`
-	BreachesFound   []string          `json:"breaches_found"`
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -256,21 +254,6 @@ func extractSubdomains(output, domain string) []string {
 	return dedupOSINT(subs)
 }
 
-func extractBreaches(output string) []string {
-	var breaches []string
-	for _, line := range strings.Split(output, "\n") {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "breach") || strings.Contains(lower, "leak") ||
-			strings.Contains(lower, "pwned") || strings.Contains(lower, "exposed") ||
-			strings.Contains(lower, "found") {
-			if strings.TrimSpace(line) != "" {
-				breaches = append(breaches, strings.TrimSpace(line))
-			}
-		}
-	}
-	return dedupOSINT(breaches)
-}
-
 func extractSocialProfiles(output string) []string {
 	var profiles []string
 	for _, line := range strings.Split(output, "\n") {
@@ -295,7 +278,7 @@ func updateContext(tool, output string, ctx *OSINTContext) {
 	case "sherlock", "maigret", "socialscan", "holehe":
 		ctx.SocialProfiles = dedupOSINT(append(ctx.SocialProfiles, extractSocialProfiles(output)...))
 	case "h8mail", "pwndb":
-		ctx.BreachesFound = dedupOSINT(append(ctx.BreachesFound, extractBreaches(output)...))
+		// breach APIs removed — skip
 	case "phoneinfoga":
 		ctx.PhoneInfo = append(ctx.PhoneInfo, strings.TrimSpace(output[:min(500, len(output))]))
 	case "exiftool", "foca":
@@ -452,7 +435,6 @@ func saveOSINTSession(ctx *OSINTContext, findings map[string]string) {
 		SubdomainsFound: ctx.SubdomainsFound,
 		EmployeesFound:  ctx.EmployeesFound,
 		SocialProfiles:  ctx.SocialProfiles,
-		BreachesFound:   ctx.BreachesFound,
 	}
 	data, err := json.MarshalIndent(session, "", "  ")
 	if err != nil {
@@ -503,7 +485,6 @@ func RunOSINTDeep(target string, requested []string, progress func(OSINTStatus))
 		ctx.SubdomainsFound = prev.SubdomainsFound
 		ctx.EmployeesFound = prev.EmployeesFound
 		ctx.SocialProfiles = prev.SocialProfiles
-		ctx.BreachesFound = prev.BreachesFound
 	}
 
 	available, skipped, err := detectOSINTTools(requested)

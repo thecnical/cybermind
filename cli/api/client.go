@@ -2570,7 +2570,6 @@ EmailsFound     []string          `json:"emails_found"`
 SubdomainsFound []string          `json:"subdomains_found"`
 EmployeesFound  []string          `json:"employees_found"`
 SocialProfiles  []string          `json:"social_profiles"`
-BreachesFound   []string          `json:"breaches_found"`
 GitHubLeaks     []string          `json:"github_leaks"`
 RawCombined     string            `json:"raw"`
 }
@@ -2635,11 +2634,6 @@ if len(payload.SocialProfiles) > 0 {
 n := len(payload.SocialProfiles)
 if n > 5 { n = 5 }
 sb.WriteString("Social profiles:\n" + strings.Join(payload.SocialProfiles[:n], "\n") + "\n")
-}
-if len(payload.BreachesFound) > 0 {
-n := len(payload.BreachesFound)
-if n > 5 { n = 5 }
-sb.WriteString("BREACHES FOUND:\n" + strings.Join(payload.BreachesFound[:n], "\n") + "\n")
 }
 if len(payload.EmployeesFound) > 0 {
 sb.WriteString(fmt.Sprintf("Employees: %d found\n", len(payload.EmployeesFound)))

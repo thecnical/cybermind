@@ -9,7 +9,7 @@ import (
 
 // Version is injected from main package at build time via ldflags.
 // Fallback: read from binary version string.
-var Version = "5.4.2"
+var Version = "5.4.3"
 
 // Fixed bottom section height: divider(1) + input label(1) + input box(3) + footer(1) = 6
 const bottomHeight = 6
