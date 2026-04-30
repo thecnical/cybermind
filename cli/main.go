@@ -37,7 +37,7 @@ import (
 )
 
 var (
-	Version = "5.4.3"
+	Version = "5.4.4"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -1928,22 +1928,27 @@ func runSelfUpdate() {
 	const vercelCDN = "https://cybermindcli1.vercel.app/"
 	const ghRaw = "https://raw.githubusercontent.com/thecnical/cybermind/main/cli/"
 
-	// Fetch latest version from VERSION file
+	// Fetch latest version from VERSION file — try multiple sources
 	latestVersion := ""
 	client := &http.Client{Timeout: 8 * time.Second}
-	if resp, err := client.Get(vercelCDN + "VERSION"); err == nil {
-		defer resp.Body.Close()
-		if body, err := io.ReadAll(io.LimitReader(resp.Body, 32)); err == nil {
-			latestVersion = strings.TrimSpace(string(body))
-		}
+	
+	// Try sources in order: Vercel CDN → GitHub raw → GitHub API
+	versionSources := []string{
+		vercelCDN + "VERSION",
+		"https://raw.githubusercontent.com/thecnical/cybermind/main/VERSION",
+		ghRaw + "VERSION",
 	}
-	if latestVersion == "" {
-		// Fallback: try GitHub
-		if resp, err := client.Get("https://raw.githubusercontent.com/thecnical/cybermind/main/VERSION"); err == nil {
-			defer resp.Body.Close()
+	for _, src := range versionSources {
+		if resp, err := client.Get(src); err == nil {
 			if body, err := io.ReadAll(io.LimitReader(resp.Body, 32)); err == nil {
-				latestVersion = strings.TrimSpace(string(body))
+				v := strings.TrimSpace(string(body))
+				if v != "" && len(v) >= 5 { // valid version string
+					latestVersion = v
+					resp.Body.Close()
+					break
+				}
 			}
+			resp.Body.Close()
 		}
 	}
 

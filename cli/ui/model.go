@@ -86,7 +86,8 @@ func NewModel(localIP string) Model {
 
 	contextMsgs := loadHistoryAsContext(5)
 
-	// Start in key prompt mode if no key is set — skip waking backend
+	// Start in key prompt mode ONLY if no key is set
+	// If key is saved, always start in waking state (connect to backend)
 	initialState := stateWaking
 	if api.GetAPIKey() == "" {
 		initialState = stateKeyPrompt
@@ -133,14 +134,39 @@ func (m Model) Init() tea.Cmd {
 }
 
 func isAPIKeyError(errStr string) bool {
-	return strings.Contains(errStr, "API key required") ||
-		strings.Contains(errStr, "api key required") ||
-		strings.Contains(errStr, "Authorization required") ||
-		strings.Contains(errStr, "Invalid API key") ||
-		strings.Contains(errStr, "invalid api key") ||
-		strings.Contains(errStr, "key is required") ||
-		strings.Contains(errStr, "Invalid or revoked") ||
-		strings.Contains(errStr, "revoked API key")
+	// Only trigger key prompt for EXPLICIT key errors from backend
+	// NOT for network errors, cold starts, or generic errors
+	// This prevents the key prompt from showing when key IS saved but backend is slow
+	lower := strings.ToLower(errStr)
+	
+	// Must be an explicit auth error — not just any error
+	explicitAuthErrors := []string{
+		"api key required",
+		"authorization required",
+		"invalid api key",
+		"invalid or revoked",
+		"revoked api key",
+		"no api key",
+		"missing api key",
+		"unauthorized: key",
+	}
+	for _, e := range explicitAuthErrors {
+		if strings.Contains(lower, e) {
+			// Double-check: if we have a key saved, don't show key prompt
+			// (backend might be returning stale error)
+			if api.GetAPIKey() != "" {
+				return false // key is saved — don't ask again
+			}
+			return true
+		}
+	}
+	
+	// "key is required" only if no key is saved
+	if strings.Contains(lower, "key is required") {
+		return api.GetAPIKey() == ""
+	}
+	
+	return false
 }
 
 func isEmailNotVerifiedError(errStr string) bool {
