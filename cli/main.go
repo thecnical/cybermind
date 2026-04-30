@@ -37,7 +37,7 @@ import (
 )
 
 var (
-	Version = "5.4.4"
+	Version = "5.4.5"
 	cyan    = lipgloss.Color("#00FFFF")
 	green   = lipgloss.Color("#00FF00")
 	purple  = lipgloss.Color("#8A2BE2")
@@ -6703,29 +6703,61 @@ func min(a, b int) int {
 // checkForUpdate silently checks if a newer CLI version is available.
 // Runs in background goroutine — never blocks startup.
 func checkForUpdate() {
-	const versionURL = "https://cybermindcli1.vercel.app/api/version"
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(versionURL)
-	if err != nil {
+	
+	// Try static VERSION file first (most reliable, always up to date)
+	versionSources := []string{
+		"https://cybermindcli1.vercel.app/VERSION",
+		"https://raw.githubusercontent.com/thecnical/cybermind/main/VERSION",
+	}
+	
+	latest := ""
+	for _, src := range versionSources {
+		resp, err := client.Get(src)
+		if err != nil || resp.StatusCode != 200 {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 32))
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(string(body), "v"))
+		if len(v) >= 5 { // valid version like "5.4.5"
+			latest = v
+			break
+		}
+	}
+	
+	if latest == "" {
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
-	if err != nil {
-		return
-	}
-	var result struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return
-	}
-	latest := strings.TrimPrefix(strings.TrimSpace(result.Version), "v")
+	
 	current := strings.TrimPrefix(Version, "v")
-	if latest != "" && latest != current {
+	
+	// Only show update if latest is NEWER than current (not older)
+	// Simple semver comparison: split by "." and compare numerically
+	isNewer := func(a, b string) bool {
+		aParts := strings.Split(a, ".")
+		bParts := strings.Split(b, ".")
+		for i := 0; i < len(aParts) && i < len(bParts); i++ {
+			var av, bv int
+			fmt.Sscanf(aParts[i], "%d", &av)
+			fmt.Sscanf(bParts[i], "%d", &bv)
+			if av > bv {
+				return true
+			}
+			if av < bv {
+				return false
+			}
+		}
+		return len(aParts) > len(bParts)
+	}
+	
+	if latest != current && isNewer(latest, current) {
 		// Print update notice — small delay so it appears after banner
 		time.Sleep(500 * time.Millisecond)
 		fmt.Println()

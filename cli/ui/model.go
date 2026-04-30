@@ -358,13 +358,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateInput
 				m.input.Focus()
 			} else if isAPIKeyError(errStr) {
-				// Switch to inline key prompt mode
-				m.state = stateKeyPrompt
-				m.errMsg = ""
-				m.infoMsg = ""
-				m.keyInput.SetValue("")
-				m.keyInput.Focus()
-				return m, textinput.Blink
+				// Only show key prompt if key is genuinely not saved
+				// If key IS saved, show error message instead (backend may be having issues)
+				if api.GetAPIKey() != "" {
+					m.errMsg = "⚠  Backend auth error — your key is saved. Try again in a moment."
+					m.state = stateInput
+					m.input.Focus()
+				} else {
+					// Key is genuinely missing — show key prompt
+					m.state = stateKeyPrompt
+					m.errMsg = ""
+					m.infoMsg = ""
+					m.keyInput.SetValue("")
+					m.keyInput.Focus()
+					return m, textinput.Blink
+				}
 			} else if isOSMismatchError(errStr) {
 				m.errMsg = errStr + "\n  Get a new key at: https://cybermindcli1.vercel.app/dashboard"
 			} else if strings.Contains(errStr, "starting up") ||
