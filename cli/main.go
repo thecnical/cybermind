@@ -470,10 +470,35 @@ func printResult(label, result string) {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ⚡ CyberMind AI → " + label))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
-	// Print line by line with indent — avoids lipgloss rendering blank lines as wide blocks
+	// FIX #3: Print line-by-line, collapse consecutive blank lines,
+	// skip leading/trailing blanks — prevents double-spacing in terminal.
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0"))
+	codeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88"))
+	headStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF"))
+	prevBlank := false
 	for _, line := range strings.Split(result, "\n") {
-		fmt.Println(style.Render("  " + line))
+		isBlank := strings.TrimSpace(line) == ""
+		if isBlank {
+			if prevBlank {
+				continue // collapse consecutive blanks
+			}
+			fmt.Println()
+			prevBlank = true
+			continue
+		}
+		prevBlank = false
+		trimmed := strings.TrimSpace(line)
+		// Style code-indented lines differently
+		if strings.HasPrefix(line, "    ") {
+			fmt.Println(codeStyle.Render("  " + line))
+		} else if strings.HasPrefix(trimmed, "•") || strings.HasPrefix(trimmed, "-") {
+			fmt.Println(style.Render("  " + trimmed))
+		} else if strings.ToUpper(trimmed) == trimmed && len(trimmed) > 3 && !strings.Contains(trimmed, " ") == false {
+			// ALL-CAPS line = heading from StripMarkdown
+			fmt.Println(headStyle.Render("  " + trimmed))
+		} else {
+			fmt.Println(style.Render("  " + trimmed))
+		}
 	}
 	fmt.Println()
 }
@@ -612,7 +637,7 @@ func runAutoRecon(target string, requested []string) {
 			printError(err.Error())
 			return
 		}
-		printResult("Recon Guide → "+target, result2)
+		printResult("Recon Guide → "+target, utils.StripMarkdown(result2))
 		return
 	}
 
@@ -4975,7 +5000,7 @@ sudo chmod +x /opt/graphw00f/main.py`)
 			printError(err.Error())
 			os.Exit(1)
 		}
-		printResult(fmt.Sprintf("Scan Guide [%s] → %s", scanType, target), result)
+		printResult(fmt.Sprintf("Scan Guide [%s] → %s", scanType, target), utils.StripMarkdown(result))
 
 	case "recon":
 		if len(args) < 2 {
@@ -4996,7 +5021,7 @@ sudo chmod +x /opt/graphw00f/main.py`)
 			printError(err.Error())
 			os.Exit(1)
 		}
-		printResult(fmt.Sprintf("Recon Guide [%s] → %s", reconType, target), result)
+		printResult(fmt.Sprintf("Recon Guide [%s] → %s", reconType, target), utils.StripMarkdown(result))
 
 	case "exploit":
 		if len(args) < 2 {
@@ -5017,7 +5042,8 @@ sudo chmod +x /opt/graphw00f/main.py`)
 			printError(err.Error())
 			os.Exit(1)
 		}
-		printResult("Exploit Guide → "+vuln, result)
+		// FIX #8: strip markdown so **bold** markers don't appear in terminal
+		printResult("Exploit Guide → "+vuln, utils.StripMarkdown(result))
 
 	case "payload":
 		targetOS := "windows"
@@ -5042,7 +5068,8 @@ sudo chmod +x /opt/graphw00f/main.py`)
 			printError(err.Error())
 			os.Exit(1)
 		}
-		printResult(fmt.Sprintf("Payload Guide → %s/%s", targetOS, arch), result)
+		// FIX #8: strip markdown
+		printResult(fmt.Sprintf("Payload Guide → %s/%s", targetOS, arch), utils.StripMarkdown(result))
 
 	case "tool":
 		if len(args) < 2 {
@@ -5060,7 +5087,8 @@ sudo chmod +x /opt/graphw00f/main.py`)
 			printError(err.Error())
 			os.Exit(1)
 		}
-		printResult("Tool Guide → "+tool, result)
+		// FIX #8: strip markdown
+		printResult("Tool Guide → "+tool, utils.StripMarkdown(result))
 
 	case "/plan":
 		// OMEGA Planning Mode — Linux only (requires full tool suite)
@@ -6676,7 +6704,8 @@ sudo chmod +x /opt/graphw00f/main.py`)
 				printError(err.Error())
 				os.Exit(1)
 			}
-			printResult("[LOCAL] Response", result)
+			// FIX #8: strip markdown before printing
+			printResult("[LOCAL] Response", utils.StripMarkdown(result))
 			_ = storage.AddEntry(prompt, result)
 		} else if api.IsFreeMode() {
 			// ── FREE MODE: no API key needed ─────────────────────────────
@@ -6693,7 +6722,8 @@ sudo chmod +x /opt/graphw00f/main.py`)
 				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  3. Run: cybermind --key cp_live_xxxxx"))
 				os.Exit(1)
 			}
-			printResult("Response [FREE]", result)
+			// FIX #8: strip markdown before printing
+			printResult("Response [FREE]", utils.StripMarkdown(result))
 			_ = storage.AddEntry(prompt, result)
 		} else {
 			fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Asking CyberMind AI..."))
@@ -6702,7 +6732,8 @@ sudo chmod +x /opt/graphw00f/main.py`)
 				printError(err.Error())
 				os.Exit(1)
 			}
-			printResult("Response", result)
+			// FIX #8: strip markdown before printing
+			printResult("Response", utils.StripMarkdown(result))
 			// Save to history
 			_ = storage.AddEntry(prompt, result)
 		}

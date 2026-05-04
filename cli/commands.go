@@ -186,22 +186,51 @@ func runNativeScan(target string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ AI analysis..."))
 
+	// FIX #2: Add explicit timeout wrapper so AI call never hangs indefinitely.
+	// Also inject OS-aware context so Windows users get Windows-native advice.
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Native scan results for %s:\n\n", target))
 	for k, v := range results {
 		sb.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 	}
-	sb.WriteString("\nProvide: attack surface analysis, CVE suggestions for detected services, MITRE ATT&CK mapping, exploitation recommendations, next steps.")
+	sb.WriteString("\nProvide: attack surface analysis, CVEs for detected services, ")
+	sb.WriteString("MITRE ATT&CK mapping, exploitation recommendations.")
+	if runtime.GOOS == "windows" {
+		sb.WriteString(" Give Windows-native tools and commands (Burp Suite, OWASP ZAP, PowerShell, Python). Do NOT suggest nmap, WSL, or Linux tools.")
+	}
+
+	type aiRes struct {
+		result string
+		err    error
+	}
+	aiCh := make(chan aiRes, 1)
+	go func() {
+		r, e := api.SendPrompt(sb.String())
+		aiCh <- aiRes{r, e}
+	}()
 
 	var aiResult string
 	var aiErr error
-	if localMode {
-		aiResult, aiErr = api.SendPrompt(sb.String())
-	} else {
-		aiResult, aiErr = api.SendPrompt(sb.String())
+	select {
+	case res := <-aiCh:
+		aiResult, aiErr = res.result, res.err
+	case <-time.After(30 * time.Second):
+		// FIX #2: Don't hang — show what we found and exit gracefully
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  AI analysis timed out — showing scan data only"))
+		fmt.Println()
+		for k, v := range results {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(fmt.Sprintf("  %s: %s", k, v)))
+		}
+		fmt.Println()
+		return
 	}
 	if aiErr != nil {
 		printError("AI analysis failed: " + aiErr.Error())
+		// Still show raw scan data so user gets value
+		fmt.Println()
+		for k, v := range results {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(fmt.Sprintf("  %s: %s", k, v)))
+		}
 		return
 	}
 	clean := utils.StripMarkdown(aiResult)
@@ -386,15 +415,39 @@ func runOSINT(target string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ AI OSINT analysis..."))
 
-	prompt := fmt.Sprintf("OSINT data for %s:\n%s\n\nProvide: threat intelligence, attack surface, CVEs for detected services, email security analysis (SPF/DMARC), subdomain takeover potential, MITRE ATT&CK mapping, next steps.",
-		target, strings.Join(results, "\n"))
+	// FIX #6: Inject OS-aware context so Windows users get Windows-native tools
+	osHint := ""
+	if runtime.GOOS == "windows" {
+		osHint = " User is on Windows — give Windows-native tools only (Burp Suite, OWASP ZAP, PowerShell, Python, Fiddler). Do NOT suggest nmap, WSL, Linux VMs, or Linux-only tools."
+	}
+
+	prompt := fmt.Sprintf("OSINT data for %s:\n%s\n\nProvide: threat intelligence, attack surface mapping, CVEs for detected services, email security analysis (SPF/DMARC/DKIM), subdomain takeover potential, MITRE ATT&CK mapping, actionable next steps.%s",
+		target, strings.Join(results, "\n"), osHint)
+
+	// FIX #2: Timeout wrapper so OSINT AI call never hangs
+	type aiRes struct {
+		result string
+		err    error
+	}
+	aiCh := make(chan aiRes, 1)
+	go func() {
+		r, e := api.SendPrompt(prompt)
+		aiCh <- aiRes{r, e}
+	}()
 
 	var aiResult string
 	var aiErr error
-	if localMode {
-		aiResult, aiErr = api.SendPrompt(prompt)
-	} else {
-		aiResult, aiErr = api.SendPrompt(prompt)
+	select {
+	case res := <-aiCh:
+		aiResult, aiErr = res.result, res.err
+	case <-time.After(30 * time.Second):
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  AI analysis timed out — showing OSINT data only"))
+		fmt.Println()
+		for _, r := range results {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("  " + r))
+		}
+		fmt.Println()
+		return
 	}
 	if aiErr != nil {
 		printError("AI analysis failed: " + aiErr.Error())
@@ -492,32 +545,45 @@ func dedup(s []string) []string {
 func runPayload(targetOS, arch, payloadType string, localMode bool) {
 	lhost := getLocalIP()
 	lport := "4444"
-	format := ""
-	switch strings.ToLower(targetOS) {
-	case "windows":
-		format = "exe"
-	case "linux":
-		format = "elf"
-	case "macos", "mac", "darwin":
-		format = "macho"
-	default:
-		format = "exe"
-	}
 
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(red).Render("  💣 PAYLOAD GENERATOR"))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  OS: %s | Arch: %s | LHOST: %s | LPORT: %s | Type: %s", targetOS, arch, lhost, lport, payloadType)))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  OS: %s | Arch: %s | LHOST: %s | LPORT: %s | Type: %s",
+		targetOS, arch, lhost, lport, payloadType)))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Generating payload package..."))
 
-	var result string
-	var err error
-	if localMode {
-		result, err = api.SendPayloadGen(targetOS, arch, lhost, lport, format, payloadType)
-	} else {
-		result, err = api.SendPayloadGen(targetOS, arch, lhost, lport, format, payloadType)
-	}
+	// FIX #5: Build a precise, structured prompt that forces correct working code.
+	// The /exploit/payload endpoint was generating broken/mixed-OS code.
+	// We use SendPrompt with explicit constraints instead.
+	var pb strings.Builder
+	pb.WriteString(fmt.Sprintf("Generate a complete, working payload package for:\n"))
+	pb.WriteString(fmt.Sprintf("  Target OS: %s\n", targetOS))
+	pb.WriteString(fmt.Sprintf("  Architecture: %s\n", arch))
+	pb.WriteString(fmt.Sprintf("  Payload type: %s\n", payloadType))
+	pb.WriteString(fmt.Sprintf("  LHOST (attacker IP): %s\n", lhost))
+	pb.WriteString(fmt.Sprintf("  LPORT: %s\n\n", lport))
+
+	pb.WriteString("STRICT RULES:\n")
+	pb.WriteString("1. ALL code must be syntactically correct and actually work — no broken strings, no mismatched quotes.\n")
+	pb.WriteString("2. For Windows target: use Windows APIs (WinSock2, CreateProcess, VirtualAlloc). Do NOT use /bin/sh, /proc/, or Linux paths.\n")
+	pb.WriteString("3. For Linux target: use POSIX APIs. Do NOT use Windows APIs.\n")
+	pb.WriteString("4. PowerShell payload must be valid PowerShell — test mentally before writing.\n")
+	pb.WriteString("5. Python payload must use socket module correctly — no broken string concatenation.\n")
+	pb.WriteString("6. C code must compile with gcc/mingw on the target platform.\n")
+	pb.WriteString("7. Include ONLY: msfvenom commands, PowerShell one-liner, Python script, C source, listener setup.\n")
+	pb.WriteString("8. No placeholder comments like '// Process injection code' with empty bodies — write real code.\n\n")
+
+	pb.WriteString("Format each section clearly:\n")
+	pb.WriteString("## 1. msfvenom Commands\n")
+	pb.WriteString("## 2. PowerShell One-Liner (Windows)\n")
+	pb.WriteString("## 3. Python Reverse Shell\n")
+	pb.WriteString("## 4. C Source Code\n")
+	pb.WriteString("## 5. Listener Setup (Metasploit + netcat)\n")
+	pb.WriteString("## 6. AV Evasion Tips\n")
+
+	result, err := api.SendPrompt(pb.String())
 	if err != nil {
 		printError("Payload generation failed: " + err.Error())
 		return
@@ -580,7 +646,7 @@ func runCVELatest(severity string, localMode bool) {
 // ─── Feature 5: Report Writer ─────────────────────────────────────────────────
 
 // runReport generates a professional pentest report from session history.
-// Builds a structured prompt from ONLY actual history entries — no hallucination.
+// Uses the dedicated /report endpoint with structured history + anti-hallucination instructions.
 func runReport(format string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).Render("  📄 PENTEST REPORT WRITER"))
@@ -600,69 +666,101 @@ func runReport(format string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Generating professional pentest report..."))
 
-	// ── Build structured prompt from ACTUAL history only ──────────────────────
-	// This prevents the AI from hallucinating tools/evidence that were never run.
-	var promptBuilder strings.Builder
-	promptBuilder.WriteString("You are a senior penetration tester writing a professional security report.\n")
-	promptBuilder.WriteString("STRICT RULES:\n")
-	promptBuilder.WriteString("1. ONLY report findings that appear in the SESSION DATA below. Do NOT invent findings.\n")
-	promptBuilder.WriteString("2. Do NOT mention tools that were not actually run in this session.\n")
-	promptBuilder.WriteString("3. Evidence must quote ACTUAL output from the session, not placeholder text.\n")
-	promptBuilder.WriteString("4. MITRE ATT&CK mappings must be correct for each vulnerability type.\n")
-	promptBuilder.WriteString("5. If a finding is from /threat or /cve, mark it as 'Intelligence' not 'Confirmed Vulnerability'.\n")
-	promptBuilder.WriteString("6. Use correct attribution: 8.8.8.8 = Google DNS, 1.1.1.1 = Cloudflare DNS.\n")
-	promptBuilder.WriteString("7. Write in a professional, detailed style — not generic copy-paste sentences.\n")
-	promptBuilder.WriteString("8. Each finding needs: real description, real evidence from session, real impact, specific remediation.\n\n")
-
-	// Extract targets from history
+	// Extract real targets from history for filename + context
 	targets := extractTargetsFromHistory(history)
+
+	// Build a structured history payload for the /report endpoint.
+	// We inject anti-hallucination instructions as the first "system" entry
+	// so the backend report generator knows exactly what was tested.
+	type reportEntry struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+
+	var reportHistory []reportEntry
+
+	// System instruction — strict anti-hallucination rules
+	sysInstruction := "STRICT REPORT RULES:\n" +
+		"1. ONLY include findings from the SESSION DATA below. Do NOT invent findings, tools, or evidence.\n" +
+		"2. Do NOT mention tools that were not run in this session.\n" +
+		"3. Evidence must be quoted from actual session output, not placeholder text like 'Exact output from nuclei tool'.\n" +
+		"4. MITRE ATT&CK: XSS→T1059.007, SQLi→T1190, DoS→T1499, Info Disclosure→T1082, CORS→T1557.\n" +
+		"5. /threat and /cve results = 'Threat Intelligence' not 'Confirmed Vulnerability'.\n" +
+		"6. Correct attribution: 8.8.8.8=Google DNS, 1.1.1.1=Cloudflare DNS, 9.9.9.9=Quad9 DNS.\n" +
+		"7. Write detailed, specific findings — no generic copy-paste sentences.\n" +
+		"8. If session has no confirmed vulnerabilities, say so honestly in the executive summary.\n" +
+		"9. Report format: Executive Summary → Scope → Findings Table → Detailed Findings → Risk Matrix → Remediation → Conclusion.\n"
+
 	if len(targets) > 0 {
-		promptBuilder.WriteString(fmt.Sprintf("TARGETS TESTED: %s\n\n", strings.Join(targets, ", ")))
+		sysInstruction += fmt.Sprintf("TARGETS IN SESSION: %s\n", strings.Join(targets, ", "))
 	}
+	reportHistory = append(reportHistory, reportEntry{Role: "system", Content: sysInstruction})
 
-	promptBuilder.WriteString("SESSION DATA (use ONLY this data for findings):\n")
-	promptBuilder.WriteString(strings.Repeat("─", 60) + "\n")
-
-	// Include all history entries with their actual content
+	// Add actual history entries (cap at 25 to avoid token overflow)
 	limit := len(history)
-	if limit > 30 {
-		limit = 30 // cap to avoid token overflow
+	if limit > 25 {
+		limit = 25
 	}
-	for i, entry := range history[:limit] {
-		promptBuilder.WriteString(fmt.Sprintf("\n[Entry %d] Command: %s\n", i+1, entry.User))
+	for _, entry := range history[:limit] {
+		// User command
+		reportHistory = append(reportHistory, reportEntry{Role: "user", Content: entry.User})
+		// AI result (truncated to 1500 chars per entry)
 		if entry.AI != "" {
-			// Truncate very long AI responses
 			aiContent := entry.AI
-			if len(aiContent) > 2000 {
-				aiContent = aiContent[:2000] + "\n... [truncated]"
+			if len(aiContent) > 1500 {
+				aiContent = aiContent[:1500] + "\n...[truncated]"
 			}
-			promptBuilder.WriteString(fmt.Sprintf("Result:\n%s\n", aiContent))
+			reportHistory = append(reportHistory, reportEntry{Role: "assistant", Content: aiContent})
 		}
-		promptBuilder.WriteString(strings.Repeat("─", 40) + "\n")
 	}
 
-	promptBuilder.WriteString("\nGenerate a professional penetration test report with:\n")
-	promptBuilder.WriteString("- Executive Summary (based ONLY on actual findings above)\n")
-	promptBuilder.WriteString("- Scope & Methodology (list ONLY commands actually run)\n")
-	promptBuilder.WriteString("- Findings Table (ONLY real findings with correct severity)\n")
-	promptBuilder.WriteString("- Detailed Findings (each with: Description, Evidence from session, Impact, CVSS, correct MITRE ATT&CK, Remediation)\n")
-	promptBuilder.WriteString("- Risk Matrix\n")
-	promptBuilder.WriteString("- Remediation Roadmap\n")
-	promptBuilder.WriteString("- Conclusion\n")
-	promptBuilder.WriteString("\nFormat: Markdown. Be specific and detailed. No generic filler sentences.\n")
-
-	result, err := api.SendPrompt(promptBuilder.String())
+	// Use the dedicated /report endpoint — it returns {report: "..."} not {response: "..."}
+	result, err := api.SendReport(reportHistory, strings.Join(targets, ","))
 	if err != nil {
-		printError("Report generation failed: " + err.Error())
+		// Fallback: if /report endpoint fails, try /chat with explicit report prompt
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  Report endpoint unavailable, using fallback..."))
+		var fallbackPrompt strings.Builder
+		fallbackPrompt.WriteString(sysInstruction)
+		fallbackPrompt.WriteString("\n\nSESSION DATA:\n")
+		for _, entry := range history[:limit] {
+			fallbackPrompt.WriteString(fmt.Sprintf("CMD: %s\n", entry.User))
+			if entry.AI != "" {
+				ai := entry.AI
+				if len(ai) > 800 {
+					ai = ai[:800] + "...[truncated]"
+				}
+				fallbackPrompt.WriteString(fmt.Sprintf("RESULT: %s\n---\n", ai))
+			}
+		}
+		fallbackPrompt.WriteString("\nNow write the full professional penetration test report following the rules above. Format: Markdown.")
+		result, err = api.SendPrompt(fallbackPrompt.String())
+		if err != nil {
+			printError("Report generation failed: " + err.Error())
+			return
+		}
+	}
+
+	// Validate result — if it looks like a self-intro, the backend ignored our prompt
+	resultLower := strings.ToLower(strings.TrimSpace(result))
+	if strings.HasPrefix(resultLower, "i am cybermind") ||
+		strings.HasPrefix(resultLower, "hello") ||
+		strings.HasPrefix(resultLower, "hi,") ||
+		len(result) < 200 {
+		printError("Report generation returned invalid response. Please try again.")
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Tip: Run more scans first, then generate the report."))
 		return
 	}
 
-	// Auto-generate filename from actual targets
+	// Build filename from actual targets (keep dots for readability)
 	target := "session"
 	if len(targets) > 0 {
-		target = targets[0]
+		// FIX #9: Keep dots in target name (e.g. 8.8.8.8 not 8_8_8_8)
+		// Only replace chars that are invalid in Windows/Linux filenames
+		target = strings.NewReplacer(
+			"/", "_", ":", "_", " ", "_", "\\", "_",
+			"*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_",
+		).Replace(targets[0])
 	}
-	target = strings.NewReplacer("/", "_", ":", "_", " ", "_", ".", "_").Replace(target)
 
 	// Save to ~/.cybermind/reports/
 	home, _ := os.UserHomeDir()
