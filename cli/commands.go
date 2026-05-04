@@ -1,6 +1,7 @@
 ﻿package main
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -804,6 +805,84 @@ func extractTargetsFromHistory(history []storage.Entry) []string {
 		}
 	}
 	return targets
+}
+
+// ─── Feature 5b: Feedback ────────────────────────────────────────────────────
+
+// runFeedback lets users report bad AI responses directly from the CLI.
+// Collects: category, last command, bad response snippet, what was expected.
+// Sends to backend for quality improvement. All fields optional — just press Enter to skip.
+func runFeedback() {
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  📣 FEEDBACK — Help improve CyberMind AI"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Report a bad AI response, wrong answer, or missing feature."))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Press Enter to skip any field."))
+	fmt.Println()
+
+	reader := bufio.NewReader(os.Stdin)
+
+	readLine := func(prompt string) string {
+		fmt.Print(lipgloss.NewStyle().Foreground(cyan).Render("  " + prompt + ": "))
+		line, _ := reader.ReadString('\n')
+		return strings.TrimSpace(line)
+	}
+
+	// Category selection
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("  Categories:"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1) Wrong answer / hallucination"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  2) Bad code / broken payload"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  3) Wrong tool suggestion (e.g. 'use WSL' on Windows)"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  4) Missing feature / command not working"))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  5) Other"))
+	fmt.Println()
+
+	catNum := readLine("Category (1-5)")
+	categories := map[string]string{
+		"1": "wrong_answer",
+		"2": "bad_code",
+		"3": "wrong_tool",
+		"4": "missing_feature",
+		"5": "other",
+	}
+	category := categories[catNum]
+	if category == "" {
+		category = "other"
+	}
+
+	command := readLine("Which command caused the issue (e.g. /scan, /payload, exploit sqli)")
+	badResponse := readLine("Paste the bad response (or describe it briefly)")
+	expected := readLine("What did you expect instead")
+
+	if command == "" && badResponse == "" && expected == "" {
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  No feedback entered. Cancelled."))
+		return
+	}
+
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Sending feedback..."))
+
+	err := api.SendFeedback(category, command, badResponse, expected)
+	if err != nil {
+		// Don't fail hard — feedback is best-effort
+		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  Could not send feedback (backend unavailable). Thank you anyway!"))
+		// Save locally as fallback
+		home, _ := os.UserHomeDir()
+		fbDir := filepath.Join(home, ".cybermind", "feedback")
+		os.MkdirAll(fbDir, 0700)
+		ts := time.Now().Format("2006-01-02_15-04-05")
+		fbFile := filepath.Join(fbDir, fmt.Sprintf("feedback_%s.txt", ts))
+		content := fmt.Sprintf("Category: %s\nCommand: %s\nBad Response: %s\nExpected: %s\n",
+			category, command, badResponse, expected)
+		_ = os.WriteFile(fbFile, []byte(content), 0600)
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Saved locally: " + fbFile))
+		return
+	}
+
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ✓ Feedback sent! Thank you — this helps improve CyberMind for everyone."))
+	fmt.Println()
 }
 
 // ─── Feature 6: Wordlist Generator ───────────────────────────────────────────

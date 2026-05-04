@@ -13,7 +13,7 @@ $CBM_PATH = "$INSTALL_DIR\cbm.exe"
 
 Write-Host ""
 Write-Host " ██████╗██╗   ██╗██████╗ ███████╗██████╗ ███╗   ███╗██╗███╗   ██╗██████╗" -ForegroundColor Cyan
-Write-Host "⚡ CyberMind CLI Installer v2.5.2" -ForegroundColor Green
+Write-Host "⚡ CyberMind CLI Installer v5.4.6" -ForegroundColor Green
 Write-Host ""
 
 # Create install dir
@@ -40,7 +40,7 @@ try {
     git clone --depth=1 https://github.com/thecnical/cybermind.git $SRC 2>$null
     Push-Location "$SRC\cli"
     go mod tidy
-    go build -ldflags="-X main.Version=2.5.2" -o $EXE_PATH .
+    go build -ldflags="-X main.Version=5.4.6" -o $EXE_PATH .
     Copy-Item $EXE_PATH $CBM_PATH -Force
     Pop-Location
     Remove-Item $SRC -Recurse -Force

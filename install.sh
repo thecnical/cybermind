@@ -32,7 +32,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="5.4.5"
+VERSION="5.4.6"
 
 echo -e "${CYAN}"
 cat << 'BANNER'

@@ -246,6 +246,7 @@ func printHelpWindows() {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#777777")).Render("  📋 HISTORY + SYSTEM:"))
 	fmt.Println(g.Render("  cybermind history") + d.Render("                          → View chat history"))
 	fmt.Println(g.Render("  cybermind clear") + d.Render("                            → Clear history"))
+	fmt.Println(g.Render("  cybermind /feedback") + d.Render("                        → Report a bad AI response (helps improve quality)"))
 	fmt.Println(g.Render("  cybermind uninstall") + d.Render("                        → Remove CyberMind from this system"))
 	fmt.Println()
 
@@ -444,6 +445,7 @@ func printHelpLinux() {
 	fmt.Println(g.Render("  cybermind whoami") + d.Render("                            → Show key + plan"))
 	fmt.Println(g.Render("  cybermind history") + d.Render("                           → View chat history"))
 	fmt.Println(g.Render("  cybermind report") + d.Render("                            → Generate pentest report"))
+	fmt.Println(g.Render("  cybermind /feedback") + d.Render("                         → Report a bad AI response (helps improve quality)"))
 	fmt.Println(g.Render("  cybermind uninstall") + d.Render("                         → Remove CyberMind"))
 	fmt.Println()
 
@@ -3153,6 +3155,7 @@ func main() {
 			"platform": true, "brain": true,
 			"threat": true,
 			"notify": true, "devsec": true,
+			"feedback": true, // feedback works on all OS — no API key needed
 			// kept for backward compat (show deprecation message)
 			"portscan": true, "locate": true,
 		}
@@ -6690,6 +6693,13 @@ sudo chmod +x /opt/graphw00f/main.py`)
 			}
 		}
 		runReport(format, localMode)
+
+	case "/feedback", "feedback":
+		// Feedback — works on all OS, no API key needed
+		if err := storage.Load(); err != nil {
+			fmt.Println("Warning:", err)
+		}
+		runFeedback()
 
 	default:
 		// BUG FIX: load storage so history save works

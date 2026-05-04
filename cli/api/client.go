@@ -2837,3 +2837,18 @@ func SendAttackSessionComplete(target, mode string, bugsFound, toolsRan, finding
 		_, _ = post("/api/attack-session/complete", payload)
 	}()
 }
+
+// SendFeedback sends a user feedback report to the backend.
+// Used by the /feedback command to report bad AI responses.
+func SendFeedback(category, command, badResponse, expected string) error {
+	payload := map[string]string{
+		"category":     category,
+		"command":      command,
+		"bad_response": badResponse,
+		"expected":     expected,
+		"os":           getDeviceOS(),
+		"version":      "5.4.6",
+	}
+	_, err := post("/feedback", payload)
+	return err
+}
