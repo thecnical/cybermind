@@ -107,36 +107,46 @@ func runNativeScan(target string, localMode bool) {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ IPs: " + strings.Join(addrs, ", ")))
 	}
 
-	// Port scan — top ports
-	fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Scanning common ports..."))
+	// Port scan — top ports (parallel Go TCP dial — works on all OS, fast)
+	fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Scanning common ports (parallel)..."))
 	commonPorts := []int{21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 3306, 3389, 5432, 6379, 8080, 8443, 27017}
 	var openPorts []string
 
-	if runtime.GOOS == "windows" {
-		// Windows: use PowerShell Test-NetConnection
-		// Use sanitized target + pass port as separate arg to avoid injection
-		safeTarget := sanitizeTarget(target)
-		if safeTarget == "" {
-			fmt.Println(lipgloss.NewStyle().Foreground(red).Render("  ✗ Invalid target"))
-			return
-		}
-		for _, port := range commonPorts {
-			// Use -EncodedCommand to prevent any injection via target string
-			script := fmt.Sprintf("$r=(Test-NetConnection -ComputerName ([string]::new('%s')) -Port %d -WarningAction SilentlyContinue -InformationLevel Quiet -ErrorAction SilentlyContinue);if($r){Write-Output 'True'}else{Write-Output 'False'}", safeTarget, port)
-			cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-			out, err := cmd.Output()
-			if err == nil && strings.TrimSpace(string(out)) == "True" {
-				openPorts = append(openPorts, fmt.Sprintf("%d", port))
-			}
-		}
-	} else {
-		// Linux/macOS: direct TCP dial
-		for _, port := range commonPorts {
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", target, port), 2*time.Second)
+	// Resolve target to IP first for TCP dial
+	dialHost := target
+	if len(addrs) > 0 {
+		dialHost = addrs[0]
+	}
+
+	// Parallel scan: all ports at once with 2s timeout each
+	type portResult struct {
+		port int
+		open bool
+	}
+	portCh := make(chan portResult, len(commonPorts))
+	for _, port := range commonPorts {
+		go func(p int) {
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", dialHost, p), 2*time.Second)
 			if err == nil {
 				conn.Close()
-				openPorts = append(openPorts, fmt.Sprintf("%d", port))
+				portCh <- portResult{p, true}
+			} else {
+				portCh <- portResult{p, false}
 			}
+		}(port)
+	}
+	// Collect results
+	openSet := make(map[int]bool)
+	for range commonPorts {
+		r := <-portCh
+		if r.open {
+			openSet[r.port] = true
+		}
+	}
+	// Sort open ports in order
+	for _, p := range commonPorts {
+		if openSet[p] {
+			openPorts = append(openPorts, fmt.Sprintf("%d", p))
 		}
 	}
 
@@ -209,31 +219,44 @@ func runPortScan(target string, localMode bool) {
 	var openPorts []string
 	commonPorts := []int{21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 1433, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 8888, 9200, 27017}
 
-	fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Scanning ports..."))
+	fmt.Println(lipgloss.NewStyle().Foreground(purple).Render("  ⟳ Scanning ports (parallel)..."))
 
-	if runtime.GOOS == "windows" {
-		safeTarget := sanitizeTarget(target)
-		if safeTarget == "" {
-			printError("Invalid target")
-			return
+	// Resolve target to IP for TCP dial
+	dialHost := target
+	if target != "local" && target != "localhost" {
+		if addrs, err := net.LookupHost(target); err == nil && len(addrs) > 0 {
+			dialHost = addrs[0]
 		}
-		for _, port := range commonPorts {
-			script := fmt.Sprintf("$r=(Test-NetConnection -ComputerName ([string]::new('%s')) -Port %d -WarningAction SilentlyContinue -InformationLevel Quiet -ErrorAction SilentlyContinue);if($r){Write-Output 'True'}else{Write-Output 'False'}", safeTarget, port)
-			cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-			out, err := cmd.Output()
-			if err == nil && strings.TrimSpace(string(out)) == "True" {
-				openPorts = append(openPorts, fmt.Sprintf("%d", port))
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Port %d OPEN", port)))
-			}
-		}
-	} else {
-		for _, port := range commonPorts {
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", target, port), 2*time.Second)
+	}
+
+	// Parallel TCP dial — works on all OS including Windows, no PowerShell needed
+	type portResult struct {
+		port int
+		open bool
+	}
+	portCh := make(chan portResult, len(commonPorts))
+	for _, port := range commonPorts {
+		go func(p int) {
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", dialHost, p), 2*time.Second)
 			if err == nil {
 				conn.Close()
-				openPorts = append(openPorts, fmt.Sprintf("%d", port))
-				fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Port %d OPEN", port)))
+				portCh <- portResult{p, true}
+			} else {
+				portCh <- portResult{p, false}
 			}
+		}(port)
+	}
+	openSet := make(map[int]bool)
+	for range commonPorts {
+		r := <-portCh
+		if r.open {
+			openSet[r.port] = true
+		}
+	}
+	for _, p := range commonPorts {
+		if openSet[p] {
+			openPorts = append(openPorts, fmt.Sprintf("%d", p))
+			fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Port %d OPEN", p)))
 		}
 	}
 
@@ -557,8 +580,7 @@ func runCVELatest(severity string, localMode bool) {
 // ─── Feature 5: Report Writer ─────────────────────────────────────────────────
 
 // runReport generates a professional pentest report from session history.
-// If filename is provided, saves to that path. Otherwise auto-generates a name
-// based on the last scanned target and saves to ~/.cybermind/reports/.
+// Builds a structured prompt from ONLY actual history entries — no hallucination.
 func runReport(format string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8A2BE2")).Render("  📄 PENTEST REPORT WRITER"))
@@ -568,57 +590,79 @@ func runReport(format string, localMode bool) {
 	history := storage.GetHistory()
 	if len(history) == 0 {
 		printError("No session history found. Run some scans first.")
-		printError("  cybermind /scan example.com")
-		printError("  cybermind /cve CVE-2024-1234")
-		printError("  cybermind report")
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Try: cybermind /scan example.com"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Try: cybermind /cve CVE-2024-1234"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Then: cybermind report"))
 		return
 	}
 
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  History entries: %d | Format: %s", len(history), format)))
+	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  History entries: %d | Format: markdown", len(history))))
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Generating professional pentest report..."))
 
-	var result string
-	var err error
-	if localMode {
-		result, err = api.SendReport(history, "")
-	} else {
-		result, err = api.SendReport(history, "")
+	// ── Build structured prompt from ACTUAL history only ──────────────────────
+	// This prevents the AI from hallucinating tools/evidence that were never run.
+	var promptBuilder strings.Builder
+	promptBuilder.WriteString("You are a senior penetration tester writing a professional security report.\n")
+	promptBuilder.WriteString("STRICT RULES:\n")
+	promptBuilder.WriteString("1. ONLY report findings that appear in the SESSION DATA below. Do NOT invent findings.\n")
+	promptBuilder.WriteString("2. Do NOT mention tools that were not actually run in this session.\n")
+	promptBuilder.WriteString("3. Evidence must quote ACTUAL output from the session, not placeholder text.\n")
+	promptBuilder.WriteString("4. MITRE ATT&CK mappings must be correct for each vulnerability type.\n")
+	promptBuilder.WriteString("5. If a finding is from /threat or /cve, mark it as 'Intelligence' not 'Confirmed Vulnerability'.\n")
+	promptBuilder.WriteString("6. Use correct attribution: 8.8.8.8 = Google DNS, 1.1.1.1 = Cloudflare DNS.\n")
+	promptBuilder.WriteString("7. Write in a professional, detailed style — not generic copy-paste sentences.\n")
+	promptBuilder.WriteString("8. Each finding needs: real description, real evidence from session, real impact, specific remediation.\n\n")
+
+	// Extract targets from history
+	targets := extractTargetsFromHistory(history)
+	if len(targets) > 0 {
+		promptBuilder.WriteString(fmt.Sprintf("TARGETS TESTED: %s\n\n", strings.Join(targets, ", ")))
 	}
+
+	promptBuilder.WriteString("SESSION DATA (use ONLY this data for findings):\n")
+	promptBuilder.WriteString(strings.Repeat("─", 60) + "\n")
+
+	// Include all history entries with their actual content
+	limit := len(history)
+	if limit > 30 {
+		limit = 30 // cap to avoid token overflow
+	}
+	for i, entry := range history[:limit] {
+		promptBuilder.WriteString(fmt.Sprintf("\n[Entry %d] Command: %s\n", i+1, entry.User))
+		if entry.AI != "" {
+			// Truncate very long AI responses
+			aiContent := entry.AI
+			if len(aiContent) > 2000 {
+				aiContent = aiContent[:2000] + "\n... [truncated]"
+			}
+			promptBuilder.WriteString(fmt.Sprintf("Result:\n%s\n", aiContent))
+		}
+		promptBuilder.WriteString(strings.Repeat("─", 40) + "\n")
+	}
+
+	promptBuilder.WriteString("\nGenerate a professional penetration test report with:\n")
+	promptBuilder.WriteString("- Executive Summary (based ONLY on actual findings above)\n")
+	promptBuilder.WriteString("- Scope & Methodology (list ONLY commands actually run)\n")
+	promptBuilder.WriteString("- Findings Table (ONLY real findings with correct severity)\n")
+	promptBuilder.WriteString("- Detailed Findings (each with: Description, Evidence from session, Impact, CVSS, correct MITRE ATT&CK, Remediation)\n")
+	promptBuilder.WriteString("- Risk Matrix\n")
+	promptBuilder.WriteString("- Remediation Roadmap\n")
+	promptBuilder.WriteString("- Conclusion\n")
+	promptBuilder.WriteString("\nFormat: Markdown. Be specific and detailed. No generic filler sentences.\n")
+
+	result, err := api.SendPrompt(promptBuilder.String())
 	if err != nil {
 		printError("Report generation failed: " + err.Error())
 		return
 	}
 
-	// Auto-generate filename: cybermind_report_<target>_<date>.md
-	// Try to extract target from Brain Memory or last history entry
-	target := "unknown"
-	globalMem := brain.LoadGlobal()
-	if globalMem != nil && len(globalMem.TargetStats) > 0 {
-		// Use the target with the most bugs (most recently worked on)
-		maxBugs := -1
-		for t, count := range globalMem.TargetStats {
-			if count > maxBugs {
-				maxBugs = count
-				target = t
-			}
-		}
+	// Auto-generate filename from actual targets
+	target := "session"
+	if len(targets) > 0 {
+		target = targets[0]
 	}
-	if target == "unknown" && len(history) > 0 {
-		// Extract target from last recon/scan entry
-		for i := len(history) - 1; i >= 0; i-- {
-			u := history[i].User
-			if strings.Contains(u, "/recon ") || strings.Contains(u, "/scan ") || strings.Contains(u, "/hunt ") {
-				parts := strings.Fields(u)
-				if len(parts) >= 2 {
-					target = parts[len(parts)-1]
-					break
-				}
-			}
-		}
-	}
-	// Sanitize target for filename
-	target = strings.NewReplacer("/", "_", ":", "_", " ", "_").Replace(target)
+	target = strings.NewReplacer("/", "_", ":", "_", " ", "_", ".", "_").Replace(target)
 
 	// Save to ~/.cybermind/reports/
 	home, _ := os.UserHomeDir()
@@ -637,6 +681,31 @@ func runReport(format string, localMode bool) {
 	clean := utils.StripMarkdown(result)
 	printResult("📄 Pentest Report", clean)
 	_ = storage.AddEntry("report", "Report generated: "+outputFile)
+}
+
+// extractTargetsFromHistory pulls unique targets from history commands.
+func extractTargetsFromHistory(history []storage.Entry) []string {
+	seen := map[string]bool{}
+	var targets []string
+	scanCmds := []string{"/scan ", "/osint ", "/recon ", "/hunt ", "/cve ", "/threat ", "/abhimanyu "}
+	for _, entry := range history {
+		u := entry.User
+		for _, prefix := range scanCmds {
+			if strings.Contains(u, prefix) {
+				parts := strings.Fields(u)
+				for i, p := range parts {
+					if strings.HasSuffix(p, prefix[:len(prefix)-1]) && i+1 < len(parts) {
+						t := parts[i+1]
+						if !strings.HasPrefix(t, "--") && !seen[t] {
+							seen[t] = true
+							targets = append(targets, t)
+						}
+					}
+				}
+			}
+		}
+	}
+	return targets
 }
 
 // ─── Feature 6: Wordlist Generator ───────────────────────────────────────────

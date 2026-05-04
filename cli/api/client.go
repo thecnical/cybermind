@@ -919,8 +919,18 @@ func SendChatStream(prompt string, history []Message, onToken func(string)) (str
 
 // SendPrompt — simple chat without history
 func SendPrompt(prompt string) (string, error) {
+	// FIX #9 & #10: Inject OS-aware context so AI gives Windows-native answers
+	// and doesn't tell Windows users to "use Wine" or "switch to Linux"
+	osContext := ""
+	switch runtime.GOOS {
+	case "windows":
+		osContext = "\n\n[CONTEXT: User is on Windows. Give Windows-native solutions first (PowerShell, cmd, Burp Suite, OWASP ZAP, Python, Go, etc.). Do NOT say 'use Wine' or 'switch to Linux' — give working Windows alternatives. Be detailed and specific for an ELITE plan user.]"
+	case "darwin":
+		osContext = "\n\n[CONTEXT: User is on macOS. Give macOS-native solutions. Be detailed and specific.]"
+	}
+	enrichedPrompt := prompt + osContext
 	return post("/chat", chatRequest{
-		Prompt:       prompt,
+		Prompt:       enrichedPrompt,
 		Messages:     []Message{},
 		SystemPrompt: cyberSecSystemPrompt,
 		Mode:         "security",

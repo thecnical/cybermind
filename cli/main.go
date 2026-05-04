@@ -177,12 +177,11 @@ func printHelpWindows() {
 	// Network Scan — Windows native (PowerShell-backed)
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#0078D6")).Render("  🌐 NETWORK SCAN (Windows Native — No extra tools needed):"))
 	fmt.Println(g.Render("  cybermind /scan <target>") + d.Render("                    → Native scan via PowerShell (DNS, ports, HTTP, Shodan)"))
-	fmt.Println(g.Render("  cybermind /scan 192.168.1.1") + d.Render("                 → Scan local IP (uses Test-NetConnection)"))
+	fmt.Println(g.Render("  cybermind /scan 192.168.1.1") + d.Render("                 → Scan local IP (uses parallel TCP dial)"))
 	fmt.Println(g.Render("  cybermind /scan example.com") + d.Render("                 → Scan domain"))
-	fmt.Println(g.Render("  cybermind /portscan <target>") + d.Render("                → Port scan + netstat analysis"))
-	fmt.Println(g.Render("  cybermind /portscan local") + d.Render("                   → Show all open ports on this machine"))
+	fmt.Println(g.Render("  cybermind /scan local") + d.Render("                       → Show all open ports on this machine"))
 	fmt.Println(g.Render("  cybermind /osint <domain>") + d.Render("                   → DNS + MX + TXT + Shodan OSINT (free, no key)"))
-	fmt.Println(d.Render("  ↳ Port scan uses PowerShell Test-NetConnection — no nmap required"))
+	fmt.Println(d.Render("  ↳ Port scan uses parallel TCP dial — fast, no nmap required"))
 	fmt.Println()
 
 	// CVE + Threat Intel
@@ -300,7 +299,7 @@ func printHelpMac() {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  🌐 NETWORK + OSINT:"))
 	fmt.Println(g.Render("  cybermind /scan <target>") + d.Render("                    → Native network scan (DNS, ports, HTTP, Shodan)"))
 	fmt.Println(g.Render("  cybermind /scan 192.168.1.1") + d.Render("                 → Scan local IP"))
-	fmt.Println(g.Render("  cybermind /portscan <target>") + d.Render("                → Port scan + netstat analysis"))
+	fmt.Println(g.Render("  cybermind /scan local") + d.Render("                       → Show all open ports on this machine"))
 	fmt.Println(g.Render("  cybermind /osint <domain>") + d.Render("                   → DNS + MX + TXT + Shodan OSINT (free, no key)"))
 	fmt.Println(g.Render("  cybermind /threat <ip|domain|hash>") + d.Render("         → Threat intel (VirusTotal + AbuseIPDB + OTX)"))
 	fmt.Println()
@@ -471,7 +470,11 @@ func printResult(label, result string) {
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(green).Render("  ⚡ CyberMind AI → " + label))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).MarginLeft(2).Render(result))
+	// Print line by line with indent — avoids lipgloss rendering blank lines as wide blocks
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0"))
+	for _, line := range strings.Split(result, "\n") {
+		fmt.Println(style.Render("  " + line))
+	}
 	fmt.Println()
 }
 
@@ -6944,8 +6947,14 @@ func checkForUpdate() {
 		fmt.Println()
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render(
 			fmt.Sprintf("  ⚡ Update available: v%s → v%s", current, latest)))
-		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
-			"  Run: sudo cybermind /doctor   to auto-update"))
+		// FIX #2: Use OS-appropriate update command (no "sudo" on Windows)
+		if runtime.GOOS == "windows" {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+				"  Run: cybermind /doctor   to auto-update"))
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render(
+				"  Run: sudo cybermind /doctor   to auto-update"))
+		}
 		fmt.Println()
 	}
 }
