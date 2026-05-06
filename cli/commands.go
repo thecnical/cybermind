@@ -187,17 +187,12 @@ func runNativeScan(target string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ AI analysis..."))
 
-	// FIX #2: Add explicit timeout wrapper so AI call never hangs indefinitely.
+	// Use dedicated /scan endpoint — faster than generic /chat
 	// Also inject OS-aware context so Windows users get Windows-native advice.
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Native scan results for %s:\n\n", target))
-	for k, v := range results {
-		sb.WriteString(fmt.Sprintf("%s: %s\n", k, v))
-	}
-	sb.WriteString("\nProvide: attack surface analysis, CVEs for detected services, ")
-	sb.WriteString("MITRE ATT&CK mapping, exploitation recommendations.")
+	scanTarget := target
+	scanType := "quick"
 	if runtime.GOOS == "windows" {
-		sb.WriteString(" Give Windows-native tools and commands (Burp Suite, OWASP ZAP, PowerShell, Python). Do NOT suggest nmap, WSL, or Linux tools.")
+		scanType = "windows"
 	}
 
 	type aiRes struct {
@@ -206,7 +201,21 @@ func runNativeScan(target string, localMode bool) {
 	}
 	aiCh := make(chan aiRes, 1)
 	go func() {
-		r, e := api.SendPrompt(sb.String())
+		// Try dedicated scan endpoint first (faster, purpose-built)
+		r, e := api.SendScan(scanTarget, scanType)
+		if e != nil {
+			// Fallback to generic prompt with full context
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("Native scan results for %s:\n\n", target))
+			for k, v := range results {
+				sb.WriteString(fmt.Sprintf("%s: %s\n", k, v))
+			}
+			sb.WriteString("\nProvide: attack surface analysis, CVEs for detected services, MITRE ATT&CK mapping, exploitation recommendations.")
+			if runtime.GOOS == "windows" {
+				sb.WriteString(" Give Windows-native tools (Burp Suite, OWASP ZAP, PowerShell, Python). Do NOT suggest nmap, WSL, or Linux tools.")
+			}
+			r, e = api.SendPrompt(sb.String())
+		}
 		aiCh <- aiRes{r, e}
 	}()
 
