@@ -25,6 +25,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"cybermind-cli/pipeline"
 )
 
 // ExploitResult holds output from a single exploit tool
@@ -408,6 +410,16 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 
 	// Get tools for this vuln type
 	tools := GetToolsByVulnType(ctx.VulnType)
+	distributedQueue := pipeline.NewDistributedQueue()
+	distributedQueue.Enqueue("abhimanyu", ctx.Target, "start")
+
+	// Confidence scoring before exploit stage to reduce noisy/fake exploit runs.
+	confidence := pipeline.ConfidenceScore(len(ctx.VulnsFound), len(ctx.XSSFound), len(ctx.CredsFound), ctx.WAFDetected)
+	progress(AbhimanyuStatus{
+		Tool:   "confidence-gate",
+		Kind:   StatusDone,
+		Reason: fmt.Sprintf("pre-exploit confidence score=%d/100", confidence),
+	})
 
 	// ── Smart phase filtering based on target type ────────────────────────
 	isWebTarget := ctx.TargetType == "domain" || (ctx.TargetType == "" && !isIPAddress(ctx.Target))
@@ -420,6 +432,7 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 		}
 	}
 	skipPostExploit := isWebTarget && !hasShell && !hasRCE && ctx.VulnType == "all"
+	limitToValidation := ctx.VulnType == "all" && confidence < 20
 
 	// Phase 0: Pre-install all missing tools
 	for _, spec := range tools {
@@ -470,6 +483,18 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 	}
 
 	for phase := 1; phase <= 6; phase++ {
+		if limitToValidation && phase > 2 {
+			for _, spec := range tools {
+				if spec.Phase == phase {
+					progress(AbhimanyuStatus{
+						Tool:   spec.Name,
+						Kind:   StatusSkipped,
+						Reason: "low-confidence target — validation-only run (phases 1-2)",
+					})
+				}
+			}
+			continue
+		}
 		// Skip post-exploit/lateral/exfil phases for web targets without shell
 		if skipPostExploit && phase >= 4 {
 			for _, spec := range tools {
@@ -603,6 +628,7 @@ func RunAbhimanyuMode(ctx *AbhimanyuContext, progress func(AbhimanyuStatus)) []E
 		Kind:   StatusDone,
 		Reason: fmt.Sprintf("Session saved: %s | Shell: %v | Vulns: %d", ctx.SessionDir, ctx.ShellObtained, len(ctx.VulnsFound)),
 	})
+	distributedQueue.Enqueue("abhimanyu", ctx.Target, "completed")
 
 	return results
 }

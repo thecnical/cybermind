@@ -32,7 +32,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="5.4.6"
+VERSION="5.4.7"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -70,7 +70,7 @@ fi
 # ── Step 1: Download pre-built binary from GitHub ─────────────────────────────
 if [ -n "$BINARY" ]; then
     echo -e "${YELLOW}[*] Downloading CyberMind CLI binary (${BINARY})...${NC}"
-    BINARY_URL="${GITHUB_RAW}/${BINARY}"
+    BINARY_URL="${GITHUB_RAW}/${BINARY}?t=$(date +%s)"
     TMP_BIN="/tmp/cybermind-install-$$"
 
     if command -v curl &>/dev/null; then
@@ -626,7 +626,7 @@ echo -e "  ${CYAN}BizLogic:${NC}        sudo cybermind /bizlogic example.com"
 echo -e "  ${CYAN}OSINT Deep:${NC}      sudo cybermind /osint-deep example.com"
 echo -e "  ${CYAN}Novel Attacks:${NC}   sudo cybermind /novel example.com"
 echo -e "  ${CYAN}Python Tools:${NC}    sudo cybermind /install-python-tools"
-echo -e "  ${CYAN}Vibe Coder:${NC}      cybermind /vibe"
+echo -e "  ${CYAN}AI Coding:${NC}       cybermind"
 echo ""
 echo -e "  ${BOLD}${YELLOW}NEW in v5.0.0:${NC}"
 echo -e "  ${DIM}  • Tier 1: wafw00f, dnsrecon, uncover, shuffledns, cdncheck, smap, rustscan, dnstake${NC}"

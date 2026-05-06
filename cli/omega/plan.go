@@ -1,4 +1,4 @@
-﻿package omega
+package omega
 
 import (
 	"encoding/json"
@@ -135,14 +135,16 @@ return []OmegaToolEntry{
 {"sourcemapper", "recon", "go install github.com/denandz/sourcemapper@latest", true, false, false, false, "", "", ""},
 {"secretfinder", "hunt", "git clone https://github.com/m4ll0k/SecretFinder /opt/secretfinder && pip3 install -r /opt/secretfinder/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/m4ll0k/SecretFinder", "/opt/secretfinder", "SecretFinder.py"},
 {"linkfinder", "hunt", "git clone https://github.com/GerbenJavado/LinkFinder /opt/linkfinder && pip3 install -r /opt/linkfinder/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/GerbenJavado/LinkFinder", "/opt/linkfinder", "linkfinder.py"},
-{"cmseek", "hunt", "git clone https://github.com/Tuhinshubhra/CMSeeK /opt/cmseek && pip3 install -r /opt/cmseek/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/Tuhinshubhra/CMSeeK", "/opt/cmseek", "cmseek.py"},
-{"retire", "hunt", "npm install -g retire", false, false, false, false, "", "", ""},
-{"cloud_enum", "recon", "pip3 install cloud-enum --break-system-packages", false, false, true, false, "", "", ""},
+	{"cmseek", "hunt", "git clone https://github.com/Tuhinshubhra/CMSeeK /opt/cmseek && pip3 install -r /opt/cmseek/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/Tuhinshubhra/CMSeeK", "/opt/cmseek", "cmseek.py"},
+	{"retire", "hunt", "npm install -g retire", false, false, false, false, "", "", ""},
+	// cloud_enum is not reliably published on PyPI; install from git in an isolated venv wrapper.
+	{"cloud_enum", "recon", "git clone https://github.com/initstring/cloud_enum /opt/cloud_enum && pip3 install -r /opt/cloud_enum/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/initstring/cloud_enum", "/opt/cloud_enum", "cloud_enum.py"},
 // ── Tier 1 New Tools ────────────────────────────────────────────────────────
 {"wafw00f", "recon", "pip3 install wafw00f --break-system-packages", false, false, true, false, "", "", ""},
 {"emailfinder", "recon", "pip3 install emailfinder --break-system-packages", false, false, true, false, "", "", ""},
 {"dnsrecon", "recon", "sudo apt install -y dnsrecon", false, false, false, false, "", "", ""},
-{"spoofcheck", "recon", "pip3 install spoofcheck --break-system-packages", false, false, true, false, "", "", ""},
+	// spoofcheck is commonly installed from git; avoid pipx/pip "no matching distribution" failures.
+	{"spoofcheck", "recon", "git clone https://github.com/BishopFox/spoofcheck /opt/spoofcheck && pip3 install -r /opt/spoofcheck/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/BishopFox/spoofcheck", "/opt/spoofcheck", "spoofcheck.py"},
 {"uncover", "recon", "go install github.com/projectdiscovery/uncover/cmd/uncover@latest", true, false, false, false, "", "", ""},
 {"shuffledns", "recon", "go install github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest", true, false, false, false, "", "", ""},
 {"cdncheck", "recon", "go install github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest", true, false, false, false, "", "", ""},
@@ -198,7 +200,8 @@ return []OmegaToolEntry{
 {"mantra", "hunt", "go install github.com/MrEmpy/mantra@latest", true, false, false, false, "", "", ""},
 // getjswords removed — private/broken repo (github.com/m4ll0k/getjswords)
 {"uro", "hunt", "pip3 install uro --break-system-packages", false, false, true, false, "", "", ""},
-{"swaggerspy", "hunt", "pip3 install swaggerspy --break-system-packages", false, false, true, false, "", "", ""},
+	// swaggerspy is a git tool (UndeadSec/SwaggerSpy), not a stable PyPI package.
+	{"swaggerspy", "hunt", "git clone https://github.com/UndeadSec/SwaggerSpy /opt/swaggerspy && pip3 install -r /opt/swaggerspy/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/UndeadSec/SwaggerSpy", "/opt/swaggerspy", "swaggerspy.py"},
 {"sourcemapper", "hunt", "go install github.com/denandz/sourcemapper@latest", true, false, false, false, "", "", ""},
 // ── Hunt Phase 3 — Parameter Discovery ──────────────────────────────
 {"paramspider", "hunt", "git clone https://github.com/devanshbatham/ParamSpider /opt/paramspider && pip3 install -r /opt/paramspider/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/devanshbatham/ParamSpider", "/opt/paramspider", "paramspider.py"},
@@ -285,7 +288,8 @@ return []OmegaToolEntry{
 {"metagoofil", "osint", "pip3 install metagoofil --break-system-packages", false, false, true, false, "", "", ""},
 // ── OSINT Deep — Phase 8: Dark Web ───────────────────────────────────
 {"onionsearch", "osint", "pip3 install onionsearch --break-system-packages", false, false, true, false, "", "", ""},
-{"torbot", "osint", "pip3 install torbot --break-system-packages", false, false, true, false, "", "", ""},
+	// torbot isn't a stable PyPI package; install from git (DedSecInside/TorBot).
+	{"torbot", "osint", "git clone https://github.com/DedSecInside/TorBot /opt/torbot && pip3 install -r /opt/torbot/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/DedSecInside/TorBot", "/opt/torbot", "main.py"},
 // ── RevEng — Phase 1: File ID ────────────────────────────────────────
 {"floss", "reveng", "pip3 install floss --break-system-packages", false, false, true, false, "", "", ""},
 {"diec", "reveng", "sudo apt install -y detect-it-easy", false, false, false, false, "", "", ""},
@@ -313,16 +317,20 @@ return []OmegaToolEntry{
 // ── 2025 NEW: Exploit Phase — OOB/Blind/Cloud/C2 ─────────────────────
 {"interactsh-client", "exploit", "go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest", true, false, false, false, "", "", ""},
 {"ffuf", "exploit", "sudo apt install -y ffuf", false, false, false, false, "", "", ""},
-{"ghauri", "exploit", "pip3 install ghauri --break-system-packages", false, false, true, false, "", "", ""},
+	// ghauri pip installs can fail on some Kali/Python combos; install from git in isolated venv.
+	{"ghauri", "exploit", "git clone https://github.com/r0oth3x49/ghauri /opt/ghauri && pip3 install -r /opt/ghauri/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/r0oth3x49/ghauri", "/opt/ghauri", "scripts/ghauri.py"},
 {"puredns", "exploit", "go install github.com/d3mondev/puredns/v2@latest", true, false, false, false, "", "", ""},
-{"cloud_enum", "exploit", "pip3 install cloud-enum --break-system-packages", false, false, true, false, "", "", ""},
+	// duplicate entry for exploit mode filtering — same binary.
+	{"cloud_enum", "exploit", "git clone https://github.com/initstring/cloud_enum /opt/cloud_enum && pip3 install -r /opt/cloud_enum/requirements.txt --break-system-packages", false, false, false, true, "https://github.com/initstring/cloud_enum", "/opt/cloud_enum", "cloud_enum.py"},
 {"pacu", "exploit", "pip3 install pacu --break-system-packages", false, false, true, false, "", "", ""},
 {"roadrecon", "exploit", "pip3 install roadrecon --break-system-packages", false, false, true, false, "", "", ""},
 {"sliver", "exploit", "# Manual: curl https://sliver.sh/install | sudo bash", false, false, false, false, "", "", ""},
 {"rsf", "exploit", "pip3 install routersploit --break-system-packages", false, false, true, false, "", "", ""},
-{"nuclei-fuzz", "exploit", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false, false, false, "", "", ""},
-{"corscanner", "exploit", "pip3 install corscanner --break-system-packages", false, false, true, false, "", "", ""},
-{"h2csmuggler", "exploit", "pip3 install h2csmuggler --break-system-packages", false, false, true, false, "", "", ""},
+	// nuclei is already installed earlier; include it here for exploit-mode filtering.
+	{"nuclei", "exploit", "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true, false, false, false, "", "", ""},
+	{"corscanner", "exploit", "pip3 install corscanner --break-system-packages", false, false, true, false, "", "", ""},
+	// h2csmuggler is a git tool (BishopFox/h2csmuggler), not a PyPI package.
+	{"h2csmuggler", "exploit", "git clone https://github.com/BishopFox/h2csmuggler /opt/h2csmuggler && pip3 install h2 --break-system-packages", false, false, false, true, "https://github.com/BishopFox/h2csmuggler", "/opt/h2csmuggler", "h2csmuggler.py"},
 }
 }
 
@@ -462,11 +470,25 @@ if t.IsPip {
 
 if t.IsCargo {
 exec.Command("sudo", "apt", "install", "-y", "libssl-dev", "pkg-config", "cargo").Run()
-cmd := exec.Command("cargo", "install", t.Name)
+		cmd := exec.Command("cargo", "install", t.Name)
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
 cmd.Stdin = nil
-return cmd.Run()
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		// Ensure cargo-installed binary is discoverable by LookPath (doctor verification).
+		// cargo installs to ~/.cargo/bin by default, which may not be in PATH for non-interactive runs.
+		if home, _ := os.UserHomeDir(); home != "" {
+			cargoBin := home + "/.cargo/bin/" + t.Name
+			if _, e := os.Stat(cargoBin); e == nil {
+				_ = exec.Command("sudo", "ln", "-sf", cargoBin, "/usr/local/bin/"+t.Name).Run()
+			}
+		}
+		if _, e := os.Stat("/root/.cargo/bin/" + t.Name); e == nil {
+			_ = exec.Command("sudo", "ln", "-sf", "/root/.cargo/bin/"+t.Name, "/usr/local/bin/"+t.Name).Run()
+		}
+		return nil
 }
 
 if t.IsGit && t.GitURL != "" {
@@ -487,6 +509,13 @@ return cmd.Run()
 func installPipToolIsolated(toolName, pkgName string) error {
 	// Ensure python3-venv is available
 	exec.Command("sudo", "apt", "install", "-y", "python3-venv", "python3-pip", "pipx").Run()
+
+	// Some Python packages need native build deps on Kali/Ubuntu (pyproject builds).
+	// Install minimal deps proactively for known tools to avoid pipx "metadata-generation-failed".
+	switch strings.ToLower(pkgName) {
+	case "maigret":
+		exec.Command("sudo", "apt", "install", "-y", "pkg-config", "python3-dev", "libcairo2-dev").Run()
+	}
 
 	// Method 1: pipx — best isolation, binary lands in PATH automatically
 	if _, err := exec.LookPath("pipx"); err == nil {
@@ -632,10 +661,38 @@ func installGitToolIsolated(name, repoURL, installDir, mainScript string) error 
 
 // installOmegaToolAlt tries alternative installation methods
 func installOmegaToolAlt(t OmegaToolEntry) error {
-aptName := strings.ToLower(t.Name)
+	aptName := strings.ToLower(t.Name)
+
+	// If the primary install command is apt-based, reuse its package name instead of guessing from binary name.
+	// This fixes cases like retdec: binary=retdec-decompiler, apt pkg=retdec.
+	aptPkg := aptName
+	parts := strings.Fields(t.Install)
+	for i := 0; i < len(parts); i++ {
+		if parts[i] == "apt" && i+1 < len(parts) && parts[i+1] == "install" {
+			// scan for first non-flag token after "install"
+			for j := i + 2; j < len(parts); j++ {
+				p := parts[j]
+				if p == "-y" || strings.HasPrefix(p, "-") {
+					continue
+				}
+				// stop if we hit a shell chain
+				if p == "&&" || p == ";" || p == "|" {
+					break
+				}
+				aptPkg = strings.ToLower(p)
+				break
+			}
+			break
+		}
+	}
+
+	// Cargo tools should not fall back to pip installs (causes confusing "no matching distribution" errors).
+	if t.IsCargo {
+		return fmt.Errorf("%s: cargo install succeeded/failed — skipping alt installers", t.Name)
+	}
 
 // Try apt first
-cmd := exec.Command("sudo", "apt", "install", "-y", aptName)
+	cmd := exec.Command("sudo", "apt", "install", "-y", aptPkg)
 cmd.Stdout = os.Stdout
 cmd.Stderr = os.Stderr
 cmd.Stdin = nil

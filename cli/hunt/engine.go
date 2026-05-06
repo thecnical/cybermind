@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"cybermind-cli/brain"
+	"cybermind-cli/pipeline"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -647,6 +648,11 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 	if ctx.TargetType == "" {
 		ctx.TargetType = targetType(target)
 	}
+	profile := pipeline.AdaptiveProfile("hunt", target, ctx.WAFDetected)
+	passiveCache := pipeline.NewPassiveCache(6 * time.Hour)
+	distributedQueue := pipeline.NewDistributedQueue()
+	crawlScheduler := pipeline.NewCrawlScheduler(3000)
+	distributedQueue.Enqueue("hunt", target, "start")
 
 	available, skipped, err := detectHuntTools(requested)
 	if err != nil {
@@ -673,9 +679,8 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 			}
 		}
 
-		// Workers per phase tuned for safety + speed
-		maxWorkers := map[int]int{1: 3, 2: 3, 3: 2, 4: 3, 5: 2, 6: 1}
-		workers := maxWorkers[phase]
+		// Adaptive workers by mode + target + WAF signal
+		workers := profile.PhaseWorkers[phase]
 		if workers == 0 {
 			workers = 2
 		}
@@ -708,6 +713,16 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 				defer wg.Done()
 				defer func() { <-sem }()
 
+				if phase == 1 {
+					if cached, ok := passiveCache.Get(target, spec.Name); ok {
+						mu.Lock()
+						addResult(&result, spec, cached, nil, 0)
+						progress(HuntStatus{Tool: spec.Name, Kind: HuntDone, Reason: "cache-hit"})
+						mu.Unlock()
+						return
+					}
+				}
+
 				progress(HuntStatus{Tool: spec.Name, Kind: HuntRunning})
 				start := time.Now()
 				output, runErr := runHuntToolExhaustive(spec, target, ctx, progress)
@@ -728,6 +743,9 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 				progress(HuntStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
 				toolSuccess := last.Output != "" && last.Error == ""
 				brain.RecordToolRun(target, spec.Name, took, toolSuccess, 0, nil, last.Error)
+				if phase == 1 && last.Output != "" {
+					passiveCache.Set(target, spec.Name, last.Output)
+				}
 				if spec.CascadeGroup != "" && last.Output != "" {
 					cascadeGroupSuccess[spec.CascadeGroup] = true
 				}
@@ -770,6 +788,15 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 	runPhase(2)
 	newCrawled := extractCrawledURLs(result)
 	ctx.CrawledURLs = dedup(append(ctx.CrawledURLs, newCrawled...))
+	for _, u := range ctx.CrawledURLs {
+		crawlScheduler.Enqueue(u, 2, "crawl")
+	}
+	for _, u := range ctx.LiveURLs {
+		crawlScheduler.Enqueue(u, 1, "seed")
+	}
+	for _, t := range crawlScheduler.Drain(500) {
+		ctx.AllURLs = append(ctx.AllURLs, t.URL)
+	}
 
 	// ── JS Analysis: extract secrets, endpoints, vuln libs, CMS ─────────────
 	ctx.JSSecrets = extractJSSecrets(result)
@@ -857,6 +884,7 @@ func RunHunt(target string, ctx *HuntContext, requested []string, progress func(
 	}()
 
 	result.Context = ctx
+	distributedQueue.Enqueue("hunt", target, "completed")
 	return result
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"cybermind-cli/brain"
+	"cybermind-cli/pipeline"
 )
 
 // IsLinux returns true if running on Linux
@@ -489,6 +490,11 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 		Target:     target,
 		TargetType: targetType(target),
 	}
+	profile := pipeline.AdaptiveProfile("recon", target, false)
+	passiveCache := pipeline.NewPassiveCache(6 * time.Hour)
+	distributedQueue := pipeline.NewDistributedQueue()
+	crawlScheduler := pipeline.NewCrawlScheduler(2000)
+	distributedQueue.Enqueue("recon", target, "start")
 
 	// Auto-install missing tools silently before running
 	allToolNames := ToolNames()
@@ -519,8 +525,7 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 		}
 
 		// Max parallel workers per phase (tuned for safety + speed)
-		maxWorkers := map[int]int{1: 4, 2: 5, 3: 2, 4: 5, 5: 2, 6: 2}
-		workers := maxWorkers[phase]
+		workers := profile.PhaseWorkers[phase]
 		if workers == 0 {
 			workers = 2
 		}
@@ -553,6 +558,16 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 				defer wg.Done()
 				defer func() { <-sem }()
 
+				if phase == 1 {
+					if cached, ok := passiveCache.Get(target, spec.Name); ok {
+						mu.Lock()
+						addResult(&result, spec, cached, nil, 0)
+						progress(ToolStatus{Tool: spec.Name, Kind: StatusDone, Reason: "cache-hit"})
+						mu.Unlock()
+						return
+					}
+				}
+
 				progress(ToolStatus{Tool: spec.Name, Kind: StatusRunning})
 				start := time.Now()
 				output, runErr := runToolExhaustive(spec, target, ctx, progress)
@@ -573,6 +588,9 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 				progress(ToolStatus{Tool: spec.Name, Kind: kind, Took: took, Reason: last.Error})
 				toolSuccess := last.Output != "" && last.Error == ""
 				brain.RecordToolRun(target, spec.Name, took, toolSuccess, 0, nil, last.Error)
+				if phase == 1 && last.Output != "" {
+					passiveCache.Set(target, spec.Name, last.Output)
+				}
 				if spec.CascadeGroup != "" && last.Output != "" {
 					cascadeGroupSuccess[spec.CascadeGroup] = true
 				}
@@ -648,6 +666,12 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 	// Phase 4 — HTTP Probe → populate ctx.LiveURLs
 	runPhase(4)
 	ctx.LiveURLs = extractLiveURLs(result)
+	for _, u := range ctx.LiveURLs {
+		crawlScheduler.Enqueue(u, 1, "http")
+	}
+	for _, t := range crawlScheduler.Drain(200) {
+		ctx.CrawledURLs = append(ctx.CrawledURLs, t.URL)
+	}
 
 	// Phase 5 — Dir Discovery
 	runPhase(5)
@@ -712,6 +736,7 @@ func RunAutoRecon(target string, requested []string, progress func(ToolStatus)) 
 
 	buildCombined(&result)
 	result.Context = ctx
+	distributedQueue.Enqueue("recon", target, "completed")
 
 	// ── Brain: record completed scan session ──────────────────────────────
 	// Updates the self-model with what we found — future scans learn from this.
