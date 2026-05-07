@@ -1,4 +1,4 @@
-package ui
+﻿package ui
 
 import (
 	"fmt"
@@ -75,7 +75,7 @@ func (m Model) View() string {
 			Render("  An API key is required to use CyberMind."))
 		b.WriteString("\n\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
-			Render("  1. Visit  → https://cybermindcli1.vercel.app/dashboard"))
+			Render("  1. Visit  → https://cybermindcli.com/dashboard"))
 		b.WriteString("\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).
 			Render("  2. Sign up / log in → click \"New key\" → copy it"))

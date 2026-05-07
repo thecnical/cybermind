@@ -1,4 +1,4 @@
-# CyberMind
+﻿# CyberMind
 
 AI-powered offensive security CLI with Linux-first autonomous pipelines, cross-platform AI chat, and integrated coding workflows.
 
@@ -14,7 +14,7 @@ CyberMind is a real execution pipeline, not just prompt wrappers:
 ## Quick Start
 
 ```bash
-curl -sL https://cybermindcli1.vercel.app/install.sh | bash
+curl -sL https://cybermindcli.com/install.sh | bash
 cybermind --key cp_live_xxxxx
 cybermind /doctor
 cybermind /plan target.com

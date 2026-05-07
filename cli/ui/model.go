@@ -1,4 +1,4 @@
-package ui
+﻿package ui
 
 import (
 	"cybermind-cli/api"
@@ -347,14 +347,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(parts) > 1 {
 					m.errMsg += " | " + parts[1]
 				}
-				m.errMsg += " → https://cybermindcli1.vercel.app/plans"
+				m.errMsg += " → https://cybermindcli.com/plans"
 			} else if isEmailNotVerifiedError(errStr) {
 				// Email not verified — show clear message, don't ask for key again
-				m.errMsg = "✉  Email not verified. Check your inbox and click the verification link.\n  Then try again. Resend at: https://cybermindcli1.vercel.app/dashboard"
+				m.errMsg = "✉  Email not verified. Check your inbox and click the verification link.\n  Then try again. Resend at: https://cybermindcli.com/dashboard"
 				m.state = stateInput
 				m.input.Focus()
 			} else if isDailyLimitError(errStr) {
-				m.errMsg = "⚠  " + errStr + "\n  Upgrade at: https://cybermindcli1.vercel.app/plans"
+				m.errMsg = "⚠  " + errStr + "\n  Upgrade at: https://cybermindcli.com/plans"
 				m.state = stateInput
 				m.input.Focus()
 			} else if isAPIKeyError(errStr) {
@@ -374,7 +374,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, textinput.Blink
 				}
 			} else if isOSMismatchError(errStr) {
-				m.errMsg = errStr + "\n  Get a new key at: https://cybermindcli1.vercel.app/dashboard"
+				m.errMsg = errStr + "\n  Get a new key at: https://cybermindcli.com/dashboard"
 			} else if strings.Contains(errStr, "starting up") ||
 				strings.Contains(errStr, "cold start") ||
 				strings.Contains(errStr, "backend_down") ||

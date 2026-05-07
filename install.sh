@@ -1,8 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
 # CyberMind CLI Installer — Kali Linux / Ubuntu / Debian
 # Downloads pre-built binary from GitHub (fast, no Go needed)
-# Usage: curl -sL https://cybermindcli1.vercel.app/install.sh | bash
-# Usage: CYBERMIND_KEY=cp_live_xxx curl -sL https://cybermindcli1.vercel.app/install.sh | bash
+# Usage: curl -sL https://cybermindcli.com/install.sh | bash
+# Usage: CYBERMIND_KEY=cp_live_xxx curl -sL https://cybermindcli.com/install.sh | bash
 
 set -e
 

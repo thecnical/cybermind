@@ -1,6 +1,6 @@
-# CyberMind CLI Installer for Windows (PowerShell)
-# Usage: (iwr https://cybermindcli1.vercel.app/install.ps1 -UseBasicParsing).Content | iex
-# Usage: $env:CYBERMIND_KEY="cp_live_xxx"; (iwr https://cybermindcli1.vercel.app/install.ps1 -UseBasicParsing).Content | iex
+﻿# CyberMind CLI Installer for Windows (PowerShell)
+# Usage: (iwr https://cybermindcli.com/install.ps1 -UseBasicParsing).Content | iex
+# Usage: $env:CYBERMIND_KEY="cp_live_xxx"; (iwr https://cybermindcli.com/install.ps1 -UseBasicParsing).Content | iex
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

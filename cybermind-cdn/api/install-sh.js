@@ -1,7 +1,7 @@
-// Serves install.sh — EMBEDDED directly (no GitHub proxy = no cache issues)
+﻿// Serves install.sh — EMBEDDED directly (no GitHub proxy = no cache issues)
 // Version: 5.4.6
 // Last updated: 2026-05-05
-// IMPORTANT: This file IS the install script served at cybermindcli1.vercel.app/install.sh
+// IMPORTANT: This file IS the install script served at cybermindcli.com/install.sh
 // Update this file whenever install.sh changes in the root repo.
 
 module.exports = (req, res) => {
@@ -13,8 +13,8 @@ module.exports = (req, res) => {
 
   const script = `#!/bin/bash
 # CyberMind CLI Installer v5.4.6 — Kali Linux / Ubuntu / Debian / macOS
-# Usage: curl -sL https://cybermindcli1.vercel.app/install.sh | bash
-# Usage: CYBERMIND_KEY=cp_live_xxx curl -sL https://cybermindcli1.vercel.app/install.sh | bash
+# Usage: curl -sL https://cybermindcli.com/install.sh | bash
+# Usage: CYBERMIND_KEY=cp_live_xxx curl -sL https://cybermindcli.com/install.sh | bash
 
 set -e
 
