@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"encoding/json"
@@ -2136,7 +2136,7 @@ func runSelfUpdate() {
 	yellow2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
 
 	// ── Check latest version from Vercel before downloading ──────────────
-	const vercelCDN = "https://cybermindcli1.vercel.app/"
+	const vercelCDN = "https://cybermindcli.com/"
 	const ghRaw = "https://raw.githubusercontent.com/thecnical/cybermind/main/cli/"
 
 	// Fetch latest version from VERSION file — try multiple sources
@@ -2257,7 +2257,7 @@ func runSelfUpdate() {
 
 	if !downloaded {
 		fmt.Println(red2.Render("  ✗ All download sources failed. Check your internet connection."))
-		fmt.Println(dim2.Render("  Manual update: CYBERMIND_KEY=$KEY curl -sL https://cybermindcli1.vercel.app/install.sh | bash"))
+		fmt.Println(dim2.Render("  Manual update: CYBERMIND_KEY=$KEY curl -sL https://cybermindcli.com/install.sh | bash"))
 		return
 	}
 
@@ -2519,7 +2519,7 @@ func runUninstall() {
 			fmt.Sprintf("  ⚡ Uninstall complete (%d removed, %d need manual removal — see above).", removed, failed)))
 	}
 	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-		"  To reinstall: curl -sL https://cybermindcli1.vercel.app/install.sh | bash"))
+		"  To reinstall: curl -sL https://cybermindcli.com/install.sh | bash"))
 	fmt.Println()
 }
 
@@ -2972,7 +2972,7 @@ func requirePlan(minPlan string) bool {
 		fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(
 			fmt.Sprintf("  Your current plan: %s", strings.ToUpper(plan))))
 		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-			"  Upgrade at: https://cybermindcli1.vercel.app/plans"))
+			"  Upgrade at: https://cybermindcli.com/plans"))
 		fmt.Println()
 		return false
 	}
@@ -2998,7 +2998,7 @@ func promptForAPIKey() string {
 	fmt.Println(cyan2.Render("  CyberMind CLI needs a free API key to work."))
 	fmt.Println()
 	fmt.Println(cyan2.Render("  Get your free key in 30 seconds:"))
-	fmt.Println(cyan2.Render("  ① Open:  https://cybermindcli1.vercel.app/dashboard"))
+	fmt.Println(cyan2.Render("  ① Open:  https://cybermindcli.com/dashboard"))
 	fmt.Println(cyan2.Render("  ② Sign up (free) → click \"New key\" → select your OS"))
 	fmt.Println(cyan2.Render("  ③ Copy the key (starts with cp_live_...)"))
 	fmt.Println(cyan2.Render("  ④ Paste it below"))
@@ -3029,7 +3029,7 @@ func promptForAPIKey() string {
 				fmt.Println()
 				continue
 			}
-			fmt.Println(dim2.Render("  Get your key: https://cybermindcli1.vercel.app/dashboard"))
+			fmt.Println(dim2.Render("  Get your key: https://cybermindcli.com/dashboard"))
 			fmt.Println()
 			return ""
 		}
@@ -3085,7 +3085,7 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(yellow).Render(
 				"  ⚠  Your API key is outdated. Please get a new one:"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
-				"  1. Visit: https://cybermindcli1.vercel.app/dashboard"))
+				"  1. Visit: https://cybermindcli.com/dashboard"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
 				"  2. Sign up / log in → New key → copy it"))
 			fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(
@@ -3104,7 +3104,7 @@ func main() {
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
 				"  For full features (recon/hunt/plan): cybermind --key cp_live_xxxxx"))
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(
-				"  Get free key: https://cybermindcli1.vercel.app/dashboard"))
+				"  Get free key: https://cybermindcli.com/dashboard"))
 			fmt.Println()
 		}
 
@@ -3193,7 +3193,7 @@ func main() {
 		// Validate key format before saving
 		if !strings.HasPrefix(key, "cp_live_") && !strings.HasPrefix(key, "sk_live_cm_") {
 			printError("Invalid key format. Key must start with cp_live_")
-			printError("Get your key at: https://cybermindcli1.vercel.app/dashboard")
+			printError("Get your key at: https://cybermindcli.com/dashboard")
 			os.Exit(1)
 		}
 		if len(key) < 16 {
@@ -3213,7 +3213,7 @@ func main() {
 		// Show current key and plan
 		key := api.GetAPIKey()
 		if key == "" {
-			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  No API key set. Get yours at https://cybermindcli1.vercel.app/dashboard"))
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  No API key set. Get yours at https://cybermindcli.com/dashboard"))
 			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Set key: cybermind --key cp_live_xxxxx"))
 		} else {
 			masked := key[:min(12, len(key))] + strings.Repeat("•", max(0, len(key)-12))
@@ -6720,14 +6720,14 @@ sudo chmod +x /opt/graphw00f/main.py`)
 		} else if api.IsFreeMode() {
 			// ── FREE MODE: no API key needed ─────────────────────────────
 			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88")).Render("  ⟳ CyberMind FREE mode (HuggingFace)..."))
-			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Get a free API key for faster responses: cybermindcli1.vercel.app"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Get a free API key for faster responses: cybermindcli.com"))
 			result, err := api.SendFree(prompt)
 			if err != nil {
 				// Free mode failed — show how to get a key
 				printError("Free mode unavailable: " + err.Error())
 				fmt.Println()
 				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Get a free API key (30 seconds):"))
-				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1. Visit: https://cybermindcli1.vercel.app/dashboard"))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  1. Visit: https://cybermindcli.com/dashboard"))
 				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  2. Sign up free → New key → copy it"))
 				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  3. Run: cybermind --key cp_live_xxxxx"))
 				os.Exit(1)
@@ -6932,7 +6932,7 @@ func checkForUpdate() {
 	
 	// Try static VERSION file first (most reliable, always up to date)
 	versionSources := []string{
-		"https://cybermindcli1.vercel.app/VERSION",
+		"https://cybermindcli.com/VERSION",
 		"https://raw.githubusercontent.com/thecnical/cybermind/main/VERSION",
 	}
 	
