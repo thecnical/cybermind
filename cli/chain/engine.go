@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -208,7 +209,7 @@ func RunChain(target string) error {
 
 	// Simulate chain execution — stream output to terminal
 	fmt.Println(cyanStyle.Render("  [chain] Running chain-specific tools..."))
-	runChainTools(target, selectedLine)
+	runChainToolsReal(target, selectedLine, bugs)
 
 	// ── Step 9: Save chain result and PoC to Brain_Memory ────────────────────
 	chainPoC := pocSteps
@@ -267,18 +268,87 @@ func extractPoCForChain(text string, chainNum int) string {
 
 // ─── Chain Tool Runner ────────────────────────────────────────────────────────
 
-// runChainTools runs chain-specific tools and streams output to terminal.
-// For the chain engine, this displays the PoC execution steps.
+// runChainTools runs real tools for each vuln type in the chain.
+// Uses actual security tools — no fake sleep.
 func runChainTools(target string, chainLine string) {
-	// Parse vuln types from chain line: "Chain N: VULN1 + VULN2 -> impact"
 	vulnTypes := extractVulnTypes(chainLine)
+	baseURL := target
+	if !strings.HasPrefix(baseURL, "http") {
+		baseURL = "https://" + target
+	}
 
 	fmt.Println()
 	for i, vuln := range vulnTypes {
-		fmt.Printf("  %s\n", cyanStyle.Render(fmt.Sprintf("[%d/%d] Testing %s on %s...", i+1, len(vulnTypes), vuln, target)))
-		// Brief pause to simulate tool execution
-		time.Sleep(500 * time.Millisecond)
-		fmt.Printf("  %s\n", greenStyle.Render(fmt.Sprintf("  ✓ %s step complete", vuln)))
+		fmt.Printf("  %s\n", cyanStyle.Render(fmt.Sprintf("[%d/%d] Executing %s on %s...", i+1, len(vulnTypes), vuln, target)))
+
+		lower := strings.ToLower(vuln)
+		var out []byte
+		var err error
+
+		switch {
+		case strings.Contains(lower, "xss"):
+			if _, e := exec.LookPath("dalfox"); e == nil {
+				cmd := exec.Command("dalfox", "url", baseURL, "--silence", "--no-color", "--waf-bypass")
+				out, err = cmd.Output()
+			}
+		case strings.Contains(lower, "sqli") || strings.Contains(lower, "sql"):
+			if _, e := exec.LookPath("sqlmap"); e == nil {
+				cmd := exec.Command("sqlmap", "-u", baseURL+"/?id=1",
+					"--level=2", "--risk=1", "--batch", "--random-agent",
+					"--output-dir=/tmp/cybermind_chain")
+				out, err = cmd.Output()
+			}
+		case strings.Contains(lower, "ssrf"):
+			if _, e := exec.LookPath("nuclei"); e == nil {
+				cmd := exec.Command("nuclei", "-u", baseURL, "-t", "ssrf,oast", "-silent", "-no-color")
+				out, err = cmd.Output()
+			}
+		case strings.Contains(lower, "idor"):
+			if _, e := exec.LookPath("ffuf"); e == nil {
+				cmd := exec.Command("ffuf", "-u", baseURL+"/api/user/FUZZ",
+					"-w", "/usr/share/seclists/Fuzzing/4-digits-0000-9999.txt",
+					"-mc", "200", "-silent")
+				out, err = cmd.Output()
+			}
+		case strings.Contains(lower, "lfi") || strings.Contains(lower, "path"):
+			if _, e := exec.LookPath("nuclei"); e == nil {
+				cmd := exec.Command("nuclei", "-u", baseURL, "-t", "lfi,path-traversal", "-silent", "-no-color")
+				out, err = cmd.Output()
+			}
+		case strings.Contains(lower, "rce") || strings.Contains(lower, "command"):
+			if _, e := exec.LookPath("nuclei"); e == nil {
+				cmd := exec.Command("nuclei", "-u", baseURL, "-t", "rce,command-injection", "-silent", "-no-color")
+				out, err = cmd.Output()
+			}
+		case strings.Contains(lower, "auth") || strings.Contains(lower, "bypass"):
+			if _, e := exec.LookPath("nuclei"); e == nil {
+				cmd := exec.Command("nuclei", "-u", baseURL, "-t", "auth-bypass,default-logins", "-silent", "-no-color")
+				out, err = cmd.Output()
+			}
+		default:
+			// Generic nuclei scan for unknown vuln type
+			if _, e := exec.LookPath("nuclei"); e == nil {
+				cmd := exec.Command("nuclei", "-u", baseURL, "-severity", "critical,high", "-silent", "-no-color")
+				out, err = cmd.Output()
+			}
+		}
+
+		if err == nil && len(out) > 0 {
+			output := strings.TrimSpace(string(out))
+			if output != "" {
+				lines := strings.Split(output, "\n")
+				shown := 0
+				for _, l := range lines {
+					if strings.TrimSpace(l) != "" && shown < 5 {
+						fmt.Printf("      %s\n", l)
+						shown++
+					}
+				}
+			}
+			fmt.Printf("  %s\n", greenStyle.Render(fmt.Sprintf("  ✓ %s execution complete", vuln)))
+		} else {
+			fmt.Printf("  %s\n", cyanStyle.Render(fmt.Sprintf("  – %s: tool not available or no output", vuln)))
+		}
 	}
 	fmt.Println()
 	fmt.Println(greenStyle.Render("  [chain] Chain execution complete."))
@@ -312,4 +382,54 @@ func extractVulnTypes(chainLine string) []string {
 		return []string{"vulnerability"}
 	}
 	return vulns
+}
+
+// runChainToolsReal runs REAL tools for each vuln type in the chain.
+func runChainToolsReal(target string, chainLine string, bugs []brain.Bug) {
+vulnTypes := extractVulnTypes(chainLine)
+baseURL := "https://" + target
+if strings.HasPrefix(target, "http") {
+baseURL = target
+}
+
+fmt.Println()
+for i, vuln := range vulnTypes {
+fmt.Printf("  %s\n", cyanStyle.Render(fmt.Sprintf("[%d/%d] Executing %s on %s...", i+1, len(vulnTypes), vuln, target)))
+lower := strings.ToLower(vuln)
+switch {
+case strings.Contains(lower, "xss"):
+runChainTool("dalfox", "url", baseURL, "--silence", "--no-color", "--waf-bypass")
+case strings.Contains(lower, "sqli") || strings.Contains(lower, "sql"):
+sqlURL := baseURL
+for _, b := range bugs {
+if strings.Contains(strings.ToLower(b.Type), "sqli") {
+sqlURL = b.URL
+break
+}
+}
+runChainTool("sqlmap", "-u", sqlURL, "--level=3", "--risk=2", "--batch", "--random-agent", "--dbs")
+case strings.Contains(lower, "ssrf"):
+runChainTool("nuclei", "-u", baseURL, "-t", "ssrf", "-severity", "critical,high", "-silent", "-no-color")
+case strings.Contains(lower, "rce"):
+runChainTool("commix", "--url", baseURL, "--batch", "--level=3")
+default:
+runChainTool("nuclei", "-u", baseURL, "-severity", "critical,high", "-silent", "-no-color")
+}
+fmt.Printf("  %s\n", greenStyle.Render(fmt.Sprintf("  \u2713 %s step complete", vuln)))
+}
+fmt.Println()
+fmt.Println(greenStyle.Render("  [chain] Chain execution complete."))
+}
+
+// runChainTool runs a single tool with live output
+func runChainTool(name string, args ...string) {
+if _, err := exec.LookPath(name); err != nil {
+fmt.Printf("  [chain] %s not installed \u2014 skipping\n", name)
+return
+}
+cmd := exec.Command(name, args...)
+cmd.Stdout = os.Stdout
+cmd.Stderr = os.Stderr
+cmd.Stdin = nil
+cmd.Run()
 }

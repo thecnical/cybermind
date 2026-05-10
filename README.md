@@ -1,182 +1,124 @@
-﻿# CyberMind
+﻿# CyberMind CLI v5.5.0
 
-AI-powered offensive security CLI with Linux-first autonomous pipelines, cross-platform AI chat, and integrated coding workflows.
+> AI-powered offensive security CLI with 16-agent parallel attack pipeline, autonomous OMEGA planning, and real tool execution on Kali Linux.
 
-## What CyberMind Is
+[![Version](https://img.shields.io/badge/version-5.5.0-cyan)](https://cybermindcli.com)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-blue)](https://cybermindcli.com/install)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-CyberMind is a real execution pipeline, not just prompt wrappers:
-- `/plan` (OMEGA) builds strategy from live target context
-- `/recon` executes multi-phase surface discovery and normalization
-- `/hunt` runs deep web/app vulnerability hunting with context chaining
-- `/abhimanyu` executes exploit/post-exploit paths with session persistence
-- `/doctor` keeps toolchain stable and self-healing
+## What Makes CyberMind Different
 
-## Quick Start
+| Feature | CyberMind | PentAGI | Darkmoon |
+|---|---|---|---|
+| **16 Parallel Agents** | ✅ Real execution | ✅ Docker-based | ❌ |
+| **Windows Support** | ✅ Full | ❌ Linux only | ❌ Web only |
+| **Bug Bounty Focus** | ✅ HackerOne/Bugcrowd | ❌ | ❌ |
+| **Free Tier** | ✅ 20 req/day | ✅ Self-host | ❌ Enterprise |
+| **One-command Install** | ✅ | ❌ Docker needed | ❌ |
+| **Knowledge Graph** | ✅ Cross-target intel | ✅ | ❌ |
+| **Long-term Memory** | ✅ Per-target | ✅ pgvector | ❌ |
+| **VSCode Extension** | ✅ | ❌ | ❌ |
+| **Telegram Alerts** | ✅ | ❌ | ❌ |
+
+## Install
+
+**Linux/Kali:**
+```bash
+CYBERMIND_KEY=YOUR_KEY curl -sL https://cybermindcli.com/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:CYBERMIND_KEY="YOUR_KEY"; (iwr https://cybermindcli.com/install.ps1 -UseBasicParsing).Content | iex
+```
+
+**macOS:**
+```bash
+CYBERMIND_KEY=YOUR_KEY curl -sL https://cybermindcli.com/install-mac.sh | bash
+```
+
+Get your free API key at [cybermindcli.com](https://cybermindcli.com)
+
+## OMEGA — 16-Agent Parallel Attack Pipeline
 
 ```bash
-curl -sL https://cybermindcli.com/install.sh | bash
-cybermind --key cp_live_xxxxx
-cybermind /doctor
-cybermind /plan target.com
+cybermind /plan target.com              # Full OMEGA: 16 agents in parallel
+cybermind /plan target.com --mode quick # Quick scan (~30 min)
+cybermind /plan target.com --mode deep  # Deep scan (~4 hours)
 ```
 
-## Architecture Overview
+**16 Specialist Agents:**
 
-```mermaid
-mindmap
-  root((CyberMind Platform))
-    CLI Core
-      Command Dispatch
-      Mode Routing
-      Help + Chat
-    Offensive Pipeline
-      OMEGA /plan
-      Recon /recon
-      Hunt /hunt
-      Abhimanyu /abhimanyu
-    Runtime Engine
-      Adaptive Concurrency Profiles
-      Centralized Crawl Scheduler
-      Cache-based Passive Reuse
-      Distributed Queue Model
-      Confidence Scoring Gate
-    AI + Backend
-      Provider Router
-      Streaming/SSE
-      Fallback Chain
-    VSCode Extension
-      Auth + Key Storage
-      Agent Commands
-      Plan/Build/Scan Workflows
+| Phase | Agent | Tools |
+|---|---|---|
+| Recon | Passive OSINT | whois, dig, theHarvester, asnmap |
+| Recon | Subdomain Enum | subfinder, amass, puredns, dnsx, alterx |
+| Recon | Port Scan | naabu, nmap, masscan |
+| Recon | HTTP Fingerprint | httpx, whatweb, wafw00f, gowitness |
+| Recon | JS Intelligence | jsluice, katana, gau |
+| Recon | Secret Scanner | trufflehog, gitleaks, nuclei |
+| Hunt | XSS Hunter | dalfox, kxss, bxss |
+| Hunt | SQLi Agent | sqlmap, ghauri |
+| Hunt | SSRF Agent | nuclei, interactsh |
+| Hunt | Nuclei Templates | nuclei (9000+ templates) |
+| Hunt | OAuth/JWT | jwt_tool, nuclei |
+| Hunt | Business Logic | ffuf, custom HTTP tests |
+| Hunt | WAF Bypass | sqlmap tampers, dalfox bypass |
+| Exploit | Cloud Misconfig | cloud_enum, pacu, nuclei |
+| Exploit | HTTP Smuggling | nuclei, smuggler |
+| Exploit | Exploit Verify | searchsploit, nuclei, msfconsole |
+
+## All Commands
+
+```bash
+# OMEGA (Linux)
+cybermind /plan <target>              # 16-agent autonomous pipeline
+cybermind /recon <target>             # 30+ tool recon chain
+cybermind /hunt <target>              # 40+ tool vuln hunt
+cybermind /abhimanyu <target>         # Exploit engine
+cybermind /chain <target>             # Vuln chain analysis + real execution
+cybermind /vibe-hack <target>         # Autonomous AI hacking session (SSE)
+cybermind /red-team <company>         # 7-day red team campaign
+cybermind /bizlogic <target>          # Business logic bug hunter
+
+# Cross-platform (Windows/macOS/Linux)
+cybermind                             # AI security chat (TUI)
+cybermind /scan <target>              # Native network scan
+cybermind /osint <target>             # DNS + Shodan OSINT
+cybermind /cve CVE-2024-1234          # CVE intelligence
+cybermind /threat <ip|domain>         # Threat intel
+cybermind /payload windows x64        # AI payload generator
+cybermind /devsec <github-url>        # Code security scanner
+cybermind report                      # Generate pentest report
 ```
 
-## Execution Dataflow
+## Architecture
 
-```mermaid
-flowchart LR
-  A[/plan] --> B[Target Classification + Passive Intel]
-  B --> C[/recon]
-  C --> D[Surface Graph: subdomains + ports + URLs + tech]
-  D --> E[/hunt]
-  E --> F[Validated Findings + Confidence Score]
-  F --> G[/abhimanyu]
-  G --> H[Session Artifacts + Evidence]
-  H --> I[Report + AI Summary]
+```
+OMEGA Brain
+├── 16 Specialist Agents (parallel goroutines)
+├── Knowledge Graph (cross-target intel)
+├── Long-term Memory (per-target JSON)
+├── Reasoning Engine (confidence-scored branches)
+└── AI Synthesis (findings → report)
 ```
 
-## Fast Engine (Now Implemented)
+## Plans
 
-The CLI engine includes full-stack speed/brain upgrades:
+| Plan | Price | Requests/day |
+|---|---|---|
+| Free | ₹0 | 20 |
+| Starter | ₹299/mo | 50 |
+| Pro | ₹1,999/mo | 200 |
+| Elite | ₹3,999/mo | Unlimited |
 
-- **Adaptive concurrency profiles**: dynamic per-mode/per-target worker tuning
-- **Centralized crawl scheduler**: deduped URL task scheduling across phases
-- **Cache-based passive reuse**: passive outputs reused via TTL cache
-- **Distributed queue model**: persisted queue for cross-phase orchestration
-- **Confidence scoring before exploit**: exploit-stage gating based on finding quality
+[Get started →](https://cybermindcli.com)
 
-These are integrated directly in:
-- `cli/recon/engine.go`
-- `cli/hunt/engine.go`
-- `cli/abhimanyu/engine.go`
-- `cli/pipeline/optimizer.go`
+## Related Tools
 
-## Command and Module Map
-
-```mermaid
-flowchart TB
-  subgraph CLI
-    MAIN[main.go]
-    HELP[help + command parser]
-  end
-
-  subgraph Modes
-    P[/plan]
-    R[/recon]
-    H[/hunt]
-    A[/abhimanyu]
-    D[/doctor]
-  end
-
-  subgraph Runtime
-    AP[Adaptive Profile]
-    CS[Crawl Scheduler]
-    PC[Passive Cache]
-    DQ[Distributed Queue]
-    CG[Confidence Gate]
-  end
-
-  MAIN --> P
-  MAIN --> R
-  MAIN --> H
-  MAIN --> A
-  MAIN --> D
-  P --> R --> H --> A
-  R --> AP
-  H --> AP
-  R --> CS
-  H --> CS
-  R --> PC
-  H --> PC
-  R --> DQ
-  H --> DQ
-  A --> DQ
-  H --> CG
-  CG --> A
-```
-
-## Platform Capability Matrix
-
-| Capability | Linux/Kali | Windows | macOS |
-|---|---|---|---|
-| AI Chat | Yes | Yes | Yes |
-| `/plan` | Yes | No | No |
-| `/recon` | Yes | No | No |
-| `/hunt` | Yes | No | No |
-| `/abhimanyu` | Yes | No | No |
-| `/doctor` | Yes | Yes | Yes |
-
-## Documentation Hub
-
-- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
-- [`docs/PIPELINE_AUDIT.md`](./docs/PIPELINE_AUDIT.md)
-- [`docs/VSCODE_EXTENSION_FULLSTACK.md`](./docs/VSCODE_EXTENSION_FULLSTACK.md)
-- [`CYBERMIND_UPGRADE_PLAN.md`](./CYBERMIND_UPGRADE_PLAN.md)
-
-## Reference Visualization Sources
-
-For architecture deep-dives and map views:
-
-- [CyberMind Code Wiki Root](https://codewiki.google/github.com/thecnical/cybermind#ai-powered-offensive-security-cli)
-- [CLI Core and Command Dispatch](https://codewiki.google/github.com/thecnical/cybermind#ai-powered-offensive-security-cli-cli-core-and-command-dispatch)
-- [Self Updating Mechanism](https://codewiki.google/github.com/thecnical/cybermind#ai-powered-offensive-security-cli-self-updating-mechanism)
-- [Tool Management and Health Checks](https://codewiki.google/github.com/thecnical/cybermind#ai-powered-offensive-security-cli-tool-management-and-health-checks)
-- [AI Chat and UI](https://codewiki.google/github.com/thecnical/cybermind#ai-chat-and-user-interface)
-- [UI State Management](https://codewiki.google/github.com/thecnical/cybermind#ai-chat-and-user-interface-ui-state-management-and-interaction)
-- [UI Rendering and Styling](https://codewiki.google/github.com/thecnical/cybermind#ai-chat-and-user-interface-ui-rendering-and-styling)
-- [Recon and Hunt Orchestration](https://codewiki.google/github.com/thecnical/cybermind#cybersecurity-reconnaissance-and-vulnerability-hunting-orchestration)
-- [Phased Execution and Dataflow](https://codewiki.google/github.com/thecnical/cybermind#cybersecurity-reconnaissance-and-vulnerability-hunting-orchestration-phased-execution-and-contextual-data-flow)
-- [Tool Registry Orchestration](https://codewiki.google/github.com/thecnical/cybermind#cybersecurity-reconnaissance-and-vulnerability-hunting-orchestration-external-tool-orchestration-and-registry-management)
-- [Findings Extraction and Aggregation](https://codewiki.google/github.com/thecnical/cybermind#cybersecurity-reconnaissance-and-vulnerability-hunting-orchestration-findings-extraction-processing-and-aggregation)
-- [Backend API Communication](https://codewiki.google/github.com/thecnical/cybermind#cybermind-backend-api-communication)
-
-## Screenshots
-
-Place screenshots in `docs/images/` and link them:
-
-```md
-![OMEGA Planning](./docs/images/omega-plan.png)
-![Recon Pipeline](./docs/images/recon-pipeline.png)
-![Hunt Findings](./docs/images/hunt-findings.png)
-![Abhimanyu Session](./docs/images/abhimanyu-session.png)
-![VSCode Extension](./docs/images/vscode-extension.png)
-```
-
-## Legal and Safety
-
-- Run only on authorized targets and in-scope programs.
-- Follow disclosure, rate-limit, and legal boundaries.
-- Do not use for unauthorized access.
+- [Aegis](https://github.com/thecnical/aegis) — Deep autonomous pentest engine
+- [Phantom Strike](https://github.com/thecnical/phantom-strike) — Offensive security toolkit
 
 ## License
 
-MIT (`LICENSE`).
+MIT — For authorized security testing only.
