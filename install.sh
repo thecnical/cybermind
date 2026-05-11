@@ -32,7 +32,7 @@ NC='\033[0m'
 GITHUB_RAW="https://raw.githubusercontent.com/thecnical/cybermind/main/cli"
 INSTALL_PATH="/usr/local/bin/cybermind"
 CBM_PATH="/usr/local/bin/cbm"
-VERSION="5.4.7"
+VERSION="5.5.0"
 
 echo -e "${CYAN}"
 cat << 'BANNER'
@@ -646,3 +646,4 @@ if [ -n "$CYBERMIND_KEY" ]; then
 fi
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
+
