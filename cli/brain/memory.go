@@ -1,4 +1,4 @@
-﻿// Package brain implements CyberMind's persistent memory and learning system.
+// Package brain implements CyberMind's persistent memory and learning system.
 // Every run teaches the system â€” patterns that worked, false positives to skip,
 // tech stacks, WAF vendors, confirmed bugs, and scope intelligence.
 package brain

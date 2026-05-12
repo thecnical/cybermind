@@ -1,4 +1,4 @@
-﻿// Serves install.sh — EMBEDDED directly (no GitHub proxy = no cache issues)
+// Serves install.sh — EMBEDDED directly (no GitHub proxy = no cache issues)
 // Version: 5.4.6
 // Last updated: 2026-05-05
 // IMPORTANT: This file IS the install script served at cybermindcli.com/install.sh

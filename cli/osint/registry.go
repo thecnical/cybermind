@@ -1,4 +1,4 @@
-﻿package osint
+package osint
 
 import (
 	"fmt"

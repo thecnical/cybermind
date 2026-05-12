@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # CyberMind CLI Installer — Kali Linux / Ubuntu / Debian
 # Downloads pre-built binary from GitHub (fast, no Go needed)
 # Usage: curl -sL https://cybermindcli.com/install.sh | bash

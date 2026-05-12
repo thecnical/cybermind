@@ -1,4 +1,4 @@
-﻿// self_think.go — CyberMind Self-Thinking Engine
+// self_think.go — CyberMind Self-Thinking Engine
 // Gives the agent its own "brain" — independent reasoning without relying on backend.
 // Implements: chain-of-thought reasoning, hypothesis generation, attack intuition,
 // business logic analysis, novel attack chain discovery, adaptive decision making,

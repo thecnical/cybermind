@@ -1,4 +1,4 @@
-﻿// brain/knowledge_graph.go — Knowledge Graph for CyberMind
+// brain/knowledge_graph.go — Knowledge Graph for CyberMind
 // Stores relationships between targets, vulnerabilities, tech stacks, and attack paths.
 // Persisted as JSON at ~/.cybermind/brain/graph.json
 // Used by OMEGA to make smarter decisions based on cross-target intelligence.

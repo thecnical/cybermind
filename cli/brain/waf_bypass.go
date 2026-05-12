@@ -1,4 +1,4 @@
-﻿// Package brain - Adaptive WAF Bypass Engine
+// Package brain - Adaptive WAF Bypass Engine
 // Real WAF fingerprinting + dynamic tamper selection + bypass effectiveness testing.
 package brain
 

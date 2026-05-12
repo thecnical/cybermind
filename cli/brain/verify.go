@@ -1,4 +1,4 @@
-﻿// verify.go â€” Real verification using interactsh OOB + actual exploitation
+// verify.go â€” Real verification using interactsh OOB + actual exploitation
 // Every finding goes through this pipeline before being reported.
 package brain
 

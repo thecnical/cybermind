@@ -1,4 +1,4 @@
-﻿// brain/agents.go — 16 Specialist Agents for OMEGA Multi-Agent System
+// brain/agents.go — 16 Specialist Agents for OMEGA Multi-Agent System
 // Each agent has a specific role, tools, and real execution logic.
 // Agents run in parallel goroutines with a shared result channel.
 package brain

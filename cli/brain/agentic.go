@@ -1,4 +1,4 @@
-﻿// Package brain - Agentic intelligence: memory-driven targeting, self-improving prompts
+// Package brain - Agentic intelligence: memory-driven targeting, self-improving prompts
 package brain
 
 import (

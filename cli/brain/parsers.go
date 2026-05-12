@@ -1,4 +1,4 @@
-﻿// Package brain - Structured Tool Output Parsers
+// Package brain - Structured Tool Output Parsers
 // Replaces regex-based extraction with proper parsers for each tool.
 package brain
 

@@ -1,4 +1,4 @@
-﻿// Package sandbox - Browser automation for CyberMind XSS verification + authenticated scanning
+// Package sandbox - Browser automation for CyberMind XSS verification + authenticated scanning
 // Priority: Local Playwright -> Vercel Sandbox -> curl fallback
 package sandbox
 
