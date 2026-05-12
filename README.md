@@ -1,10 +1,11 @@
-﻿# CyberMind CLI v5.5.0
+﻿# CyberMind CLI v5.5.1
 
-> AI-powered offensive security CLI with 16-agent parallel attack pipeline, autonomous OMEGA planning, and real tool execution on Kali Linux.
+> **Commercial AI-powered offensive security CLI** with 16-agent parallel attack pipeline, autonomous OMEGA planning, and real tool execution on Kali Linux. **Not open source** — free tier available.
 
-[![Version](https://img.shields.io/badge/version-5.5.0-cyan)](https://cybermindcli.com)
+[![Version](https://img.shields.io/badge/version-5.5.1-cyan)](https://cybermindcli.com)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-blue)](https://cybermindcli.com/install)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-Proprietary-red)](https://cybermindcli.com/terms)
+[![Free Tier](https://img.shields.io/badge/free%20tier-20%20req%2Fday-green)](https://cybermindcli.com)
 
 ## What Makes CyberMind Different
 
