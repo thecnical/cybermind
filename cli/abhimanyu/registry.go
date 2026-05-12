@@ -145,11 +145,12 @@ var exploitRegistry = []ToolSpec{
 	},
 
 	// ── NEW 2025: tplmap — SSTI to RCE exploitation ──
+	// NOTE: tplmap is Python 2 only — using tinja (Python 3 replacement) instead
 	{
 		Name: "tplmap", Phase: 1, Timeout: 3600,
 		VulnTypes:   []string{"all", "rce", "ssti"},
-		InstallHint: "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
-		InstallCmd:  "git clone https://github.com/epinna/tplmap /opt/tplmap && pip3 install -r /opt/tplmap/requirements.txt --break-system-packages && sudo tee /usr/local/bin/tplmap > /dev/null <<'EOF'\n#!/bin/bash\npython3 /opt/tplmap/tplmap.py \"$@\"\nEOF\nsudo chmod +x /usr/local/bin/tplmap",
+		InstallHint: "pip3 install tinja --break-system-packages",
+		InstallCmd:  "pip3 install tinja --break-system-packages",
 		BuildArgs: func(target string, ctx *AbhimanyuContext) []string {
 			// Use first live URL with parameters if available
 			u := target
@@ -163,11 +164,9 @@ var exploitRegistry = []ToolSpec{
 				u = "https://" + u
 			}
 			return []string{
+				"scan",
 				"-u", u,
 				"--level", "5",
-				"--os-shell",
-				"--os-cmd", "id;whoami;uname -a",
-				"--engine", "Jinja2,Twig,Smarty,Mako,Tornado,Freemarker,Velocity,ERB,Nunjucks",
 			}
 		},
 		FallbackArgs: []func(target string, ctx *AbhimanyuContext) []string{
@@ -179,7 +178,7 @@ var exploitRegistry = []ToolSpec{
 				if !strings.HasPrefix(u, "http") {
 					u = "https://" + u
 				}
-				return []string{"-u", u, "--level", "3", "--os-cmd", "id"}
+				return []string{"scan", "-u", u, "--level", "3"}
 			},
 		},
 	},

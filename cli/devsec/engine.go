@@ -181,6 +181,14 @@ func runPhase2(dir string, progress func(string)) ([]ToolResult, []SkippedTool) 
 	var skipped []SkippedTool
 
 	if !isAvailable("semgrep") {
+		// Try to install semgrep
+		progress("[devsec] semgrep not found — attempting auto-install...")
+		exec.Command("pip3", "install", "semgrep", "--break-system-packages", "-q").Run()
+		// Also try pipx
+		exec.Command("pipx", "install", "semgrep").Run()
+	}
+
+	if !isAvailable("semgrep") {
 		skipped = append(skipped, SkippedTool{
 			Tool:        "semgrep",
 			InstallHint: "pip install semgrep  OR  brew install semgrep",
@@ -210,6 +218,12 @@ func runPhase3(dir string, progress func(string)) ([]ToolResult, []SkippedTool) 
 	var skipped []SkippedTool
 
 	// trivy filesystem scan
+	if !isAvailable("trivy") {
+		// Try to install trivy
+		progress("[devsec] trivy not found — attempting auto-install...")
+		exec.Command("bash", "-c", "curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 2>/dev/null || sudo apt-get install -y trivy -qq 2>/dev/null").Run()
+	}
+
 	if !isAvailable("trivy") {
 		skipped = append(skipped, SkippedTool{
 			Tool:        "trivy",

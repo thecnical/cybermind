@@ -1,4 +1,4 @@
-package omega
+﻿package omega
 
 import (
 	"encoding/json"
@@ -428,6 +428,49 @@ if note, isC2 := c2Tools[t.Name]; isC2 {
 		f.Close()
 	}
 	return fmt.Errorf("c2 tool %s requires manual setup — see %s", t.Name, c2DocPath)
+}
+
+// ── Special case: x8 — download binary from GitHub releases ──
+if t.Name == "x8" {
+fmt.Println("  [x8] Downloading from GitHub releases...")
+tmpFile := "/tmp/x8-linux-musl-x86_64.tar.gz"
+downloadCmd := exec.Command("curl", "-sL", "-o", tmpFile, "https://github.com/Sh1Yo/x8/releases/latest/download/x8-linux-musl-x86_64.tar.gz")
+downloadCmd.Stdout = os.Stdout
+downloadCmd.Stderr = os.Stderr
+if err := downloadCmd.Run(); err != nil {
+return fmt.Errorf("x8 download failed: %v", err)
+}
+exec.Command("tar", "-xzf", tmpFile, "-C", "/tmp").Run()
+exec.Command("sudo", "mv", "/tmp/x8", "/usr/local/bin/x8").Run()
+exec.Command("sudo", "chmod", "+x", "/usr/local/bin/x8").Run()
+os.Remove(tmpFile)
+return nil
+}
+
+// ── Special case: paramspider — git clone + pip install -e ──
+if t.Name == "paramspider" {
+fmt.Println("  [paramspider] Installing from git (pip install broken)...")
+exec.Command("sudo", "rm", "-rf", "/opt/paramspider").Run()
+cloneCmd := exec.Command("git", "clone", "https://github.com/devanshbatham/ParamSpider", "/opt/paramspider")
+cloneCmd.Stdout = os.Stdout
+cloneCmd.Stderr = os.Stderr
+if err := cloneCmd.Run(); err != nil {
+return fmt.Errorf("paramspider clone failed: %v", err)
+}
+return installGitToolIsolated("paramspider", "https://github.com/devanshbatham/ParamSpider", "/opt/paramspider", "paramspider.py")
+}
+
+// ── Special case: cloud_enum — git clone + requirements.txt ──
+if t.Name == "cloud_enum" {
+fmt.Println("  [cloud_enum] Installing from git (PyPI broken)...")
+exec.Command("sudo", "rm", "-rf", "/opt/cloud_enum").Run()
+cloneCmd := exec.Command("git", "clone", "https://github.com/initstring/cloud_enum", "/opt/cloud_enum")
+cloneCmd.Stdout = os.Stdout
+cloneCmd.Stderr = os.Stderr
+if err := cloneCmd.Run(); err != nil {
+return fmt.Errorf("cloud_enum clone failed: %v", err)
+}
+return installGitToolIsolated("cloud_enum", "https://github.com/initstring/cloud_enum", "/opt/cloud_enum", "cloud_enum.py")
 }
 
 if t.IsGo {
