@@ -4,6 +4,14 @@
 # Usage: curl -sL https://cybermindcli.com/install.sh | bash
 # Usage: CYBERMIND_KEY=cp_live_xxx curl -sL https://cybermindcli.com/install.sh | bash
 
+# ── FIX B1: SIGTTOU — disconnect stdin when running non-interactively ─────────
+# When run via: curl | bash, inside tmux, CI/Jenkins, or agent automation,
+# apt-get postinst scripts try to write to the controlling TTY and get SIGTTOU.
+# Redirecting stdin to /dev/null prevents this hang entirely.
+if ! [ -t 0 ]; then
+    exec </dev/null
+fi
+
 set -e
 
 # ── Disable ALL interactive prompts ──────────────────────────────────────────

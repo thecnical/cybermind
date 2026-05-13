@@ -606,25 +606,79 @@ func runPayload(targetOS, arch, payloadType string, localMode bool) {
 // ─── Feature 4: CVE Intelligence ─────────────────────────────────────────────
 
 // runCVE queries NVD for a specific CVE and AI analysis.
+// FIX M2: Always fetch real CVE data from NVD first, then ground AI on it.
+// Previously AI hallucinated CVE details (e.g. CVE-2023-50164 described as Log4j).
 func runCVE(cveID string, localMode bool) {
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render("  🔎 CVE INTELLIGENCE — " + cveID))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Fetching from NVD..."))
+	fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Fetching from NVD API..."))
+
+	// Step 1: Fetch real CVE data from NVD directly (client-side, no AI involved)
+	nvdEntry, nvdErr := brain.FetchCVEByID(cveID)
 
 	var result string
 	var err error
-	if localMode {
-		result, err = api.SendCVE(cveID)
+
+	if nvdErr == nil && nvdEntry != nil {
+		// NVD fetch succeeded — ground AI on real data
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ NVD data fetched: CVSS %.1f %s", nvdEntry.CVSS, nvdEntry.Severity)))
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ AI analysis (grounded on NVD data)..."))
+
+		// Build a grounded prompt with real NVD data
+		var groundedPrompt strings.Builder
+		groundedPrompt.WriteString(fmt.Sprintf("CVE Intelligence Report for %s\n\n", cveID))
+		groundedPrompt.WriteString("REAL NVD DATA (use this as ground truth — do not contradict it):\n")
+		groundedPrompt.WriteString(fmt.Sprintf("  CVE ID: %s\n", nvdEntry.ID))
+		groundedPrompt.WriteString(fmt.Sprintf("  CVSS Score: %.1f\n", nvdEntry.CVSS))
+		groundedPrompt.WriteString(fmt.Sprintf("  Severity: %s\n", nvdEntry.Severity))
+		groundedPrompt.WriteString(fmt.Sprintf("  Published: %s\n", nvdEntry.Published.Format("2006-01-02")))
+		if nvdEntry.Description != "" {
+			groundedPrompt.WriteString(fmt.Sprintf("  Description: %s\n", nvdEntry.Description))
+		}
+		if len(nvdEntry.Products) > 0 {
+			groundedPrompt.WriteString(fmt.Sprintf("  Affected Products: %s\n", strings.Join(nvdEntry.Products, ", ")))
+		}
+		if nvdEntry.Exploitable {
+			groundedPrompt.WriteString("  Exploit Available: YES (public PoC/exploit found in references)\n")
+		}
+		if len(nvdEntry.References) > 0 {
+			limit := len(nvdEntry.References)
+			if limit > 5 {
+				limit = 5
+			}
+			groundedPrompt.WriteString(fmt.Sprintf("  References: %s\n", strings.Join(nvdEntry.References[:limit], ", ")))
+		}
+		groundedPrompt.WriteString("\nBased ONLY on the above real NVD data, provide:\n")
+		groundedPrompt.WriteString("1. Technical explanation of the vulnerability (what it is, how it works)\n")
+		groundedPrompt.WriteString("2. Attack vector and exploitation steps\n")
+		groundedPrompt.WriteString("3. Detection methods\n")
+		groundedPrompt.WriteString("4. Remediation (patch version, workaround)\n")
+		groundedPrompt.WriteString("5. Bug bounty relevance (is this testable in bug bounty programs?)\n")
+		groundedPrompt.WriteString("\nIMPORTANT: Do NOT invent details not in the NVD data above. If unsure, say so.")
+
+		result, err = api.SendPrompt(groundedPrompt.String())
 	} else {
+		// NVD fetch failed — use backend endpoint but warn user
+		if nvdErr != nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render(fmt.Sprintf("  ⚠  NVD API unavailable (%s) — using AI knowledge (verify at nvd.nist.gov)", nvdErr.Error())))
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ AI analysis..."))
 		result, err = api.SendCVE(cveID)
 	}
+
 	if err != nil {
 		printError("CVE lookup failed: " + err.Error())
 		return
 	}
 	clean := utils.StripMarkdown(result)
+
+	// Add disclaimer if NVD was unavailable
+	if nvdErr != nil {
+		clean = "⚠️  NVD API unavailable — AI knowledge used. Verify at: https://nvd.nist.gov/vuln/detail/" + cveID + "\n\n" + clean
+	}
+
 	printResult("🔎 CVE → "+cveID, clean)
 	_ = storage.AddEntry("/cve "+cveID, clean)
 }
@@ -3725,22 +3779,76 @@ func runOmegaPlan(target string, localMode bool) {
 	fmt.Println()
 
 	// ── STEP 2: Auto-doctor — check and install all tools ────────────────
+	// FIX M6/B: Cache doctor result for 24h — don't re-run on every /plan invocation
+	// This is the single biggest UX win: /plan was hanging on doctor every time
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🩺 OMEGA DOCTOR — Checking all tools..."))
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
 	fmt.Println()
 
-	doctorResult := omega.RunOmegaDoctor(func(tool, status, msg string) {
-		switch status {
-		case "ok":
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  ✓ %-22s installed", tool)))
-		case "installing":
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(fmt.Sprintf("  ⟳ %-22s installing...", tool)))
-		case "installed", "installed_alt":
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  ✓ %-22s installed ✓", tool)))
-		case "failed":
-			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(fmt.Sprintf("  ✗ %-22s failed — %s", tool, msg)))
+	// Check if doctor ran recently (within 24h) — skip if so
+	home, _ := os.UserHomeDir()
+	doctorCacheFile := filepath.Join(home, ".cybermind", "doctor_cache.json")
+	doctorCacheValid := false
+	type doctorCache struct {
+		RunAt     int64    `json:"run_at"`
+		Installed []string `json:"installed"`
+		Missing   []string `json:"missing"`
+		Total     int      `json:"total"`
+	}
+	var cachedDoctor doctorCache
+	if cacheData, err := os.ReadFile(doctorCacheFile); err == nil {
+		if jsonErr := json.Unmarshal(cacheData, &cachedDoctor); jsonErr == nil {
+			age := time.Now().Unix() - cachedDoctor.RunAt
+			if age < 24*3600 { // 24 hours
+				doctorCacheValid = true
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(
+					fmt.Sprintf("  ✓ Doctor cache valid (ran %dh ago) — %d/%d tools installed",
+						age/3600, len(cachedDoctor.Installed), cachedDoctor.Total)))
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render(
+					"  ℹ  Run 'cybermind /doctor' to force a fresh tool check"))
+				if len(cachedDoctor.Missing) > 0 {
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Render(
+						fmt.Sprintf("  ⚠  Missing: %s", strings.Join(cachedDoctor.Missing, ", "))))
+				}
+			}
 		}
-	})
+	}
+
+	var doctorResult omega.OmegaDoctorResult
+	if !doctorCacheValid {
+		doctorResult = omega.RunOmegaDoctor(func(tool, status, msg string) {
+			switch status {
+			case "ok":
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  ✓ %-22s installed", tool)))
+			case "installing":
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2")).Render(fmt.Sprintf("  ⟳ %-22s installing...", tool)))
+			case "installed", "installed_alt":
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render(fmt.Sprintf("  ✓ %-22s installed ✓", tool)))
+			case "failed":
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render(fmt.Sprintf("  ✗ %-22s failed — %s", tool, msg)))
+			}
+		})
+		// Save to cache
+		os.MkdirAll(filepath.Dir(doctorCacheFile), 0700)
+		cacheEntry := doctorCache{
+			RunAt:     time.Now().Unix(),
+			Installed: doctorResult.Installed,
+			Missing:   doctorResult.Missing,
+			Total:     doctorResult.TotalTools,
+		}
+		if cacheBytes, err := json.Marshal(cacheEntry); err == nil {
+			os.WriteFile(doctorCacheFile, cacheBytes, 0600)
+		}
+	} else {
+		// Use cached result
+		doctorResult = omega.OmegaDoctorResult{
+			Installed:    cachedDoctor.Installed,
+			Missing:      cachedDoctor.Missing,
+			TotalTools:   cachedDoctor.Total,
+			InstalledOK:  len(cachedDoctor.Installed),
+			AllInstalled: len(cachedDoctor.Missing) == 0,
+		}
+	}
 
 	fmt.Println()
 	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))

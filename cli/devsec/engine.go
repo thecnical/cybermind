@@ -50,12 +50,39 @@ func stripANSI(s string) string {
 // ─── Target Classification ────────────────────────────────────────────────────
 
 // githubURLRe matches exactly https://github.com/<owner>/<repo>
-// Owner and repo must be non-empty and contain only valid GitHub identifier chars.
 var githubURLRe = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$`)
+
+// domainRe matches a bare domain like example.com or sub.example.com
+var domainRe = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
 
 // isGitHubURL returns true if target matches https://github.com/<owner>/<repo>
 func isGitHubURL(target string) bool {
 	return githubURLRe.MatchString(target)
+}
+
+// isDomain returns true if target looks like a bare domain (not a path)
+func isDomain(target string) bool {
+	// Not a path (no / or \), not an IP, matches domain pattern
+	if strings.Contains(target, "/") || strings.Contains(target, "\\") {
+		return false
+	}
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		return true // URL — not a local path
+	}
+	return domainRe.MatchString(target)
+}
+
+// isLocalPath returns true if target is a local filesystem path
+func isLocalPath(target string) bool {
+	if strings.HasPrefix(target, "/") || strings.HasPrefix(target, "./") ||
+		strings.HasPrefix(target, "../") || strings.HasPrefix(target, "~") {
+		return true
+	}
+	// Windows paths
+	if len(target) >= 3 && target[1] == ':' {
+		return true
+	}
+	return false
 }
 
 // ─── Repo Cloning ─────────────────────────────────────────────────────────────
@@ -325,6 +352,24 @@ func buildCombinedRaw(result *DevSecResult) string {
 func RunDevSec(target string, progress func(string)) (DevSecResult, error) {
 	result := DevSecResult{Target: target}
 
+	// FIX M7: Detect target type and refuse/handle domain targets properly
+	if isDomain(target) && !isGitHubURL(target) {
+		// Domain target — not a local path or GitHub URL
+		// Suggest the correct usage
+		return result, fmt.Errorf(
+			"'%s' looks like a domain, not a code repository.\n\n"+
+				"  /devsec scans SOURCE CODE for secrets, SAST issues, and vulnerable dependencies.\n\n"+
+				"  Usage:\n"+
+				"    cybermind /devsec https://github.com/owner/repo   ← scan a GitHub repo\n"+
+				"    cybermind /devsec /path/to/local/project           ← scan a local folder\n"+
+				"    cybermind /devsec ~/my-project                     ← scan home directory\n\n"+
+				"  For web vulnerability scanning of a domain, use:\n"+
+				"    cybermind /recon %s\n"+
+				"    cybermind /hunt %s",
+			target, target, target,
+		)
+	}
+
 	// Resolve scan directory
 	scanDir := target
 	if isGitHubURL(target) {
@@ -335,6 +380,17 @@ func RunDevSec(target string, progress func(string)) (DevSecResult, error) {
 		}
 		defer os.RemoveAll(tmpDir)
 		scanDir = tmpDir
+	} else if !isLocalPath(target) {
+		// Could be a relative path — check if it exists
+		if _, err := os.Stat(target); err != nil {
+			return result, fmt.Errorf(
+				"'%s' is not a valid path or GitHub URL.\n\n"+
+					"  Usage:\n"+
+					"    cybermind /devsec https://github.com/owner/repo\n"+
+					"    cybermind /devsec /path/to/project",
+				target,
+			)
+		}
 	}
 
 	// Phase 1 — Secret scanning
