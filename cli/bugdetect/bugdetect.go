@@ -1,4 +1,4 @@
-﻿// Package bugdetect parses tool output to detect confirmed vulnerabilities,
+// Package bugdetect parses tool output to detect confirmed vulnerabilities,
 // generates bug bounty reports, and implements the continuous hunting loop.
 package bugdetect
 

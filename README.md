@@ -1,4 +1,4 @@
-﻿# CyberMind CLI v5.5.1
+# CyberMind CLI v5.5.1
 
 > **Commercial AI-powered offensive security CLI** with 16-agent parallel attack pipeline, autonomous OMEGA planning, and real tool execution on Kali Linux. **Not open source** — free tier available.
 

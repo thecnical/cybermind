@@ -1,4 +1,4 @@
-﻿// bizlogic_brain.go — Business Logic Intelligence Engine
+// bizlogic_brain.go — Business Logic Intelligence Engine
 // Detects business logic flaws that automated tools miss:
 // price manipulation, workflow bypass, race conditions, IDOR chains,
 // privilege escalation via logic, and application-specific flaws.

@@ -1,4 +1,4 @@
-﻿package omega
+package omega
 
 import (
 	"encoding/json"

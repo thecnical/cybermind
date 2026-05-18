@@ -1,0 +1,24 @@
+# Default: normalize text to LF, never store a UTF-8 BOM.
+* text=auto eol=lf
+
+*.go        text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.toml      text eol=lf
+*.txt       text eol=lf
+*.sh        text eol=lf
+*.bash      text eol=lf
+go.mod      text eol=lf
+go.sum      text eol=lf
+
+# install.ps1 is treated as binary because it must keep its UTF-8 BOM —
+# PowerShell 5.1 on Windows reads non-BOM files as Windows-1252, which
+# mangles the ASCII-art banner and em-dashes used in the installer.
+install.ps1 binary
+
+# Pre-built binaries — never normalize.
+cybermind-linux-*       binary
+cybermind-darwin-*      binary
+cybermind-windows-*.exe binary

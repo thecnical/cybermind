@@ -1,4 +1,4 @@
-﻿package brain
+package brain
 
 import (
 "fmt"

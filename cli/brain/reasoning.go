@@ -1,4 +1,4 @@
-﻿// brain/reasoning.go - Structured AI Reasoning Engine
+// brain/reasoning.go - Structured AI Reasoning Engine
 // Adds confidence-scored attack branch selection on top of the existing SelfThink engine.
 // Uses the existing TargetProfile from self_think.go - no redeclaration.
 package brain

@@ -1,4 +1,4 @@
-﻿// Package bizlogic — Automated Business Logic Bug Hunter for CyberMind
+// Package bizlogic — Automated Business Logic Bug Hunter for CyberMind
 //
 // Detects: price manipulation, race conditions, negative quantities,
 // IDOR chains, workflow bypass, coupon abuse, account takeover via logic flaws,

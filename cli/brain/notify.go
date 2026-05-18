@@ -1,4 +1,4 @@
-﻿// Package brain - Telegram notification system for CyberMind
+// Package brain - Telegram notification system for CyberMind
 package brain
 
 import (
