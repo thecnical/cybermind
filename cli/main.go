@@ -84,11 +84,43 @@ func isWSL() bool {
 	return strings.Contains(lower, "microsoft") || strings.Contains(lower, "wsl")
 }
 
-// getOSLabel returns a styled OS label
+// getOSLabel returns a styled OS label — reads /etc/os-release for accurate detection
 func getOSLabel() (string, string) {
 	switch runtime.GOOS {
 	case "linux":
-		return "🐧 Kali Linux", "#268BEE"
+		// Read /etc/os-release for accurate distro detection
+		data, err := os.ReadFile("/etc/os-release")
+		if err == nil {
+			content := strings.ToLower(string(data))
+			switch {
+			case strings.Contains(content, "kali"):
+				return "🐧 Kali Linux", "#268BEE"
+			case strings.Contains(content, "ubuntu"):
+				return "🐧 Ubuntu", "#E95420"
+			case strings.Contains(content, "debian"):
+				return "🐧 Debian", "#A80030"
+			case strings.Contains(content, "parrot"):
+				return "🐧 Parrot OS", "#00AAFF"
+			case strings.Contains(content, "arch"):
+				return "🐧 Arch Linux", "#1793D1"
+			case strings.Contains(content, "fedora"):
+				return "🐧 Fedora", "#294172"
+			case strings.Contains(content, "centos"):
+				return "🐧 CentOS", "#932279"
+			case strings.Contains(content, "rhel"), strings.Contains(content, "red hat"):
+				return "🐧 RHEL", "#EE0000"
+			default:
+				// Extract PRETTY_NAME if available
+				for _, line := range strings.Split(string(data), "\n") {
+					if strings.HasPrefix(line, "PRETTY_NAME=") {
+						name := strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), `"`)
+						return "🐧 " + name, "#268BEE"
+					}
+				}
+				return "🐧 Linux", "#268BEE"
+			}
+		}
+		return "🐧 Linux", "#268BEE"
 	case "windows":
 		return "🪟 Windows", "#0078D6"
 	case "darwin":
@@ -100,7 +132,6 @@ func getOSLabel() (string, string) {
 
 func printBanner() {
 	osLabel, osColor := getOSLabel()
-	localIP := getLocalIP()
 
 	lines := []struct{ text, color string }{
 		{` ██████╗██╗   ██╗██████╗ ███████╗██████╗ ███╗   ███╗██╗███╗   ██╗██████╗ `, "#00FFFF"},
@@ -116,14 +147,13 @@ func printBanner() {
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(l.color)).Render(l.text))
 	}
 
-	// Personalized greeting — no extra blank line between banner and info
+	// Personalized greeting
 	greeting := fmt.Sprintf("  ⚡ CyberMind CLI v%s  |  %s", Version,
 		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(osColor)).Render(osLabel))
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render(greeting))
 	fmt.Println(lipgloss.NewStyle().Foreground(credit).Render("  created by CyberMind Team under Sanjay Pandey"))
-
-	// System info — compact, no extra blank lines
-	fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Local IP:  %s", localIP)))
+	// FIX M11: Do NOT print local IP — users screenshot terminals and share them publicly
+	// Local IP is available via `ip addr` or `ifconfig` when needed
 
 	// Linux-only recon notice
 	if runtime.GOOS == "linux" {
@@ -133,10 +163,10 @@ func printBanner() {
 		fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ DevSec Mode available         →  cybermind /devsec <target>"))
 	} else if runtime.GOOS == "darwin" {
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  macOS: AI chat + /scan /osint /payload /cve /wordlist report"))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux only"))
 	} else {
 		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Windows: AI chat + /scan /osint /payload /cve /wordlist report"))
-		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux/Kali only"))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  ℹ  Recon/Hunt/Abhimanyu: Linux only"))
 	}
 	fmt.Println()
 }
@@ -2165,6 +2195,28 @@ func runSelfUpdate() {
 
 	if latestVersion != "" && latestVersion == Version {
 		fmt.Println(green2.Render(fmt.Sprintf("  ✓ Already on latest version v%s — no update needed", Version)))
+		return
+	}
+
+	// FIX B2: Proper semver comparison — NEVER downgrade
+	// Previously used string comparison which treated "5.4.7" > "5.5.1" (wrong)
+	semverNewer := func(a, b string) bool {
+		// a is "latest from server", b is "current installed"
+		// returns true only if a is strictly newer than b
+		aParts := strings.Split(strings.TrimPrefix(a, "v"), ".")
+		bParts := strings.Split(strings.TrimPrefix(b, "v"), ".")
+		for i := 0; i < 3; i++ {
+			av, bv := 0, 0
+			if i < len(aParts) { fmt.Sscanf(aParts[i], "%d", &av) }
+			if i < len(bParts) { fmt.Sscanf(bParts[i], "%d", &bv) }
+			if av > bv { return true }
+			if av < bv { return false }
+		}
+		return false
+	}
+
+	if latestVersion != "" && !semverNewer(latestVersion, Version) {
+		fmt.Println(green2.Render(fmt.Sprintf("  ✓ Already on latest version v%s (server: v%s) — no update needed", Version, latestVersion)))
 		return
 	}
 	if latestVersion != "" {

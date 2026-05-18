@@ -526,13 +526,33 @@ func runInVenvCwd(dir, cwd string, args []string, onStatus func(AegisStatus)) er
 	return cmd.Run()
 }
 
-// runAegisCommand runs an aegis CLI command and streams output line by line
+// runAegisCommand runs an aegis CLI command and streams output line by line.
+// FIX M3: --config flag is not supported in all aegis-cli versions.
+// We probe the version first and only pass --config if supported.
 func runAegisCommand(dir string, args []string, onLine func(string)) error {
 	aegisBin := venvAegis()
 
-	// Ensure config dir is set
-	configPath := filepath.Join(dir, "config", "config.yaml")
-	fullArgs := append([]string{"--config", configPath}, args...)
+	// Check if --config flag is supported by this aegis-cli version
+	// Run `aegis --help` and check if "--config" appears in output
+	configSupported := false
+	helpCmd := exec.Command(aegisBin, "--help")
+	helpCmd.Env = append(os.Environ(),
+		"VIRTUAL_ENV="+filepath.Join(dir, ".venv"),
+		"PATH="+filepath.Join(dir, ".venv", "bin")+":"+os.Getenv("PATH"),
+	)
+	helpCmd.Stdin = nil
+	if helpOut, err := helpCmd.CombinedOutput(); err == nil {
+		configSupported = strings.Contains(string(helpOut), "--config")
+	}
+
+	// Build final args — only prepend --config if supported
+	var fullArgs []string
+	if configSupported {
+		configPath := filepath.Join(dir, "config", "config.yaml")
+		fullArgs = append([]string{"--config", configPath}, args...)
+	} else {
+		fullArgs = args
+	}
 
 	cmd := exec.Command(aegisBin, fullArgs...)
 	cmd.Dir = dir
@@ -553,7 +573,7 @@ func runAegisCommand(dir string, args []string, onLine func(string)) error {
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("aegis start failed: %w", err)
+		return fmt.Errorf("aegis start failed: %w\n  Hint: run 'cybermind /doctor' to reinstall aegis-cli", err)
 	}
 
 	// Stream stdout
