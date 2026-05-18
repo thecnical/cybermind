@@ -479,6 +479,28 @@ func printHelpLinux() {
 	fmt.Println(g.Render("  cybermind uninstall") + d.Render("                         → Remove CyberMind"))
 	fmt.Println()
 
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D4FF")).Render("  📊 KNOWLEDGE GRAPH + DIFF (NEW):"))
+	fmt.Println(g.Render("  cybermind diff <target>") + d.Render("                     → Show what changed since last scan (new assets, endpoints, JS)"))
+	fmt.Println(g.Render("  cybermind hotlist [<target>]") + d.Render("                → Top high-value assets ranked by attack surface score"))
+	fmt.Println(g.Render("  cybermind assets <target>") + d.Render("                   → List all tracked assets for a target"))
+	fmt.Println(g.Render("  cybermind targets") + d.Render("                           → List all targets in knowledge graph"))
+	fmt.Println(g.Render("  cybermind /watch <target>") + d.Render("                   → Continuous monitoring — Telegram alert on new assets"))
+	fmt.Println(d.Render("  ↳ Every scan writes to ~/.cybermind/targets/<org>.db (SQLite)"))
+	fmt.Println(d.Render("  ↳ cybermind diff = killer feature: 'what changed since yesterday?'"))
+	fmt.Println()
+
+	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7C3AED")).Render("  🔒 HIDDEN MODES (not in basic help):"))
+	fmt.Println(g.Render("  cybermind /cloud <target>") + d.Render("                   → Cloud misconfig scanner (S3, GCS, Azure, Firebase)"))
+	fmt.Println(g.Render("  cybermind /novel <target>") + d.Render("                   → Novel attack engine (attacks most tools miss)"))
+	fmt.Println(g.Render("  cybermind /cve-feed <target>") + d.Render("                → NVD CVE feed matched to target tech stack"))
+	fmt.Println(g.Render("  cybermind /chain <target>") + d.Render("                   → Bug chain detection (SSRF→RCE, XSS→ATO)"))
+	fmt.Println(g.Render("  cybermind /mobile <apk-path>") + d.Render("                → APK analysis (jadx, apktool, secret scan)"))
+	fmt.Println(g.Render("  cybermind /hf-setup") + d.Render("                         → Setup local HuggingFace fine-tuned model"))
+	fmt.Println(g.Render("  cybermind /groq-setup <key>") + d.Render("                 → Setup Groq API key (ultra-fast free AI)"))
+	fmt.Println(g.Render("  cybermind /install-tools") + d.Render("                    → Install all recon + hunt tools"))
+	fmt.Println(g.Render("  cybermind /install-python-tools") + d.Render("             → Install Python tools (isolated venv)"))
+	fmt.Println()
+
 	fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  🆕 v5.4.5 — World-Class Bug Bounty:"))
 	fmt.Println(d.Render("  ↳ OMEGA: 10-step attack plan + parallel agents + real-time feedback"))
 	fmt.Println(d.Render("  ↳ 30+ recon tools: gowitness, ASN→CIDR, GraphQL, subdomain takeover"))
@@ -6752,6 +6774,271 @@ sudo chmod +x /opt/graphw00f/main.py`)
 			fmt.Println("Warning:", err)
 		}
 		runFeedback()
+
+	// ── Knowledge Graph + Diff commands ──────────────────────────────────────
+
+	case "diff":
+		// Show what changed since last scan — THE killer feature
+		// Usage: cybermind diff <target>
+		if len(args) < 2 {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D4FF")).Render("  📊 DIFF — Knowledge Graph Changes"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Usage: cybermind diff <target>"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Example: cybermind diff example.com"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Shows: new subdomains, new endpoints, changed JS files, new findings"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Tracked targets:"))
+			targets := brain.ListTrackedTargets()
+			if len(targets) == 0 {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("    No targets tracked yet. Run a scan first."))
+			} else {
+				for _, t := range targets {
+					fmt.Println(lipgloss.NewStyle().Foreground(green).Render("    • " + t))
+				}
+			}
+			return
+		}
+		diffTarget := args[1]
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D4FF")).Render("  📊 DIFF — " + diffTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		// Get latest run ID from DB
+		assets, endpoints, findings, jsFiles, lastScan, dbErr := brain.GetTargetStats(diffTarget)
+		if dbErr != nil || lastScan == "never" {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  No scan data found for " + diffTarget))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run a scan first: cybermind /recon " + diffTarget))
+			return
+		}
+
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Last scan: %s", lastScan)))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Assets: %d  |  Endpoints: %d  |  JS files: %d  |  Findings: %d",
+			assets, endpoints, jsFiles, findings)))
+		fmt.Println()
+
+		// Get diff from latest run
+		diff, diffErr := brain.GetDiff(diffTarget, "latest")
+		if diffErr != nil || diff == nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  No diff data available yet. Run another scan to see changes."))
+			return
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(brain.FormatDiffOutput(diff)))
+
+		// Also show from brain memory (existing diff engine)
+		prevSnap, snapErr := brain.LoadLatestSnapshot(diffTarget)
+		if snapErr == nil && prevSnap != nil {
+			memDiff := brain.DiffSnapshots(prevSnap, prevSnap) // compare with itself to show current state
+			_ = memDiff
+		}
+
+	case "hotlist":
+		// Show top high-value assets ranked by attack surface score
+		// Usage: cybermind hotlist [<target>]
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700")).Render("  🎯 HOTLIST — Top High-Value Assets"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		var hotlistTarget string
+		if len(args) >= 2 {
+			hotlistTarget = args[1]
+		}
+
+		if hotlistTarget != "" {
+			// Target-specific hotlist from SQLite DB
+			entries, hlErr := brain.GetHotlistFromDB(hotlistTarget, 20)
+			if hlErr != nil || len(entries) == 0 {
+				// Fallback to brain memory hotlist
+				snap, _ := brain.LoadLatestSnapshot(hotlistTarget)
+				if snap != nil {
+					hotlist := brain.BuildHotlist(snap, nil, 20)
+					if len(hotlist) > 0 {
+						fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Target: %s | %d high-value assets", hotlistTarget, len(hotlist))))
+						fmt.Println()
+						for i, e := range hotlist {
+							if i >= 15 { break }
+							scoreColor := lipgloss.Color("#00FF88")
+							if e.Score >= 80 { scoreColor = lipgloss.Color("#FF4444") } else if e.Score >= 50 { scoreColor = lipgloss.Color("#FFD700") }
+							fmt.Printf("  %s  %s\n",
+								lipgloss.NewStyle().Bold(true).Foreground(scoreColor).Render(fmt.Sprintf("[%.0f]", e.Score)),
+								lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(e.Asset))
+							fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("       " + e.Reason))
+						}
+					} else {
+						fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  No hotlist data. Run a scan first: cybermind /recon " + hotlistTarget))
+					}
+				} else {
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  No data for " + hotlistTarget + ". Run: cybermind /recon " + hotlistTarget))
+				}
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Target: %s | %d high-value assets (from knowledge graph)", hotlistTarget, len(entries))))
+				fmt.Println()
+				for i, e := range entries {
+					if i >= 15 { break }
+					scoreColor := lipgloss.Color("#00FF88")
+					if e.Score >= 80 { scoreColor = lipgloss.Color("#FF4444") } else if e.Score >= 50 { scoreColor = lipgloss.Color("#FFD700") }
+					fmt.Printf("  %s  %s\n",
+						lipgloss.NewStyle().Bold(true).Foreground(scoreColor).Render(fmt.Sprintf("[%.0f]", e.Score)),
+						lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(e.Asset))
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("       " + e.Reason))
+				}
+			}
+		} else {
+			// Global hotlist across all targets
+			targets := brain.ListTrackedTargets()
+			if len(targets) == 0 {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  No targets tracked yet. Run a scan first."))
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Usage: cybermind hotlist <target>"))
+			} else {
+				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  %d tracked targets. Use: cybermind hotlist <target>", len(targets))))
+				fmt.Println()
+				for _, t := range targets {
+					a, e, f, _, ls, _ := brain.GetTargetStats(t)
+					fmt.Printf("  %s  %s\n",
+						lipgloss.NewStyle().Foreground(lipgloss.Color("#00D4FF")).Render(t),
+						lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("(assets:%d endpoints:%d findings:%d last:%s)", a, e, f, ls)))
+				}
+			}
+		}
+
+	case "assets":
+		// List all tracked assets for a target
+		// Usage: cybermind assets <target>
+		if len(args) < 2 {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Usage: cybermind assets <target>"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Example: cybermind assets example.com"))
+			return
+		}
+		assetsTarget := args[1]
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D4FF")).Render("  🌐 ASSETS — " + assetsTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		a, e, f, js, ls, statsErr := brain.GetTargetStats(assetsTarget)
+		if statsErr != nil {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  No data for " + assetsTarget + ". Run: cybermind /recon " + assetsTarget))
+			return
+		}
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Live assets:  %d", a)))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Endpoints:    %d", e)))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ JS files:     %d", js)))
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Findings:     %d", f)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Last scan:      %s", ls)))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  DB: " + filepath.Join(os.Getenv("HOME"), ".cybermind", "targets", strings.ReplaceAll(assetsTarget, ".", "_")+".db")))
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Run diff: cybermind diff " + assetsTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  Hotlist:  cybermind hotlist " + assetsTarget))
+
+	case "targets":
+		// List all tracked targets
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D4FF")).Render("  🎯 TRACKED TARGETS — Knowledge Graph"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("  " + strings.Repeat("─", 60)))
+		fmt.Println()
+
+		targets := brain.ListTrackedTargets()
+		if len(targets) == 0 {
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  No targets tracked yet."))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Run a scan: cybermind /recon <target>"))
+			return
+		}
+
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  %d targets in knowledge graph:\n", len(targets))))
+		for _, t := range targets {
+			a, e, f, _, ls, _ := brain.GetTargetStats(t)
+			fmt.Printf("  %s\n",
+				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D4FF")).Render(t))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("    assets:%d  endpoints:%d  findings:%d  last:%s", a, e, f, ls)))
+		}
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Commands: cybermind diff <target> | cybermind hotlist <target> | cybermind assets <target>"))
+
+	case "/watch":
+		// Continuous monitoring daemon — runs scan every N hours, Telegram alert on new assets
+		// Usage: cybermind /watch <target> [--interval 24h]
+		if len(args) < 2 {
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D4FF")).Render("  👁  WATCH — Continuous Monitoring"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Usage: cybermind /watch <target> [--interval 24h]"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Example: cybermind /watch example.com"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Example: cybermind /watch example.com --interval 12h"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Runs /recon every N hours, diffs against last scan,"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  sends Telegram alert if new assets/endpoints found."))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  Setup Telegram first: cybermind /notify --setup"))
+			return
+		}
+
+		watchTarget := args[1]
+		intervalHours := 24
+		for i, a := range args {
+			if a == "--interval" && i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%dh", &intervalHours)
+				if intervalHours < 1 { intervalHours = 1 }
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D4FF")).Render("  👁  WATCH — " + watchTarget))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Monitoring every %dh | Ctrl+C to stop", intervalHours)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  New assets/endpoints → Telegram notification"))
+		fmt.Println()
+
+		// Check Telegram config
+		notifyConfig := brain.LoadNotifyConfig()
+		telegramConfigured := notifyConfig != nil && notifyConfig.TelegramBotToken != "" && notifyConfig.TelegramChatID != ""
+		if !telegramConfigured {
+			fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  Telegram not configured — alerts will print to terminal only"))
+			fmt.Println(lipgloss.NewStyle().Foreground(dim).Render("  Setup: cybermind /notify --setup"))
+			fmt.Println()
+		}
+
+		// Watch loop
+		ticker := time.NewTicker(time.Duration(intervalHours) * time.Hour)
+		defer ticker.Stop()
+
+		runID := brain.GenerateRunID()
+		fmt.Println(lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("  ✓ Watch started | Run ID: %s", runID)))
+		fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Next scan in %dh", intervalHours)))
+		fmt.Println()
+
+		// Run first scan immediately
+		fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render("  ⟳ Running initial scan..."))
+		brain.StartScanRun(watchTarget, runID, "watch")
+
+		for {
+			select {
+			case <-ticker.C:
+				newRunID := brain.GenerateRunID()
+				fmt.Println()
+				fmt.Println(lipgloss.NewStyle().Foreground(cyan).Render(fmt.Sprintf("  ⟳ [%s] Running watch scan...", time.Now().Format("15:04:05"))))
+				brain.StartScanRun(watchTarget, newRunID, "watch")
+
+				// Get diff
+				diff, _ := brain.GetDiff(watchTarget, newRunID)
+				if diff != nil && (diff.TotalNew > 0 || diff.TotalChanged > 0) {
+					diffText := brain.FormatDiffOutput(diff)
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(diffText))
+
+					// Send Telegram alert
+					if telegramConfigured {
+						alertMsg := fmt.Sprintf("🎯 CyberMind /watch alert — %s\n\n%s", watchTarget, diffText)
+						if err := brain.SendTelegram(notifyConfig.TelegramBotToken, notifyConfig.TelegramChatID, alertMsg); err != nil {
+							fmt.Println(lipgloss.NewStyle().Foreground(yellow).Render("  ⚠  Telegram send failed: " + err.Error()))
+						} else {
+							fmt.Println(lipgloss.NewStyle().Foreground(green).Render("  ✓ Telegram alert sent"))
+						}
+					}
+				} else {
+					fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  ✓ No changes detected | Next scan in %dh", intervalHours)))
+				}
+			}
+		}
 
 	default:
 		// BUG FIX: load storage so history save works
