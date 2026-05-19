@@ -24,6 +24,7 @@ import (
 	"cybermind-cli/chain"
 	"cybermind-cli/devsec"
 	"cybermind-cli/hunt"
+	"cybermind-cli/mcp"
 	"cybermind-cli/recon"
 	"cybermind-cli/redteam"
 	"cybermind-cli/sandbox"
@@ -3146,6 +3147,71 @@ func promptForAPIKey() string {
 
 func main() {
 	args := os.Args[1:]
+
+	// ── MCP Server mode — must be checked BEFORE anything else ───────────────
+	// cybermind --mcp-server          → stdio transport (Claude Desktop, Cursor, etc.)
+	// cybermind --mcp-server --http   → HTTP transport on :8765
+	// cybermind --mcp-server --config → print mcp.json config snippet
+	for i, a := range args {
+		if a == "--mcp-server" {
+			httpMode := false
+			httpAddr := ":8765"
+			showConfig := false
+			for j := i + 1; j < len(args); j++ {
+				switch args[j] {
+				case "--http":
+					httpMode = true
+					if j+1 < len(args) && !strings.HasPrefix(args[j+1], "--") {
+						httpAddr = args[j+1]
+					}
+				case "--config":
+					showConfig = true
+				}
+			}
+			if showConfig {
+				mcp.PrintMCPConfig()
+				return
+			}
+			if httpMode {
+				if err := mcp.RunHTTP(httpAddr); err != nil {
+					fmt.Fprintf(os.Stderr, "[MCP] HTTP server error: %v\n", err)
+					os.Exit(1)
+				}
+				return
+			}
+			// Default: stdio transport
+			mcp.RunStdio()
+			return
+		}
+	}
+
+	// ── /gemini-setup command ─────────────────────────────────────────────────
+	if len(args) >= 1 && (args[0] == "/gemini-setup" || args[0] == "--gemini-setup") {
+		fmt.Println()
+		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00FFFF")).Render("  ⚡ GEMINI SETUP — Google AI Studio"))
+		fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Gemini 2.5 Pro = #1 coding model (beats GPT-4o, Claude 3.7). Free: 1500 req/day"))
+		fmt.Println()
+		if len(args) >= 2 && strings.HasPrefix(args[1], "AIza") {
+			key := args[1]
+			if err := api.SaveGeminiKey(key); err != nil {
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Render("  ✗ Failed to save Gemini key: " + err.Error()))
+				os.Exit(1)
+			}
+			masked := key[:min(12, len(key))] + strings.Repeat("•", max(0, len(key)-12))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("  ✓ Gemini key saved: " + masked))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Render("  Gemini is now active in the AI router (fast race alongside Groq/Cerebras)"))
+		} else {
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  Step 1: Get free Gemini API key"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    → https://aistudio.google.com/app/apikey"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    → Sign in → Create API key → Copy it"))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  Step 2: Save your key"))
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render("    cybermind /gemini-setup AIzaSy..."))
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF")).Render("  Free tier: 1500 req/day | Models: gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash"))
+		}
+		return
+	}
 
 	// Sync version to UI package so TUI header shows correct version
 	ui.Version = Version

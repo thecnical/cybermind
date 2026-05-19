@@ -2852,3 +2852,55 @@ func SendFeedback(category, command, badResponse, expected string) error {
 	_, err := post("/feedback", payload)
 	return err
 }
+
+// ─── Gemini API key management ────────────────────────────────────────────────
+
+// SaveGeminiKey saves the Google Gemini API key to ~/.cybermind/config.json
+func SaveGeminiKey(key string) error {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	configPath := homedir + "/.cybermind/config.json"
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		data = []byte("{}")
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		cfg = make(map[string]interface{})
+	}
+	cfg["gemini_key"] = key
+	updated, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, updated, 0600)
+}
+
+// GetGeminiKey returns the saved Gemini API key from config or env
+func GetGeminiKey() string {
+	if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+		return key
+	}
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(homedir + "/.cybermind/config.json")
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		GeminiKey string `json:"gemini_key"`
+	}
+	if json.Unmarshal(data, &cfg) == nil {
+		return cfg.GeminiKey
+	}
+	return ""
+}
+
+// IsGeminiConfigured returns true if a Gemini API key is available
+func IsGeminiConfigured() bool {
+	return GetGeminiKey() != ""
+}
