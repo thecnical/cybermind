@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"cybermind-cli/abhimanyu"
+	_ "cybermind-cli/aegis" // imported for side effects — aegis package registers itself
 	"cybermind-cli/api"
 	"cybermind-cli/bizlogic"
 	"cybermind-cli/brain"
@@ -30,7 +31,6 @@ import (
 	"cybermind-cli/ui"
 	"cybermind-cli/utils"
 	"cybermind-cli/vibehack"
-	_ "cybermind-cli/aegis" // imported for side effects — aegis package registers itself
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -862,21 +862,21 @@ func runAutoRecon(target string, requested []string) {
 
 		// Build PoC report
 		modeReport := bugdetect.ModeReport{
-			Mode:        "recon",
-			Target:      target,
-			StartTime:   time.Now().Add(-time.Duration(len(result.Tools)) * 2 * time.Minute),
-			EndTime:     time.Now(),
-			ToolsRun:    result.Tools,
-			Bugs:        reconBugs,
-			Subdomains:  ctx.Subdomains,
-			LiveURLs:    liveURLs,
-			OpenPorts:   openPorts,
-			Technologies: technologies,
-			JSSecrets:   allApiKeys,
-			CloudBuckets: ctx.ReconFTWBuckets,
+			Mode:               "recon",
+			Target:             target,
+			StartTime:          time.Now().Add(-time.Duration(len(result.Tools)) * 2 * time.Minute),
+			EndTime:            time.Now(),
+			ToolsRun:           result.Tools,
+			Bugs:               reconBugs,
+			Subdomains:         ctx.Subdomains,
+			LiveURLs:           liveURLs,
+			OpenPorts:          openPorts,
+			Technologies:       technologies,
+			JSSecrets:          allApiKeys,
+			CloudBuckets:       ctx.ReconFTWBuckets,
 			TakeoverCandidates: ctx.ReconFTWTakeover,
-			AIAnalysis:  analysis,
-			RawFindings: rawFindings,
+			AIAnalysis:         analysis,
+			RawFindings:        rawFindings,
 		}
 		reportPath := bugdetect.SaveModeReport(modeReport)
 		if reportPath != "" {
@@ -912,20 +912,20 @@ func runAutoRecon(target string, requested []string) {
 			}
 		}
 		snap := brain.ScanSnapshot{
-			Target:      target,
-			Timestamp:   time.Now(),
-			RunID:       runID,
-			Mode:        "recon",
-			Subdomains:  ctx.Subdomains,
-			LiveURLs:    liveURLs,
-			OpenPorts:   openPorts,
-			Technologies: technologies,
-			Vulns:       vulns,
-			JSSecrets:   allApiKeys,
-			CloudBuckets: ctx.ReconFTWBuckets,
+			Target:             target,
+			Timestamp:          time.Now(),
+			RunID:              runID,
+			Mode:               "recon",
+			Subdomains:         ctx.Subdomains,
+			LiveURLs:           liveURLs,
+			OpenPorts:          openPorts,
+			Technologies:       technologies,
+			Vulns:              vulns,
+			JSSecrets:          allApiKeys,
+			CloudBuckets:       ctx.ReconFTWBuckets,
 			TakeoverCandidates: ctx.ReconFTWTakeover,
-			SubdomainCount: len(ctx.Subdomains),
-			VulnCount:   len(vulns),
+			SubdomainCount:     len(ctx.Subdomains),
+			VulnCount:          len(vulns),
 		}
 		brain.SaveSnapshot(snap)
 
@@ -1358,7 +1358,7 @@ func runHuntSilent(target string, reconCtx *hunt.HuntContext, requested []string
 		ToolsRun:       result.Tools,
 		ToolsFailed:    failedNames,
 		ToolsSkipped:   skippedNames,
-		Findings:        truncateFindings(findings),
+		Findings:       truncateFindings(findings),
 		XSSFound:       xssFound,
 		ParamsFound:    paramsFound,
 		VulnsFound:     vulnsFound,
@@ -1535,7 +1535,7 @@ func runHunt(target string, reconCtx *hunt.HuntContext, requested []string) {
 		ToolsRun:       result.Tools,
 		ToolsFailed:    failedNames,
 		ToolsSkipped:   skippedNames,
-		Findings:        truncateFindings(findings),
+		Findings:       truncateFindings(findings),
 		XSSFound:       xssFound,
 		ParamsFound:    paramsFound,
 		VulnsFound:     vulnsFound,
@@ -1998,9 +1998,9 @@ func runAbhimanyu(target, vulnType string) {
 
 	// Build context — standalone mode, no prior hunt context
 	abhCtx := &abhimanyu.AbhimanyuContext{
-		Target:    target,
-		VulnType:  vulnType,
-		LHOST:     lhost,
+		Target:   target,
+		VulnType: vulnType,
+		LHOST:    lhost,
 	}
 
 	// Run full exploit pipeline using registry
@@ -2118,16 +2118,16 @@ func runAbhimanyu(target, vulnType string) {
 				Target:    target,
 				StartTime: abhCtx.StartedAt,
 				EndTime:   time.Now(),
-				ToolsRun:  func() []string {
+				ToolsRun: func() []string {
 					var tools []string
 					for _, r := range abhCtx.Results {
 						tools = append(tools, r.Tool)
 					}
 					return tools
 				}(),
-				Bugs:        abhiBugs,
+				Bugs:         abhiBugs,
 				Technologies: abhCtx.Technologies,
-				OpenPorts:   abhCtx.OpenPorts,
+				OpenPorts:    abhCtx.OpenPorts,
 			}
 			reportPath := bugdetect.SaveModeReport(modeReport)
 			if reportPath != "" {
@@ -2194,7 +2194,7 @@ func runSelfUpdate() {
 	// Fetch latest version from VERSION file — try multiple sources
 	latestVersion := ""
 	client := &http.Client{Timeout: 8 * time.Second}
-	
+
 	// Try sources in order: Vercel CDN → GitHub raw → GitHub API
 	versionSources := []string{
 		vercelCDN + "VERSION",
@@ -2229,10 +2229,18 @@ func runSelfUpdate() {
 		bParts := strings.Split(strings.TrimPrefix(b, "v"), ".")
 		for i := 0; i < 3; i++ {
 			av, bv := 0, 0
-			if i < len(aParts) { fmt.Sscanf(aParts[i], "%d", &av) }
-			if i < len(bParts) { fmt.Sscanf(bParts[i], "%d", &bv) }
-			if av > bv { return true }
-			if av < bv { return false }
+			if i < len(aParts) {
+				fmt.Sscanf(aParts[i], "%d", &av)
+			}
+			if i < len(bParts) {
+				fmt.Sscanf(bParts[i], "%d", &bv)
+			}
+			if av > bv {
+				return true
+			}
+			if av < bv {
+				return false
+			}
 		}
 		return false
 	}
@@ -3037,7 +3045,7 @@ func requirePlan(minPlan string) bool {
 
 	planOrder := map[string]int{"free": 0, "starter": 1, "pro": 2, "elite": 3}
 	userLevel := planOrder[plan]
-	minLevel  := planOrder[strings.ToLower(minPlan)]
+	minLevel := planOrder[strings.ToLower(minPlan)]
 
 	if userLevel < minLevel {
 		fmt.Println()
@@ -3057,11 +3065,11 @@ func requirePlan(minPlan string) bool {
 // Shows a clear setup guide, validates the key format, saves it securely.
 // Returns the key they entered, or "" if they skipped.
 func promptForAPIKey() string {
-	cyan2  := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff"))
+	cyan2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d4ff"))
 	green2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF88"))
 	yellow2 := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700"))
-	dim2   := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-	red2   := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444"))
+	dim2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	red2 := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444"))
 	purple := lipgloss.NewStyle().Foreground(lipgloss.Color("#8A2BE2"))
 
 	fmt.Println()
@@ -4079,7 +4087,7 @@ fi`)
 					swaggerCmd.Stdin = nil
 					installErr = swaggerCmd.Run()
 
-			case t.install == "special:uro":
+				case t.install == "special:uro":
 					uroCmd := exec.Command("bash", "-c",
 						`set -e
 python3 -m venv /opt/uro-venv 2>/dev/null
@@ -4092,7 +4100,7 @@ command -v uro &>/dev/null || pip3 install uro --break-system-packages -q 2>/dev
 					uroCmd.Stdin = nil
 					installErr = uroCmd.Run()
 
-			case t.install == "special:ghauri":
+				case t.install == "special:ghauri":
 					ghauriCmd := exec.Command("bash", "-c",
 						`set -e
 python3 -m venv /opt/ghauri-venv 2>/dev/null
@@ -4508,15 +4516,15 @@ rm -rf /tmp/mantra_build /tmp/mantra_bin`)
 
 		// ── Batch pip-installable tools ──────────────────────────────────────
 		pipTools := []struct{ name, pkg string }{
-			{"wafw00f",   "wafw00f"},
-			{"shodan",    "shodan"},
-			{"h8mail",    "h8mail"},
-			{"arjun",     "arjun"},
+			{"wafw00f", "wafw00f"},
+			{"shodan", "shodan"},
+			{"h8mail", "h8mail"},
+			{"arjun", "arjun"},
 			// graphw00f removed from pip — wsgiref is Python 2 only, fails on Python 3.13
 			// graphw00f is installed via git clone below
-			{"semgrep",   "semgrep"},
+			{"semgrep", "semgrep"},
 			{"pip-audit", "pip-audit"},
-			{"waymore",   "waymore"},
+			{"waymore", "waymore"},
 		}
 
 		installed, failed := 0, 0
@@ -4576,14 +4584,14 @@ rm -rf /tmp/mantra_build /tmp/mantra_bin`)
 		}
 		gitTools := []gitPyTool{
 			{"paramspider", "https://github.com/devanshbatham/ParamSpider", "/opt/ParamSpider", "paramspider.py"},
-			{"xsstrike",    "https://github.com/s0md3v/XSStrike",           "/opt/XSStrike",    "xsstrike.py"},
-			{"ssrfmap",     "https://github.com/swisskyrepo/SSRFmap",        "/opt/ssrfmap",     "ssrfmap.py"},
+			{"xsstrike", "https://github.com/s0md3v/XSStrike", "/opt/XSStrike", "xsstrike.py"},
+			{"ssrfmap", "https://github.com/swisskyrepo/SSRFmap", "/opt/ssrfmap", "ssrfmap.py"},
 			// tplmap is Python 2 only — skip, tinja is installed as replacement below
-			{"corsy",       "https://github.com/s0md3v/Corsy",               "/opt/corsy",       "corsy.py"},
-			{"smuggler",    "https://github.com/defparam/smuggler",           "/opt/smuggler",    "smuggler.py"},
-			{"jwt_tool",    "https://github.com/ticarpi/jwt_tool",            "/opt/jwt_tool",    "jwt_tool.py"},
-			{"gopherus",    "https://github.com/tarunkant/Gopherus",          "/opt/gopherus",    "gopherus.py"},
-			{"liffy",       "https://github.com/mzfr/liffy",                  "/opt/liffy",       "liffy.py"},
+			{"corsy", "https://github.com/s0md3v/Corsy", "/opt/corsy", "corsy.py"},
+			{"smuggler", "https://github.com/defparam/smuggler", "/opt/smuggler", "smuggler.py"},
+			{"jwt_tool", "https://github.com/ticarpi/jwt_tool", "/opt/jwt_tool", "jwt_tool.py"},
+			{"gopherus", "https://github.com/tarunkant/Gopherus", "/opt/gopherus", "gopherus.py"},
+			{"liffy", "https://github.com/mzfr/liffy", "/opt/liffy", "liffy.py"},
 		}
 
 		for _, gt := range gitTools {
@@ -4951,7 +4959,7 @@ sudo chmod +x /opt/graphw00f/main.py`)
 		}
 		runAbhimanyu(abhimanyuTarget, abhimanyuVuln)
 
-	case "update":
+	case "update", "/update":
 		// Self-update: git pull + rebuild + reinstall
 		fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(cyan).Render("  ⟳ Updating CyberMind..."))
 		fmt.Println()
@@ -5180,11 +5188,11 @@ sudo chmod +x /opt/graphw00f/main.py`)
 		focusTypes := ""
 		skillLevel := "intermediate"
 		planTarget := ""
-		execMode := "deep"       // quick | deep | overnight | 12h
-		continuous := false      // --continuous: loop forever
-		platformHandle := ""     // --platform hackerone:handle
-		autoSubmit := false      // --auto-submit: submit bugs automatically
-		novelAttacks := true     // --no-novel: skip novel attack engine
+		execMode := "deep"   // quick | deep | overnight | 12h
+		continuous := false  // --continuous: loop forever
+		platformHandle := "" // --platform hackerone:handle
+		autoSubmit := false  // --auto-submit: submit bugs automatically
+		novelAttacks := true // --no-novel: skip novel attack engine
 
 		for i := 1; i < len(args); i++ {
 			switch args[i] {
@@ -6857,9 +6865,15 @@ sudo chmod +x /opt/graphw00f/main.py`)
 						fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Target: %s | %d high-value assets", hotlistTarget, len(hotlist))))
 						fmt.Println()
 						for i, e := range hotlist {
-							if i >= 15 { break }
+							if i >= 15 {
+								break
+							}
 							scoreColor := lipgloss.Color("#00FF88")
-							if e.Score >= 80 { scoreColor = lipgloss.Color("#FF4444") } else if e.Score >= 50 { scoreColor = lipgloss.Color("#FFD700") }
+							if e.Score >= 80 {
+								scoreColor = lipgloss.Color("#FF4444")
+							} else if e.Score >= 50 {
+								scoreColor = lipgloss.Color("#FFD700")
+							}
 							fmt.Printf("  %s  %s\n",
 								lipgloss.NewStyle().Bold(true).Foreground(scoreColor).Render(fmt.Sprintf("[%.0f]", e.Score)),
 								lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(e.Asset))
@@ -6875,9 +6889,15 @@ sudo chmod +x /opt/graphw00f/main.py`)
 				fmt.Println(lipgloss.NewStyle().Foreground(dim).Render(fmt.Sprintf("  Target: %s | %d high-value assets (from knowledge graph)", hotlistTarget, len(entries))))
 				fmt.Println()
 				for i, e := range entries {
-					if i >= 15 { break }
+					if i >= 15 {
+						break
+					}
 					scoreColor := lipgloss.Color("#00FF88")
-					if e.Score >= 80 { scoreColor = lipgloss.Color("#FF4444") } else if e.Score >= 50 { scoreColor = lipgloss.Color("#FFD700") }
+					if e.Score >= 80 {
+						scoreColor = lipgloss.Color("#FF4444")
+					} else if e.Score >= 50 {
+						scoreColor = lipgloss.Color("#FFD700")
+					}
 					fmt.Printf("  %s  %s\n",
 						lipgloss.NewStyle().Bold(true).Foreground(scoreColor).Render(fmt.Sprintf("[%.0f]", e.Score)),
 						lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(e.Asset))
@@ -6979,7 +6999,9 @@ sudo chmod +x /opt/graphw00f/main.py`)
 		for i, a := range args {
 			if a == "--interval" && i+1 < len(args) {
 				fmt.Sscanf(args[i+1], "%dh", &intervalHours)
-				if intervalHours < 1 { intervalHours = 1 }
+				if intervalHours < 1 {
+					intervalHours = 1
+				}
 			}
 		}
 
@@ -7124,7 +7146,6 @@ func getLocalModel() string {
 	return cfg.LocalModel
 }
 
-
 // ─── Auto-Dependency Detection ────────────────────────────────────────────────
 // Scans newly written files for imports and auto-installs missing packages.
 
@@ -7268,13 +7289,13 @@ func min(a, b int) int {
 // Runs in background goroutine — never blocks startup.
 func checkForUpdate() {
 	client := &http.Client{Timeout: 5 * time.Second}
-	
+
 	// Try static VERSION file first (most reliable, always up to date)
 	versionSources := []string{
 		"https://cybermindcli.com/VERSION",
 		"https://raw.githubusercontent.com/thecnical/cybermind/main/VERSION",
 	}
-	
+
 	latest := ""
 	for _, src := range versionSources {
 		resp, err := client.Get(src)
@@ -7295,13 +7316,13 @@ func checkForUpdate() {
 			break
 		}
 	}
-	
+
 	if latest == "" {
 		return
 	}
-	
+
 	current := strings.TrimPrefix(Version, "v")
-	
+
 	// Only show update if latest is NEWER than current (not older)
 	// Simple semver comparison: split by "." and compare numerically
 	isNewer := func(a, b string) bool {
@@ -7320,7 +7341,7 @@ func checkForUpdate() {
 		}
 		return len(aParts) > len(bParts)
 	}
-	
+
 	if latest != current && isNewer(latest, current) {
 		// Print update notice — small delay so it appears after banner
 		time.Sleep(500 * time.Millisecond)

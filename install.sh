@@ -501,6 +501,116 @@ if ! command -v testssl &>/dev/null && ! command -v testssl.sh &>/dev/null; then
     sudo ln -sf /opt/testssl/testssl.sh /usr/local/bin/testssl 2>/dev/null) || true
 fi
 
+# ── MISSING EXPLOIT TOOLS (now added) ─────────────────────────────────────────
+echo -e "${DIM}  Installing missing exploit tools...${NC}"
+
+# certipy — ADCS exploitation (pip install certipy-ad)
+if ! command -v certipy &>/dev/null; then
+    echo -e "${DIM}  Installing certipy...${NC}"
+    pip3 install certipy-ad --break-system-packages -q 2>/dev/null || \
+    pipx install certipy-ad 2>/dev/null || true
+fi
+
+# bloodyAD — AD privilege escalation
+if ! command -v bloodyAD &>/dev/null; then
+    echo -e "${DIM}  Installing bloodyAD...${NC}"
+    pip3 install bloodyAD --break-system-packages -q 2>/dev/null || \
+    pipx install bloodyAD 2>/dev/null || true
+fi
+
+# ldeep — LDAP enumeration
+if ! command -v ldeep &>/dev/null; then
+    echo -e "${DIM}  Installing ldeep...${NC}"
+    pip3 install ldeep --break-system-packages -q 2>/dev/null || \
+    pipx install ldeep 2>/dev/null || true
+fi
+
+# coercer — forced authentication
+if ! command -v coercer &>/dev/null; then
+    echo -e "${DIM}  Installing coercer...${NC}"
+    pip3 install coercer --break-system-packages -q 2>/dev/null || \
+    pipx install coercer 2>/dev/null || true
+fi
+
+# mitm6 — IPv6 DNS spoofing
+if ! command -v mitm6 &>/dev/null; then
+    echo -e "${DIM}  Installing mitm6...${NC}"
+    pip3 install mitm6 --break-system-packages -q 2>/dev/null || \
+    pipx install mitm6 2>/dev/null || true
+fi
+
+# netexec — network exploitation (replacement for crackmapexec)
+if ! command -v nxc &>/dev/null && ! command -v netexec &>/dev/null; then
+    echo -e "${DIM}  Installing netexec...${NC}"
+    pip3 install netexec --break-system-packages -q 2>/dev/null || \
+    pipx install netexec 2>/dev/null || true
+fi
+
+# pywhisker — targeted Kerberoasting
+if ! command -v pywhisker &>/dev/null; then
+    echo -e "${DIM}  Installing pywhisker...${NC}"
+    pip3 install pywhisker --break-system-packages -q 2>/dev/null || \
+    pipx install pywhisker 2>/dev/null || true
+fi
+
+# evilginx2 — phishing framework
+if ! command -v evilginx2 &>/dev/null; then
+    echo -e "${DIM}  Installing evilginx2...${NC}"
+    go install github.com/kgretzky/evilginx2@latest 2>/dev/null && \
+    symlink_go_tool "evilginx2" || true
+fi
+
+# donut-shellcode — shellcode generation
+if ! command -v donut &>/dev/null; then
+    echo -e "${DIM}  Installing donut...${NC}"
+    pip3 install donut-shellcode --break-system-packages -q 2>/dev/null || true
+fi
+
+# mythril — smart contract security analysis
+if ! command -v myth &>/dev/null && ! command -v mythril &>/dev/null; then
+    echo -e "${DIM}  Installing mythril...${NC}"
+    pip3 install mythril --break-system-packages -q 2>/dev/null || \
+    pipx install mythril 2>/dev/null || true
+fi
+
+# beef-xss — browser exploitation framework
+if ! command -v beef &>/dev/null && ! command -v beef-xss &>/dev/null; then
+    echo -e "${DIM}  Installing beef-xss...${NC}"
+    sudo apt-get install -y beef-xss -qq 2>/dev/null || true
+fi
+
+# x8 — hidden parameter discovery (binary release)
+if ! command -v x8 &>/dev/null; then
+    echo -e "${DIM}  Installing x8...${NC}"
+    X8_VER=$(curl -s https://api.github.com/repos/sh1yo/x8/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v' 2>/dev/null || echo "1.0.0")
+    X8_URL="https://github.com/sh1yo/x8/releases/download/v${X8_VER}/x8-linux-amd64"
+    curl -fsSL "$X8_URL" -o /tmp/x8 2>/dev/null && \
+    sudo cp /tmp/x8 /usr/local/bin/x8 && \
+    sudo chmod +x /usr/local/bin/x8 && \
+    rm -f /tmp/x8 && \
+    echo -e "${GREEN}[✓] x8 installed${NC}" || \
+    echo -e "${YELLOW}[!] x8 install failed${NC}"
+fi
+
+# sprayhound — password spraying with LDAP
+if ! command -v sprayhound &>/dev/null; then
+    echo -e "${DIM}  Installing sprayhound...${NC}"
+    pip3 install sprayhound --break-system-packages -q 2>/dev/null || \
+    pipx install sprayhound 2>/dev/null || true
+fi
+
+# nosqlmap — NoSQL injection
+if ! command -v nosqlmap &>/dev/null; then
+    echo -e "${DIM}  Installing nosqlmap...${NC}"
+    install_python_git_tool "nosqlmap" "https://github.com/codingo/NoSQLMap" "/opt/nosqlmap" "nosqlmap.py" 2>/dev/null || true
+fi
+
+# xxeinjector — XXE exploitation
+if ! command -v xxeinjector &>/dev/null; then
+    echo -e "${DIM}  Installing xxeinjector...${NC}"
+    install_python_git_tool "xxeinjector" "https://github.com/enjoiz/XXEinjector" "/opt/xxeinjector" "XXEinjector.rb" 2>/dev/null || true
+fi
+
 # ── v5.4.0 NEW: cloud_enum — git clone (PyPI package name is wrong) ──────────
 if ! command -v cloud_enum &>/dev/null; then
     echo -e "${DIM}  Installing cloud_enum (git clone)...${NC}"
