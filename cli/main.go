@@ -1380,6 +1380,30 @@ func runHuntSilent(target string, reconCtx *hunt.HuntContext, requested []string
 		_ = storage.AddEntry("/hunt "+target, clean)
 	}
 
+	// ── EPSS + CVSS scoring for nuclei CVE findings ───────────────────────
+	// Score every CVE found by nuclei — prioritize by exploitation probability
+	if result.Context != nil && len(result.Context.VulnsFound) > 0 {
+		go func() {
+			// Collect all nuclei output for CVE extraction
+			var nucleiOutput strings.Builder
+			for _, tr := range result.Results {
+				if tr.Tool == "nuclei" && tr.Output != "" {
+					nucleiOutput.WriteString(tr.Output)
+					nucleiOutput.WriteString("\n")
+				}
+			}
+			if nucleiOutput.Len() > 0 {
+				scored := brain.ScoreNucleiFindings(nucleiOutput.String(), target)
+				if len(scored) > 0 {
+					fmt.Println(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF6600")).Render(
+						"  📊 CVSS + EPSS Scoring:"))
+					fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0")).Render(
+						brain.FormatScoredFindings(scored)))
+				}
+			}
+		}()
+	}
+
 	return result
 }
 

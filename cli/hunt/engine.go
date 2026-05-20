@@ -70,6 +70,10 @@ type HuntContext struct {
 	Target     string
 	TargetType string // "domain" | "ip"
 
+	// Auth credentials — propagated to ALL tools automatically
+	// Set via --cookie / --bearer / --auth-header flags
+	Auth *brain.AuthContext
+
 	// From /recon (pre-populated if chained)
 	LiveURLs    []string // httpx-confirmed live URLs
 	CrawledURLs []string // katana-crawled endpoints

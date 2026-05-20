@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"cybermind-cli/brain"
 )
 
 // huntRegistry — full arsenal, 6 phases, no skipping.
@@ -717,6 +719,12 @@ var huntRegistry = []HuntToolSpec{
 					if ctx.WAFDetected {
 						args = append(args, "--delay", "1000", "--timeout", "30")
 					}
+					// Auth propagation — carry session cookie/bearer into dalfox
+					if ctx.Auth != nil {
+						args = append(args, ctx.Auth.ToDalfoxFlags()...)
+					} else if envAuth := brain.LoadAuthFromEnv(); envAuth != nil {
+						args = append(args, envAuth.ToDalfoxFlags()...)
+					}
 					// Fix 3: use memory-proven payloads if available
 					if memPayloads := os.Getenv("CYBERMIND_MEMORY_XSS_PAYLOADS"); memPayloads != "" {
 						args = append(args, "--custom-payload", memPayloads)
@@ -922,6 +930,12 @@ var huntRegistry = []HuntToolSpec{
 				"-timeout", "10", "-retries", "2",
 				"-H", "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1)",
 				"-o", "/tmp/cybermind_nuclei_hunt.txt",
+			}
+			// Auth propagation — carry session cookie/bearer into nuclei
+			if ctx.Auth != nil {
+				args = append(args, ctx.Auth.ToNucleiFlags()...)
+			} else if envAuth := brain.LoadAuthFromEnv(); envAuth != nil {
+				args = append(args, envAuth.ToNucleiFlags()...)
 			}
 			if ctx.WAFDetected {
 				args = append(args, "-etags", "fuzzing,dos", "-severity", "critical,high,medium", "-rl", "10")
@@ -1660,9 +1674,17 @@ var huntRegistry = []HuntToolSpec{
 		DomainOnly:  true,
 		InstallHint: "sudo apt install sqlmap -y",
 		BuildArgs: func(target string, ctx *HuntContext) []string {
+			// Auth propagation — carry session cookie/bearer into sqlmap
+			authFlags := []string{}
+			if ctx.Auth != nil {
+				authFlags = ctx.Auth.ToSQLMapFlags()
+			} else if envAuth := brain.LoadAuthFromEnv(); envAuth != nil {
+				authFlags = envAuth.ToSQLMapFlags()
+			}
+
 			paramFile := "/tmp/cybermind_paramspider.txt"
 			if _, err := os.Stat(paramFile); err == nil {
-				return []string{
+				args := []string{
 					"-m", paramFile,
 					"--batch",
 					"--level", "3",
@@ -1672,6 +1694,7 @@ var huntRegistry = []HuntToolSpec{
 					"--tamper", "space2comment,between",
 					"--output-dir", "/tmp/cybermind_sqlmap_hunt/",
 				}
+				return append(args, authFlags...)
 			}
 			u := target
 			if len(ctx.LiveURLs) > 0 {
@@ -1685,7 +1708,7 @@ var huntRegistry = []HuntToolSpec{
 			if !strings.HasPrefix(u, "http") {
 				u = "https://" + u
 			}
-			return []string{
+			args := []string{
 				"-u", u,
 				"--batch",
 				"--level", "3",
@@ -1694,6 +1717,7 @@ var huntRegistry = []HuntToolSpec{
 				"--random-agent",
 				"--tamper", "space2comment,between",
 			}
+			return append(args, authFlags...)
 		},
 		FallbackArgs: []func(target string, ctx *HuntContext) []string{
 			func(target string, ctx *HuntContext) []string {
